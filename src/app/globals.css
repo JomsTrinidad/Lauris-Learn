@@ -1,0 +1,100 @@
+@import "tailwindcss";
+
+:root {
+  --font-size: 16px;
+  --background: #fafbfc;
+  --foreground: #2d3748;
+  --card: #ffffff;
+  --card-foreground: #2d3748;
+  --popover: #ffffff;
+  --popover-foreground: #2d3748;
+  --primary: #4a90e2;
+  --primary-foreground: #ffffff;
+  --secondary: #81c784;
+  --secondary-foreground: #ffffff;
+  --muted: #f7fafc;
+  --muted-foreground: #718096;
+  --accent: #edf2f7;
+  --accent-foreground: #2d3748;
+  --destructive: #ef5350;
+  --destructive-foreground: #ffffff;
+  --border: #e2e8f0;
+  --input-background: #ffffff;
+  --ring: #4a90e2;
+  --radius: 0.75rem;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #2d3748;
+  --sidebar-primary: #4a90e2;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #f7fafc;
+  --sidebar-accent-foreground: #2d3748;
+  --sidebar-border: #e2e8f0;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  html {
+    font-size: var(--font-size);
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1 { font-size: 1.5rem; font-weight: 600; line-height: 1.4; }
+  h2 { font-size: 1.25rem; font-weight: 600; line-height: 1.4; }
+  h3 { font-size: 1rem;    font-weight: 600; line-height: 1.4; }
+  h4 { font-size: 0.875rem; font-weight: 600; line-height: 1.4; }
+}
+
+/* Status badge helpers */
+.status-enrolled   { @apply bg-green-100 text-green-700; }
+.status-waitlisted { @apply bg-yellow-100 text-yellow-700; }
+.status-inquiry    { @apply bg-blue-100 text-blue-700; }
+.status-withdrawn  { @apply bg-gray-100 text-gray-600; }
+.status-completed  { @apply bg-purple-100 text-purple-700; }
+
+.status-paid     { @apply bg-green-100 text-green-700; }
+.status-partial  { @apply bg-yellow-100 text-yellow-700; }
+.status-unpaid   { @apply bg-red-100 text-red-700; }
+.status-overdue  { @apply bg-orange-100 text-orange-700; }
+
+.attend-present { @apply bg-green-500 text-white; }
+.attend-late    { @apply bg-yellow-400 text-white; }
+.attend-absent  { @apply bg-red-500 text-white; }
+.attend-excused { @apply bg-gray-400 text-white; }
