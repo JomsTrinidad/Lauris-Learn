@@ -182,13 +182,23 @@ refresh: () => void   // call after changing school-level settings
 - [x] **Fee types** — done: CRUD in Finance Setup
 - [x] **Discounts & promos** — done: fixed, percentage, credit types; scoped presets
 - [x] **Credits system** — done: issue credits, track applied vs outstanding
+- [x] **Billing enhancements (Phase 1)** — done: month filter, collection rate % card, aging badges (30d/60d/90d+), payment history drawer per record
+- [x] **Receipts & statements (Phase 2)** — done: OR number on payments (migration 008), printable official receipt, printable billing statement per student; print opens clean new window
+- [x] **Parent billing portal (Phase 3)** — done: `/parent/billing` upgraded with expandable payment history per record, receipt modal per payment (with print), printable billing statement; `schoolName` added to ParentContext
+- [x] **Billing validation guardrails (Phase 4)** — done: duplicate billing check with override reason, payment sequence warning (earlier unpaid months), overpayment hard block, paid status consistency guard, amount-change safety with change reason, cancel/waive/refund requires reason, `waived` status added, bulk mark-paid confirmation modal, fee type required, human-friendly error messages; migration 009 adds `change_reason`/`changed_by`/`changed_at` on billing_records and `recorded_by` on payments
 - [ ] **Resource / Document Hub** — file uploads, categorized downloads for parents
 - [ ] **Online classes** — wire `online-classes` page to Supabase (currently static)
+
+### Billing — Remaining Gaps
+- [ ] **Scheduled recurring billing** — set monthly fee per class/level, auto-generate on chosen day each month
+- [ ] **Overdue reminders** — bulk email/in-app notification to parents with outstanding balances
+- [ ] **Fee schedule at enrollment** — auto-attach tuition config when student is enrolled
+- [ ] **Sibling / family grouping** — combined family balance view, sibling discount auto-apply
 
 ### Medium Priority
 - [ ] **RSVP for events** — per-student RSVP UI
 - [ ] **Field trip / event fees** — link fees to events, per-student opt-in
-- [ ] **Parent portal / view** — parent-specific read-only dashboard
+- [ ] **Parent portal / view** — parent-specific read-only dashboard (billing is one piece; also updates feed, progress, events)
 - [ ] **Waitlist management UI** — explicit waitlist queue, promote-to-enrolled flow
 - [ ] **Sibling enrollment** — link students as siblings, auto-apply sibling discount
 
@@ -235,6 +245,49 @@ All implemented in `supabase/migrations/002_super_admin_trial_periods_tuition.sq
 ---
 
 ## Session Log
+
+### 2026-04-25 — Billing Phase 4 (Validation Guardrails)
+- Migration 009: added `waived` to billing_status enum; `change_reason`, `changed_by`, `changed_at` on billing_records; `recorded_by` on payments
+- Badge component: added `waived` variant (sky-blue)
+- Billing page full guardrail implementation:
+  - **Duplicate check**: `checkAddDuplicate()` queries for existing non-cancelled records on same student+month; shows orange warning banner with required override reason field in add modal
+  - **Payment sequence warning**: `openPaymentModal()` (new async function) checks for earlier unpaid months for same student; shows orange warning with required override reason
+  - **Overpayment hard block**: payment > remaining balance returns friendly error before saving
+  - **Partial payment hint**: inline text below amount field shows remaining balance after partial entry
+  - **Paid status guard**: editing status to "paid" when balance > 0 returns error "record a payment first"
+  - **Amount change safety**: editing amount when payments already exist requires `changeReason` (saved to `change_reason` column)
+  - **Destructive status reason**: setting cancelled/waived/refunded requires `changeReason`
+  - **Waived status**: excluded from outstanding balance and revenue totals; descriptive hint in edit modal
+  - **Bulk mark-paid confirmation**: `initiateBulkMarkPaid()` → `bulkConfirmModal` → shows student list + total + irreversibility warning → `handleBulkMarkPaid()` executes
+  - **Fee type required**: hard block in add modal and bulk generate when fee types exist
+  - **Audit tracking**: `changed_by`/`changed_at`/`change_reason` saved on every edit with reason; `recorded_by` saved on every payment insert
+  - **Human-friendly errors**: all error messages written in plain English for admins
+
+### 2026-04-25 — Billing Phase 3 (Parent Portal)
+- Parent billing page (`/parent/billing`) fully upgraded:
+  - All billing records + payments fetched in one load (no lazy fetch)
+  - Each billing card is tappable to expand/collapse individual payment history
+  - Each payment row shows amount, method, date, OR#, reference — plus a "Receipt" button
+  - Receipt modal: screen-readable summary + hidden print-ready HTML, opens clean print window
+  - Statement button (top right): shows full ledger as a screen-visible table + hidden print content
+  - Print works via `printContent()` — same pattern as admin billing page
+- `ParentContext` updated: added `schoolName: string` field; passed from layout to all child pages
+
+### 2026-04-25 — Billing Phase 1 + 2 (Enhancements & Receipts)
+- Migration 008: added `or_number VARCHAR(50)` to `payments` table
+- Billing page — Phase 1 quick wins:
+  - Month filter (inline clear button) added to filter row
+  - 4th summary card: Collection Rate % (green ≥80%, orange ≥50%, red otherwise)
+  - Aging badges on overdue records: `${days}d` / `30d+` / `60d+` / `90d+` with escalating color
+  - Payment history drawer (clock icon per row): shows all payments for a billing record, each with Print Receipt button
+  - Student name in table is now a link that opens the billing statement modal
+- Billing page — Phase 2 receipts & statements:
+  - OR Number field added to Record Payment modal (stored as `or_number` in payments)
+  - Receipt modal: printable official receipt with school name, OR#, student, class, description, amount, method
+  - Billing Statement modal: full ledger for a student (all records for current year), running totals, printable
+  - Both print via `printContent()` — opens clean new browser window with embedded CSS, then calls `window.print()`
+- Bulk generate modal: fixed broken `bulkForm.billingMonth` field → now uses `monthFrom`/`monthTo` range inputs
+- `bulkPreview` state type fixed: was `null | array`, now consistently `BulkPreviewSummary | null`
 
 ### 2026-04-25 — Super Admin, Trial, Academic Periods, Finance Setup
 - Added migration 002: trial columns on schools, academic_periods table, fee_types, tuition_configs, discounts, student_credits, billing_discounts

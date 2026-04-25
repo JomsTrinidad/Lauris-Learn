@@ -25,7 +25,15 @@ export default function LoginPage() {
       setError(error.message);
       setLoading(false);
     } else {
-      router.push("/dashboard");
+      const { data: { user } } = await supabase.auth.getUser();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: profile } = await (supabase as any)
+        .from("profiles")
+        .select("role")
+        .eq("id", user?.id)
+        .single();
+      const dest = profile?.role === "parent" ? "/parent/dashboard" : "/dashboard";
+      router.push(dest);
       router.refresh();
     }
   }
@@ -93,7 +101,7 @@ export default function LoginPage() {
         </div>
 
         <p className="text-center text-xs text-muted-foreground mt-6">
-          Powered by Lauris Learn · For school admins and teachers only
+          Powered by Lauris Learn
         </p>
       </div>
     </div>

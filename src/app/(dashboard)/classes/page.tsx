@@ -1,16 +1,61 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Plus } from "lucide-react";
+import { Plus, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Modal } from "@/components/ui/modal";
+import { Modal, ModalCancelButton } from "@/components/ui/modal";
 import { Card } from "@/components/ui/card";
 import { PageSpinner, ErrorAlert } from "@/components/ui/spinner";
 import { formatTime } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { useSchoolContext } from "@/contexts/SchoolContext";
+
+function parseTime24(t: string): { h12: number; min: number; ampm: "AM" | "PM" } {
+  const [hStr, mStr] = (t ?? "08:00").split(":");
+  const h24 = parseInt(hStr ?? "8");
+  const min = parseInt(mStr ?? "0");
+  const ampm: "AM" | "PM" = h24 >= 12 ? "PM" : "AM";
+  const h12 = h24 === 0 ? 12 : h24 > 12 ? h24 - 12 : h24;
+  return { h12, min, ampm };
+}
+function toTime24(h12: number, min: number, ampm: "AM" | "PM"): string {
+  let h = h12 % 12;
+  if (ampm === "PM") h += 12;
+  return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
+}
+function TimePicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const { h12, min, ampm } = parseTime24(value);
+  const hours = [1,2,3,4,5,6,7,8,9,10,11,12];
+  const mins = [0,15,30,45];
+  return (
+    <div className="flex gap-1.5">
+      <Select
+        value={String(h12)}
+        onChange={(e) => onChange(toTime24(parseInt(e.target.value), min, ampm))}
+        className="w-20"
+      >
+        {hours.map((h) => <option key={h} value={h}>{h}</option>)}
+      </Select>
+      <Select
+        value={String(min).padStart(2, "0")}
+        onChange={(e) => onChange(toTime24(h12, parseInt(e.target.value), ampm))}
+        className="w-20"
+      >
+        {mins.map((m) => <option key={m} value={String(m).padStart(2,"0")}>{String(m).padStart(2,"0")}</option>)}
+      </Select>
+      <Select
+        value={ampm}
+        onChange={(e) => onChange(toTime24(h12, min, e.target.value as "AM" | "PM"))}
+        className="w-20"
+      >
+        <option>AM</option>
+        <option>PM</option>
+      </Select>
+    </div>
+  );
+}
 
 interface ClassRecord {
   id: string;
@@ -23,6 +68,8 @@ interface ClassRecord {
   capacity: number;
   enrolled: number;
   isActive: boolean;
+  meetingLink: string;
+  messengerLink: string;
 }
 
 interface TeacherOption {
@@ -38,11 +85,13 @@ interface ClassForm {
   teacherId: string;
   capacity: string;
   isActive: boolean;
+  meetingLink: string;
+  messengerLink: string;
 }
 
 const EMPTY_FORM: ClassForm = {
   name: "", level: "", startTime: "08:00", endTime: "10:00",
-  teacherId: "", capacity: "20", isActive: true,
+  teacherId: "", capacity: "20", isActive: true, meetingLink: "", messengerLink: "",
 };
 
 export default function ClassesPage() {
@@ -79,7 +128,7 @@ export default function ClassesPage() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: classRows, error: classErr } = await supabase
       .from("classes")
-      .select(`id, name, level, start_time, end_time, capacity, is_active,
+      .select(`id, name, level, start_time, end_time, capacity, is_active, meeting_link, messenger_link,
         class_teachers(teacher_id, teacher:profiles(full_name))`)
       .eq("school_id", schoolId!)
       .eq("school_year_id", yearId)
@@ -112,6 +161,8 @@ export default function ClassesPage() {
           capacity: c.capacity ?? 0,
           enrolled: enrolledByClass[c.id] ?? 0,
           isActive: c.is_active,
+          meetingLink: c.meeting_link ?? "",
+          messengerLink: c.messenger_link ?? "",
           teacherId: ct?.teacher_id ?? null,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           teacherName: (ct?.teacher as any)?.full_name ?? "—",
@@ -121,15 +172,16 @@ export default function ClassesPage() {
   }
 
   async function loadTeachers() {
-    const { data } = await supabase
-      .from("profiles")
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data } = await (supabase as any)
+      .from("teacher_profiles")
       .select("id, full_name")
       .eq("school_id", schoolId!)
-      .in("role", ["teacher", "school_admin"])
+      .eq("is_active", true)
       .order("full_name");
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    setTeachers((data ?? [] as any[]).map((p) => ({ id: p.id, fullName: p.full_name })));
+    setTeachers((data ?? []).map((p: any) => ({ id: p.id, fullName: p.full_name })));
   }
 
   function openAdd() {
@@ -149,6 +201,8 @@ export default function ClassesPage() {
       teacherId: cls.teacherId ?? "",
       capacity: String(cls.capacity),
       isActive: cls.isActive,
+      meetingLink: cls.meetingLink,
+      messengerLink: cls.messengerLink,
     });
     setFormError(null);
     setModalOpen(true);
@@ -173,6 +227,8 @@ export default function ClassesPage() {
       end_time: form.endTime,
       capacity: cap,
       is_active: form.isActive,
+      meeting_link: form.meetingLink.trim() || null,
+      messenger_link: form.messengerLink.trim() || null,
     };
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -278,7 +334,27 @@ export default function ClassesPage() {
                   </div>
                 </div>
 
-                <div className="px-5 pb-4">
+                <div className="px-5 pb-4 space-y-2">
+                  {cls.meetingLink && (
+                    <a
+                      href={cls.meetingLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1.5 text-xs text-primary hover:underline"
+                    >
+                      <ExternalLink className="w-3 h-3" /> Google Meet link
+                    </a>
+                  )}
+                  {cls.messengerLink && (
+                    <a
+                      href={cls.messengerLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1.5 text-xs text-blue-600 hover:underline"
+                    >
+                      <ExternalLink className="w-3 h-3" /> Messenger group chat
+                    </a>
+                  )}
                   <button
                     onClick={() => openEdit(cls)}
                     className="w-full text-sm text-primary hover:underline text-left"
@@ -356,14 +432,14 @@ export default function ClassesPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-3">
             <div>
               <label className="block text-sm font-medium mb-1">Start Time *</label>
-              <Input type="time" value={form.startTime} onChange={(e) => setForm({ ...form, startTime: e.target.value })} />
+              <TimePicker value={form.startTime} onChange={(v) => setForm({ ...form, startTime: v })} />
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">End Time *</label>
-              <Input type="time" value={form.endTime} onChange={(e) => setForm({ ...form, endTime: e.target.value })} />
+              <TimePicker value={form.endTime} onChange={(v) => setForm({ ...form, endTime: v })} />
             </div>
           </div>
 
@@ -388,6 +464,25 @@ export default function ClassesPage() {
             </div>
           </div>
 
+          <div>
+            <label className="block text-sm font-medium mb-1">Google Meet Link</label>
+            <Input
+              value={form.meetingLink}
+              onChange={(e) => setForm({ ...form, meetingLink: e.target.value })}
+              placeholder="https://meet.google.com/..."
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Messenger Group Chat Link</label>
+            <Input
+              value={form.messengerLink}
+              onChange={(e) => setForm({ ...form, messengerLink: e.target.value })}
+              placeholder="https://m.me/g/..."
+            />
+            <p className="text-xs text-muted-foreground mt-1">Parents will see a "Join Class Chat" button linking here.</p>
+          </div>
+
           <div className="flex items-center gap-2">
             <input
               type="checkbox"
@@ -400,7 +495,7 @@ export default function ClassesPage() {
           </div>
 
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={() => setModalOpen(false)}>Cancel</Button>
+            <ModalCancelButton />
             <Button onClick={handleSave} disabled={saving || !form.name}>
               {saving ? "Saving…" : "Save Class"}
             </Button>

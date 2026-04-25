@@ -11,6 +11,7 @@ interface HeaderProps {
   userName?: string;
   userRole?: string;
   schoolYear?: string;
+  userAvatar?: string | null;
 }
 
 export function Header({
@@ -19,6 +20,7 @@ export function Header({
   userName = "Admin User",
   userRole = "School Admin",
   schoolYear = "SY 2025–2026",
+  userAvatar,
 }: HeaderProps) {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const router = useRouter();
@@ -54,8 +56,11 @@ export function Header({
             onClick={() => setUserMenuOpen(!userMenuOpen)}
             className="flex items-center gap-2.5 px-3 py-1.5 bg-muted rounded-lg hover:bg-accent transition-colors"
           >
-            <div className="w-7 h-7 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-semibold">
-              {getInitials(userName)}
+            <div className="w-7 h-7 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-semibold overflow-hidden flex-shrink-0">
+              {userAvatar
+                ? <img src={userAvatar} alt={userName} className="w-full h-full object-cover" />
+                : getInitials(userName)
+              }
             </div>
             <div className="hidden sm:block text-left">
               <p className="text-sm font-medium leading-tight">{userName}</p>

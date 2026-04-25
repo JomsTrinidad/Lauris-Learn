@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Modal } from "@/components/ui/modal";
+import { Modal, ModalCancelButton } from "@/components/ui/modal";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatTime } from "@/lib/utils";
 
@@ -26,7 +26,7 @@ interface OnlineSession {
 
 const DEMO_SESSIONS: OnlineSession[] = [
   { id: "1", className: "Kinder", title: "Phonics Session – Letters A to E", date: "2026-04-25", startTime: "13:00", endTime: "14:30", meetingLink: "https://meet.google.com/abc-defg-hij", notes: "Please have pencils and workbooks ready.", status: "scheduled" },
-  { id: "2", className: "Pre-Kinder", title: "Colors and Shapes Activity", date: "2026-04-24", startTime: "10:00", endTime: "11:00", meetingLink: "https://zoom.us/j/1234567890", notes: "", status: "live" },
+  { id: "2", className: "Pre-Kinder", title: "Colors and Shapes Activity", date: "2026-04-24", startTime: "10:00", endTime: "11:00", meetingLink: "https://meet.google.com/pqr-stuv-wx", notes: "", status: "live" },
   { id: "3", className: "Toddlers", title: "Storytime: The Three Little Pigs", date: "2026-04-23", startTime: "08:00", endTime: "09:00", meetingLink: "https://meet.google.com/xyz-uvwx-yz", notes: "", status: "completed" },
 ];
 
@@ -172,15 +172,15 @@ export default function OnlineClassesPage() {
             </div>
           </div>
           <div>
-            <label className="block text-sm font-medium mb-1">Meeting Link</label>
-            <Input value={form.meetingLink} onChange={(e) => setForm({ ...form, meetingLink: e.target.value })} placeholder="https://meet.google.com/... or Zoom link" />
+            <label className="block text-sm font-medium mb-1">Google Meet Link</label>
+            <Input value={form.meetingLink} onChange={(e) => setForm({ ...form, meetingLink: e.target.value })} placeholder="https://meet.google.com/..." />
           </div>
           <div>
             <label className="block text-sm font-medium mb-1">Notes</label>
             <Textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Optional notes for parents..." rows={2} />
           </div>
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={() => setModalOpen(false)}>Cancel</Button>
+            <ModalCancelButton />
             <Button onClick={handleSave} disabled={!form.title || !form.date}>Schedule</Button>
           </div>
         </div>

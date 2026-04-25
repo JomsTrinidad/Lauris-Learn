@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Modal } from "@/components/ui/modal";
+import { Modal, ModalCancelButton } from "@/components/ui/modal";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { PageSpinner, ErrorAlert } from "@/components/ui/spinner";
 import { formatCurrency, formatDate } from "@/lib/utils";
@@ -379,7 +379,7 @@ function FeeTypesTab({ feeTypes, schoolId, onRefresh }: {
             <Input value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} placeholder="Optional description" />
           </div>
           <div className="flex justify-end gap-3">
-            <Button variant="outline" onClick={() => setShowModal(false)}>Cancel</Button>
+            <ModalCancelButton />
             <Button onClick={handleSave} disabled={saving}>{saving ? "Saving…" : "Save"}</Button>
           </div>
         </div>
@@ -556,7 +556,7 @@ function TuitionTab({ tuitionConfigs, academicPeriods, schoolId, onRefresh }: {
             </p>
           )}
           <div className="flex justify-end gap-3">
-            <Button variant="outline" onClick={() => setShowModal(false)}>Cancel</Button>
+            <ModalCancelButton />
             <Button onClick={handleSave} disabled={saving}>{saving ? "Saving…" : "Save"}</Button>
           </div>
         </div>
@@ -704,7 +704,7 @@ function DiscountsTab({ discounts, schoolId, onRefresh }: {
             />
           </div>
           <div className="flex justify-end gap-3">
-            <Button variant="outline" onClick={() => setShowModal(false)}>Cancel</Button>
+            <ModalCancelButton />
             <Button onClick={handleSave} disabled={saving}>{saving ? "Saving…" : "Save"}</Button>
           </div>
         </div>
@@ -856,7 +856,7 @@ function CreditsTab({ credits, students, schoolId, onRefresh }: {
             />
           </div>
           <div className="flex justify-end gap-3">
-            <Button variant="outline" onClick={() => setShowModal(false)}>Cancel</Button>
+            <ModalCancelButton />
             <Button onClick={handleSave} disabled={saving}>{saving ? "Saving…" : "Issue Credit"}</Button>
           </div>
         </div>

@@ -19,26 +19,35 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const mainNavItems = [
+type Role = "super_admin" | "school_admin" | "teacher" | "parent" | null;
+
+interface NavItem {
+  path: string;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  adminOnly?: boolean; // hidden from teachers
+}
+
+const mainNavItems: NavItem[] = [
   { path: "/dashboard",      label: "Dashboard",      icon: LayoutDashboard },
   { path: "/students",       label: "Students",       icon: Users },
   { path: "/classes",        label: "Classes",        icon: School },
   { path: "/attendance",     label: "Attendance",     icon: CheckSquare },
-  { path: "/enrollment",     label: "Enrollment",     icon: UserPlus },
+  { path: "/enrollment",     label: "Enrollment",     icon: UserPlus,     adminOnly: true },
   { path: "/updates",        label: "Parent Updates", icon: MessageSquare },
-  { path: "/billing",        label: "Billing",        icon: CreditCard },
-  { path: "/finance",        label: "Finance Setup",  icon: Wallet },
+  { path: "/billing",        label: "Billing",        icon: CreditCard,   adminOnly: true },
+  { path: "/finance",        label: "Finance Setup",  icon: Wallet,       adminOnly: true },
   { path: "/events",         label: "Events",         icon: Calendar },
   { path: "/online-classes", label: "Online Classes", icon: Video },
   { path: "/progress",       label: "Progress",       icon: BookOpen },
-  { path: "/settings",       label: "Settings",       icon: Settings },
+  { path: "/settings",       label: "Settings",       icon: Settings,     adminOnly: true },
 ];
 
 interface SidebarProps {
   open: boolean;
   schoolName?: string;
   schoolYear?: string;
-  userRole?: "super_admin" | "school_admin" | "teacher" | "parent" | null;
+  userRole?: Role;
 }
 
 export function Sidebar({
@@ -48,6 +57,9 @@ export function Sidebar({
   userRole,
 }: SidebarProps) {
   const pathname = usePathname();
+
+  const isAdmin = userRole === "school_admin" || userRole === "super_admin";
+  const visibleItems = mainNavItems.filter((item) => isAdmin || !item.adminOnly);
 
   return (
     <aside
@@ -77,7 +89,7 @@ export function Sidebar({
         {/* Nav */}
         <nav className="flex-1 overflow-y-auto p-3">
           <ul className="space-y-1">
-            {mainNavItems.map((item) => {
+            {visibleItems.map((item) => {
               const active =
                 item.path === "/dashboard"
                   ? pathname === "/dashboard" || pathname === "/"

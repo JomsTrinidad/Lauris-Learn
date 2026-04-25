@@ -1,12 +1,14 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
 import { Plus, Pencil, Trash2 } from "lucide-react";
+import { AvatarUpload } from "@/components/ui/avatar-upload";
+import { compressImage, PROFILE_PHOTO_MAX_W, PROFILE_PHOTO_MAX_BYTES } from "@/lib/image-compress";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Modal } from "@/components/ui/modal";
+import { Modal, ModalCancelButton } from "@/components/ui/modal";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { PageSpinner, ErrorAlert } from "@/components/ui/spinner";
 import { createClient } from "@/lib/supabase/client";
@@ -31,9 +33,6 @@ interface Holiday {
   notes: string;
 }
 
-const SECTIONS = ["School Information", "School Years", "Academic Periods", "Holidays"] as const;
-type Section = (typeof SECTIONS)[number];
-
 interface AcademicPeriod {
   id: string;
   schoolYearId: string;
@@ -44,11 +43,60 @@ interface AcademicPeriod {
   isActive: boolean;
 }
 
+interface TeacherProfile {
+  id: string;
+  fullName: string;
+  email: string;
+  phone: string;
+  startDate: string;
+  endDate: string;
+  isActive: boolean;
+  notes: string;
+  avatarUrl: string | null;
+}
+
+const SECTIONS = ["School Information", "School Years", "Academic Periods", "Holidays", "Teachers", "Student IDs", "Grading"] as const;
+type Section = (typeof SECTIONS)[number];
+
+const SESSION_KEY = "settings_active_section";
+
+function getSavedSection(): Section {
+  if (typeof window === "undefined") return "School Information";
+  return (sessionStorage.getItem(SESSION_KEY) as Section) ?? "School Information";
+}
+
+const EMPTY_TEACHER: Omit<TeacherProfile, "id"> = {
+  fullName: "", email: "", phone: "",
+  startDate: "", endDate: "", isActive: true, notes: "", avatarUrl: null,
+};
+
+interface GradingScale {
+  id: string;
+  label: string;
+  description: string;
+  color: string;
+  minScore: string;
+  maxScore: string;
+  sortOrder: number;
+}
+
+interface StudentCodeConfig {
+  prefix: string;
+  padding: number;
+  includeYear: boolean;
+}
+
 export default function SettingsPage() {
-  const { schoolId, schoolName: ctxSchoolName, refresh: refreshCtx } = useSchoolContext();
+  const { schoolId, schoolName: ctxSchoolName, refresh: refreshCtx, userId, userName } = useSchoolContext();
   const supabase = createClient();
 
-  const [activeSection, setActiveSection] = useState<Section>("School Information");
+  // Persist active section across context reloads (refreshCtx causes a loading spinner which remounts the page)
+  const [activeSection, setActiveSectionState] = useState<Section>(getSavedSection);
+  function setActiveSection(s: Section) {
+    sessionStorage.setItem(SESSION_KEY, s);
+    setActiveSectionState(s);
+  }
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -76,18 +124,47 @@ export default function SettingsPage() {
   const [editingHoliday, setEditingHoliday] = useState<Holiday | null>(null);
   const [holidayForm, setHolidayForm] = useState({ name: "", date: "", appliesToAll: true, isNoClass: true, notes: "" });
 
+  // Teachers
+  const [teachers, setTeachers] = useState<TeacherProfile[]>([]);
+  const [teacherModal, setTeacherModal] = useState(false);
+  const [editingTeacher, setEditingTeacher] = useState<TeacherProfile | null>(null);
+  const [teacherForm, setTeacherForm] = useState<Omit<TeacherProfile, "id">>(EMPTY_TEACHER);
+  const [teacherFormError, setTeacherFormError] = useState<string | null>(null);
+  const [teacherPhotoFile, setTeacherPhotoFile] = useState<File | null>(null);
+
+  // Admin profile photo
+  const [adminAvatarUrl, setAdminAvatarUrl] = useState<string | null>(null);
+  const [adminPhotoFile, setAdminPhotoFile] = useState<File | null>(null);
+  const [adminPhotoSaving, setAdminPhotoSaving] = useState(false);
+
+  // Student ID config
+  const [codeConfig, setCodeConfig] = useState<StudentCodeConfig>({ prefix: "LL", padding: 4, includeYear: false });
+  const [codeConfigSaving, setCodeConfigSaving] = useState(false);
+
+  // Grading scales
+  const [gradingScales, setGradingScales] = useState<GradingScale[]>([]);
+  const [gradingModal, setGradingModal] = useState(false);
+  const [editingScale, setEditingScale] = useState<GradingScale | null>(null);
+  const [gradingForm, setGradingForm] = useState({ label: "", description: "", color: "#6b7280", minScore: "", maxScore: "", sortOrder: "0" });
+  const [gradingFormError, setGradingFormError] = useState<string | null>(null);
+
   const load = useCallback(async () => {
     if (!schoolId) { setLoading(false); return; }
     setLoading(true);
     setError(null);
 
-    const [{ data: school }, { data: branches }, { data: years }, { data: hols }, { data: periods }] =
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sb = supabase as any;
+    const [{ data: school }, { data: branches }, { data: years }, { data: hols }, { data: periods }, { data: teacherRows }, { data: codeRow }, { data: scaleRows }] =
       await Promise.all([
         supabase.from("schools").select("name").eq("id", schoolId).single(),
         supabase.from("branches").select("name, address").eq("school_id", schoolId).limit(1).maybeSingle(),
         supabase.from("school_years").select("id, name, start_date, end_date, status").eq("school_id", schoolId).order("start_date", { ascending: false }),
         supabase.from("holidays").select("id, name, date, applies_to_all, is_no_class, notes").eq("school_id", schoolId).order("date"),
         supabase.from("academic_periods").select("id, school_year_id, name, start_date, end_date, is_active, school_years(name)").eq("school_id", schoolId).order("start_date"),
+        sb.from("teacher_profiles").select("id, full_name, email, phone, start_date, end_date, is_active, notes, avatar_url").eq("school_id", schoolId).order("full_name"),
+        sb.from("schools").select("student_code_prefix, student_code_padding, student_code_include_year").eq("id", schoolId).single(),
+        sb.from("grading_scales").select("id, label, description, color, min_score, max_score, sort_order").eq("school_id", schoolId).order("sort_order"),
       ]);
 
     setSchoolInfo({
@@ -120,17 +197,80 @@ export default function SettingsPage() {
       isActive: p.is_active,
     })));
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    setTeachers((teacherRows ?? []).map((t: any) => ({
+      id: t.id,
+      fullName: t.full_name,
+      email: t.email ?? "",
+      phone: t.phone ?? "",
+      startDate: t.start_date ?? "",
+      endDate: t.end_date ?? "",
+      isActive: t.is_active,
+      notes: t.notes ?? "",
+      avatarUrl: t.avatar_url ?? null,
+    })));
+
+    if (codeRow) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const cr = codeRow as any;
+      setCodeConfig({
+        prefix: cr.student_code_prefix ?? "LL",
+        padding: cr.student_code_padding ?? 4,
+        includeYear: cr.student_code_include_year ?? false,
+      });
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    setGradingScales((scaleRows ?? []).map((s: any) => ({
+      id: s.id,
+      label: s.label,
+      description: s.description ?? "",
+      color: s.color ?? "#6b7280",
+      minScore: s.min_score != null ? String(s.min_score) : "",
+      maxScore: s.max_score != null ? String(s.max_score) : "",
+      sortOrder: s.sort_order ?? 0,
+    })));
+
     setLoading(false);
   }, [schoolId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (!userId) return;
+    supabase.from("profiles").select("avatar_url").eq("id", userId).single()
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .then(({ data }) => { if ((data as any)?.avatar_url) setAdminAvatarUrl((data as any).avatar_url); });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
+
+  async function uploadProfilePhoto(folder: string, id: string, file: File): Promise<string | null> {
+    const compressed = await compressImage(file, PROFILE_PHOTO_MAX_W, PROFILE_PHOTO_MAX_BYTES);
+    const path = `${folder}/${id}.jpg`;
+    const { error } = await supabase.storage.from("profile-photos").upload(path, compressed, { upsert: true, contentType: "image/jpeg" });
+    if (error) return null;
+    const { data } = supabase.storage.from("profile-photos").getPublicUrl(path);
+    return `${data.publicUrl}?t=${Date.now()}`;
+  }
+
+  async function saveAdminPhoto() {
+    if (!adminPhotoFile || !userId) return;
+    setAdminPhotoSaving(true);
+    const url = await uploadProfilePhoto("admins", userId, adminPhotoFile);
+    if (url) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (supabase as any).from("profiles").update({ avatar_url: url }).eq("id", userId);
+      setAdminAvatarUrl(url);
+      setAdminPhotoFile(null);
+    }
+    setAdminPhotoSaving(false);
+  }
 
   // ── School Info ──
   async function saveSchoolInfo() {
     if (!schoolId) return;
     setSaving(true);
     const { error: e1 } = await supabase.from("schools").update({ name: schoolInfo.schoolName }).eq("id", schoolId);
-    // Upsert branch (simplified: update first branch or create)
     const { data: existing } = await supabase.from("branches").select("id").eq("school_id", schoolId).limit(1).maybeSingle();
     if (existing?.id) {
       await supabase.from("branches").update({ name: schoolInfo.branchName, address: schoolInfo.address }).eq("id", existing.id);
@@ -157,7 +297,6 @@ export default function SettingsPage() {
     setSaving(true);
     setError(null);
 
-    // If setting active, first demote any current active year
     if (syForm.status === "active") {
       await supabase.from("school_years").update({ status: "draft" }).eq("school_id", schoolId).eq("status", "active");
     }
@@ -176,16 +315,18 @@ export default function SettingsPage() {
     }
     setSyModal(false);
     setSaving(false);
-    if (syForm.status === "active") refreshCtx();
     await load();
+    // Refresh context after local state is updated to avoid unmount resetting the active section
+    if (syForm.status === "active") refreshCtx();
   }
 
   async function setActiveSy(id: string) {
     if (!schoolId) return;
     await supabase.from("school_years").update({ status: "draft" }).eq("school_id", schoolId).eq("status", "active");
     await supabase.from("school_years").update({ status: "active" }).eq("id", id);
-    refreshCtx();
     await load();
+    // Call refreshCtx after load() so the page state is stable before context triggers a re-render
+    refreshCtx();
   }
 
   // ── Academic Periods ──
@@ -275,6 +416,129 @@ export default function SettingsPage() {
     setHolidays((prev) => prev.filter((h) => h.id !== id));
   }
 
+  // ── Teachers ──
+  function openAddTeacher() {
+    setEditingTeacher(null);
+    setTeacherForm(EMPTY_TEACHER);
+    setTeacherPhotoFile(null);
+    setTeacherFormError(null);
+    setTeacherModal(true);
+  }
+  function openEditTeacher(t: TeacherProfile) {
+    setEditingTeacher(t);
+    setTeacherForm({ fullName: t.fullName, email: t.email, phone: t.phone, startDate: t.startDate, endDate: t.endDate, isActive: t.isActive, notes: t.notes, avatarUrl: t.avatarUrl });
+    setTeacherPhotoFile(null);
+    setTeacherFormError(null);
+    setTeacherModal(true);
+  }
+  async function saveTeacher() {
+    if (!teacherForm.fullName.trim()) { setTeacherFormError("Full name is required."); return; }
+    if (!schoolId) return;
+    setSaving(true);
+    setTeacherFormError(null);
+
+    const payload = {
+      school_id: schoolId,
+      full_name: teacherForm.fullName.trim(),
+      email: teacherForm.email.trim() || null,
+      phone: teacherForm.phone.trim() || null,
+      start_date: teacherForm.startDate || null,
+      end_date: teacherForm.endDate || null,
+      is_active: teacherForm.isActive,
+      notes: teacherForm.notes.trim() || null,
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sb = supabase as any;
+    let savedId: string | null = editingTeacher?.id ?? null;
+    if (editingTeacher) {
+      const { error: e } = await sb.from("teacher_profiles").update(payload).eq("id", editingTeacher.id);
+      if (e) { setTeacherFormError(e.message); setSaving(false); return; }
+    } else {
+      const { data: ins, error: e } = await sb.from("teacher_profiles").insert(payload).select("id").single();
+      if (e) { setTeacherFormError(e.message); setSaving(false); return; }
+      savedId = ins?.id ?? null;
+    }
+
+    if (teacherPhotoFile && savedId) {
+      const url = await uploadProfilePhoto("teachers", savedId, teacherPhotoFile);
+      if (url) {
+        await sb.from("teacher_profiles").update({ avatar_url: url }).eq("id", savedId);
+      }
+      setTeacherPhotoFile(null);
+    }
+
+    setTeacherModal(false);
+    setSaving(false);
+    await load();
+  }
+  async function deleteTeacher(id: string) {
+    if (!confirm("Remove this teacher profile?")) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase as any).from("teacher_profiles").delete().eq("id", id);
+    setTeachers((prev) => prev.filter((t) => t.id !== id));
+  }
+
+  // ── Student ID Config ──
+  async function saveCodeConfig() {
+    if (!schoolId) return;
+    setCodeConfigSaving(true);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase as any).from("schools").update({
+      student_code_prefix: codeConfig.prefix.trim() || "LL",
+      student_code_padding: codeConfig.padding,
+      student_code_include_year: codeConfig.includeYear,
+    }).eq("id", schoolId);
+    setCodeConfigSaving(false);
+  }
+
+  // ── Grading Scales ──
+  function openAddScale() {
+    setEditingScale(null);
+    setGradingForm({ label: "", description: "", color: "#6b7280", minScore: "", maxScore: "", sortOrder: String(gradingScales.length + 1) });
+    setGradingFormError(null);
+    setGradingModal(true);
+  }
+  function openEditScale(s: GradingScale) {
+    setEditingScale(s);
+    setGradingForm({ label: s.label, description: s.description, color: s.color, minScore: s.minScore, maxScore: s.maxScore, sortOrder: String(s.sortOrder) });
+    setGradingFormError(null);
+    setGradingModal(true);
+  }
+  async function saveScale() {
+    if (!gradingForm.label.trim()) { setGradingFormError("Label is required."); return; }
+    if (!schoolId) return;
+    setSaving(true);
+    setGradingFormError(null);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sb = supabase as any;
+    const payload = {
+      school_id: schoolId,
+      label: gradingForm.label.trim(),
+      description: gradingForm.description.trim() || null,
+      color: gradingForm.color,
+      min_score: gradingForm.minScore ? parseFloat(gradingForm.minScore) : null,
+      max_score: gradingForm.maxScore ? parseFloat(gradingForm.maxScore) : null,
+      sort_order: parseInt(gradingForm.sortOrder) || 0,
+    };
+    if (editingScale) {
+      const { error: e } = await sb.from("grading_scales").update(payload).eq("id", editingScale.id);
+      if (e) { setGradingFormError(e.message); setSaving(false); return; }
+    } else {
+      const { error: e } = await sb.from("grading_scales").insert(payload);
+      if (e) { setGradingFormError(e.message); setSaving(false); return; }
+    }
+    setGradingModal(false);
+    setSaving(false);
+    await load();
+  }
+  async function deleteScale(id: string) {
+    if (!confirm("Delete this grading scale?")) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase as any).from("grading_scales").delete().eq("id", id);
+    setGradingScales((prev) => prev.filter((s) => s.id !== id));
+  }
+
   if (!schoolId) {
     return (
       <div className="space-y-4">
@@ -338,11 +602,45 @@ export default function SettingsPage() {
             </Card>
           )}
 
+          {activeSection === "School Information" && (
+            <Card>
+              <CardContent className="p-5 space-y-4">
+                <h3 className="font-semibold text-sm">My Profile Photo</h3>
+                <div className="flex items-center gap-4">
+                  <AvatarUpload
+                    currentUrl={adminPhotoFile ? URL.createObjectURL(adminPhotoFile) : adminAvatarUrl}
+                    name={userName || "Admin"}
+                    size="lg"
+                    onFileSelect={(file) => setAdminPhotoFile(file)}
+                  />
+                  <div className="text-sm text-muted-foreground">
+                    <p className="font-medium text-foreground">{userName}</p>
+                    <p>Click the photo to change your avatar.</p>
+                    <p className="text-xs mt-0.5">Appears in the header and across the app.</p>
+                  </div>
+                </div>
+                {adminPhotoFile && (
+                  <div className="flex justify-end">
+                    <Button onClick={saveAdminPhoto} disabled={adminPhotoSaving}>
+                      {adminPhotoSaving ? "Saving…" : "Save Photo"}
+                    </Button>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           {/* ── School Years ── */}
           {activeSection === "School Years" && (
             <>
               <div className="flex items-center justify-between">
-                <h2>School Years</h2>
+                <div>
+                  <h2>School Years</h2>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    A school year covers the full academic calendar, e.g. SY 2026–2027.
+                    Academic Periods (terms, semesters) belong under a school year.
+                  </p>
+                </div>
                 <Button size="sm" onClick={openAddSy}><Plus className="w-4 h-4" /> Add School Year</Button>
               </div>
               {schoolYears.length === 0 && <p className="text-sm text-muted-foreground">No school years yet. Add one to get started.</p>}
@@ -378,7 +676,10 @@ export default function SettingsPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <h2>Academic Periods</h2>
-                  <p className="text-sm text-muted-foreground mt-1">Periods within a school year, e.g. Regular Term, Summer Program.</p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Terms, semesters, or billing periods within a school year — e.g. Regular Term, Summer Program.
+                    These are used for tuition configuration, billing, and reporting.
+                  </p>
                 </div>
                 <Button size="sm" onClick={openAddPeriod}><Plus className="w-4 h-4" /> Add Period</Button>
               </div>
@@ -460,6 +761,188 @@ export default function SettingsPage() {
               </Card>
             </>
           )}
+
+          {/* ── Teachers ── */}
+          {activeSection === "Teachers" && (
+            <>
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2>Teacher Profiles</h2>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Manage teacher records. These are used for class assignment and record-keeping.
+                  </p>
+                </div>
+                <Button size="sm" onClick={openAddTeacher}><Plus className="w-4 h-4" /> Add Teacher</Button>
+              </div>
+
+              {teachers.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No teacher profiles yet.</p>
+              ) : (
+                <Card className="overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-muted border-b border-border">
+                        <tr>
+                          <th className="text-left px-5 py-3 font-medium text-muted-foreground">Name</th>
+                          <th className="text-left px-5 py-3 font-medium text-muted-foreground">Email</th>
+                          <th className="text-left px-5 py-3 font-medium text-muted-foreground">Phone</th>
+                          <th className="text-left px-5 py-3 font-medium text-muted-foreground">Start Date</th>
+                          <th className="text-left px-5 py-3 font-medium text-muted-foreground">Status</th>
+                          <th className="px-5 py-3" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {teachers.map((t) => (
+                          <tr key={t.id} className="border-b border-border last:border-0 hover:bg-muted/50 transition-colors">
+                            <td className="px-5 py-3.5">
+                              <div className="flex items-center gap-3">
+                                <div className="w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-semibold flex-shrink-0 overflow-hidden">
+                                  {t.avatarUrl
+                                    ? <img src={t.avatarUrl} alt={t.fullName} className="w-full h-full object-cover" />
+                                    : t.fullName.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()
+                                  }
+                                </div>
+                                <span className="font-medium">{t.fullName}</span>
+                              </div>
+                            </td>
+                            <td className="px-5 py-3.5 text-muted-foreground">{t.email || "—"}</td>
+                            <td className="px-5 py-3.5 text-muted-foreground">{t.phone || "—"}</td>
+                            <td className="px-5 py-3.5 text-muted-foreground">{t.startDate || "—"}</td>
+                            <td className="px-5 py-3.5">
+                              <Badge variant={t.isActive ? "active" : "archived"}>{t.isActive ? "Active" : "Inactive"}</Badge>
+                            </td>
+                            <td className="px-5 py-3.5">
+                              <div className="flex items-center gap-2 justify-end">
+                                <button onClick={() => openEditTeacher(t)} className="p-1.5 hover:bg-accent rounded-lg">
+                                  <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
+                                </button>
+                                <button onClick={() => deleteTeacher(t.id)} className="p-1.5 hover:bg-red-50 rounded-lg">
+                                  <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </Card>
+              )}
+            </>
+          )}
+          {/* ── Student IDs ── */}
+          {activeSection === "Student IDs" && (
+            <Card>
+              <CardHeader>
+                <h2>Student ID Settings</h2>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Configure how student codes are automatically generated (e.g. LL-0001).
+                  Existing codes are not affected — only new students get auto-generated codes.
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Prefix</label>
+                    <Input
+                      value={codeConfig.prefix}
+                      onChange={(e) => setCodeConfig({ ...codeConfig, prefix: e.target.value })}
+                      placeholder="e.g. LL"
+                      maxLength={8}
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">Short text before the number (max 8 chars)</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Number Padding</label>
+                    <Select value={String(codeConfig.padding)} onChange={(e) => setCodeConfig({ ...codeConfig, padding: parseInt(e.target.value) })}>
+                      <option value="3">3 digits — e.g. 001</option>
+                      <option value="4">4 digits — e.g. 0001</option>
+                      <option value="5">5 digits — e.g. 00001</option>
+                    </Select>
+                  </div>
+                </div>
+
+                <label className="flex items-center gap-2 cursor-pointer text-sm">
+                  <input
+                    type="checkbox"
+                    checked={codeConfig.includeYear}
+                    onChange={(e) => setCodeConfig({ ...codeConfig, includeYear: e.target.checked })}
+                    className="w-4 h-4 rounded"
+                  />
+                  Include year in code (e.g. LL-26-0001 instead of LL-0001)
+                </label>
+
+                <div className="p-3 bg-muted rounded-lg text-sm">
+                  <span className="text-muted-foreground">Preview: </span>
+                  <span className="font-mono font-medium">
+                    {codeConfig.includeYear
+                      ? `${codeConfig.prefix || "LL"}-${String(new Date().getFullYear()).slice(-2)}-${String(1).padStart(codeConfig.padding, "0")}`
+                      : `${codeConfig.prefix || "LL"}-${String(1).padStart(codeConfig.padding, "0")}`
+                    }
+                  </span>
+                </div>
+
+                <div className="flex justify-end pt-2">
+                  <Button onClick={saveCodeConfig} disabled={codeConfigSaving}>
+                    {codeConfigSaving ? "Saving…" : "Save Settings"}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* ── Grading ── */}
+          {activeSection === "Grading" && (
+            <>
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2>Grading Scales</h2>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Define the labels used for student progress and observations.
+                    These replace the hardcoded ratings in the Progress page.
+                  </p>
+                </div>
+                <Button size="sm" onClick={openAddScale}><Plus className="w-4 h-4" /> Add Scale</Button>
+              </div>
+
+              {gradingScales.length === 0 && (
+                <p className="text-sm text-muted-foreground">No grading scales yet. Add one to get started.</p>
+              )}
+
+              <div className="space-y-3">
+                {gradingScales.sort((a, b) => a.sortOrder - b.sortOrder).map((s) => (
+                  <Card key={s.id}>
+                    <CardContent className="p-4 flex items-center justify-between gap-4">
+                      <div className="flex items-center gap-3 flex-1">
+                        <span
+                          className="w-4 h-4 rounded-full flex-shrink-0"
+                          style={{ backgroundColor: s.color }}
+                        />
+                        <div>
+                          <p className="font-semibold">{s.label}</p>
+                          {s.description && <p className="text-sm text-muted-foreground">{s.description}</p>}
+                          {(s.minScore || s.maxScore) && (
+                            <p className="text-xs text-muted-foreground">
+                              Score: {s.minScore || "—"} – {s.maxScore || "—"}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => openEditScale(s)} className="p-1.5 hover:bg-accent rounded-lg">
+                          <Pencil className="w-4 h-4 text-muted-foreground" />
+                        </button>
+                        <button onClick={() => deleteScale(s.id)} className="p-1.5 hover:bg-red-50 rounded-lg">
+                          <Trash2 className="w-4 h-4 text-red-500" />
+                        </button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </>
+          )}
+
         </div>
       </div>
 
@@ -491,7 +974,7 @@ export default function SettingsPage() {
             Mark as Active Period
           </label>
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={() => setPeriodModal(false)}>Cancel</Button>
+            <ModalCancelButton />
             <Button onClick={savePeriod} disabled={saving}>{saving ? "Saving…" : "Save"}</Button>
           </div>
         </div>
@@ -526,7 +1009,7 @@ export default function SettingsPage() {
             )}
           </div>
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={() => setSyModal(false)}>Cancel</Button>
+            <ModalCancelButton />
             <Button onClick={saveSy} disabled={!syForm.name || !syForm.startDate || !syForm.endDate || saving}>
               {saving ? "Saving…" : "Save"}
             </Button>
@@ -560,8 +1043,112 @@ export default function SettingsPage() {
             <Textarea value={holidayForm.notes} onChange={(e) => setHolidayForm({ ...holidayForm, notes: e.target.value })} rows={2} />
           </div>
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={() => setHolidayModal(false)}>Cancel</Button>
+            <ModalCancelButton />
             <Button onClick={saveHoliday} disabled={!holidayForm.name || !holidayForm.date || saving}>{saving ? "Saving…" : "Save"}</Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Grading Scale Modal */}
+      <Modal open={gradingModal} onClose={() => setGradingModal(false)} title={editingScale ? "Edit Grading Scale" : "Add Grading Scale"}>
+        <div className="space-y-4">
+          {gradingFormError && <ErrorAlert message={gradingFormError} />}
+          <div>
+            <label className="block text-sm font-medium mb-1">Label *</label>
+            <Input value={gradingForm.label} onChange={(e) => setGradingForm({ ...gradingForm, label: e.target.value })} placeholder="e.g. Emerging, Developing, Achieved" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Description</label>
+            <Input value={gradingForm.description} onChange={(e) => setGradingForm({ ...gradingForm, description: e.target.value })} placeholder="What this level means..." />
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">Color</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  value={gradingForm.color}
+                  onChange={(e) => setGradingForm({ ...gradingForm, color: e.target.value })}
+                  className="w-10 h-9 rounded border border-border cursor-pointer"
+                />
+                <Input value={gradingForm.color} onChange={(e) => setGradingForm({ ...gradingForm, color: e.target.value })} className="font-mono text-xs" />
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Min Score</label>
+              <Input type="number" value={gradingForm.minScore} onChange={(e) => setGradingForm({ ...gradingForm, minScore: e.target.value })} placeholder="Optional" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Max Score</label>
+              <Input type="number" value={gradingForm.maxScore} onChange={(e) => setGradingForm({ ...gradingForm, maxScore: e.target.value })} placeholder="Optional" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Sort Order</label>
+            <Input type="number" min={1} value={gradingForm.sortOrder} onChange={(e) => setGradingForm({ ...gradingForm, sortOrder: e.target.value })} />
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <ModalCancelButton />
+            <Button onClick={saveScale} disabled={saving || !gradingForm.label}>{saving ? "Saving…" : "Save"}</Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Teacher Modal */}
+      <Modal open={teacherModal} onClose={() => setTeacherModal(false)} title={editingTeacher ? "Edit Teacher" : "Add Teacher"}>
+        <div className="space-y-4">
+          {teacherFormError && <ErrorAlert message={teacherFormError} />}
+
+          {/* Photo */}
+          <div className="flex items-center gap-4">
+            <AvatarUpload
+              currentUrl={teacherPhotoFile ? URL.createObjectURL(teacherPhotoFile) : (teacherForm.avatarUrl || null)}
+              name={teacherForm.fullName || "Teacher"}
+              size="lg"
+              onFileSelect={(file) => setTeacherPhotoFile(file)}
+            />
+            <div className="text-sm text-muted-foreground">
+              <p className="font-medium text-foreground">Profile Photo</p>
+              <p>Click to upload a photo.</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="col-span-2">
+              <label className="block text-sm font-medium mb-1">Full Name *</label>
+              <Input value={teacherForm.fullName} onChange={(e) => setTeacherForm({ ...teacherForm, fullName: e.target.value })} placeholder="Teacher's full name" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Email</label>
+              <Input type="email" value={teacherForm.email} onChange={(e) => setTeacherForm({ ...teacherForm, email: e.target.value })} placeholder="teacher@school.com" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Phone</label>
+              <Input value={teacherForm.phone} onChange={(e) => setTeacherForm({ ...teacherForm, phone: e.target.value })} placeholder="09XXXXXXXXX" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Start Date</label>
+              <Input type="date" value={teacherForm.startDate} onChange={(e) => setTeacherForm({ ...teacherForm, startDate: e.target.value })} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">End Date</label>
+              <Input type="date" value={teacherForm.endDate} onChange={(e) => setTeacherForm({ ...teacherForm, endDate: e.target.value })} />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Notes</label>
+            <Textarea value={teacherForm.notes} onChange={(e) => setTeacherForm({ ...teacherForm, notes: e.target.value })} rows={2} placeholder="Optional notes" />
+          </div>
+
+          <label className="flex items-center gap-2 cursor-pointer text-sm">
+            <input type="checkbox" checked={teacherForm.isActive} onChange={(e) => setTeacherForm({ ...teacherForm, isActive: e.target.checked })} className="w-4 h-4 rounded" />
+            Active (currently employed)
+          </label>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <ModalCancelButton />
+            <Button onClick={saveTeacher} disabled={saving || !teacherForm.fullName}>{saving ? "Saving…" : "Save"}</Button>
           </div>
         </div>
       </Modal>

@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
-import { MessageSquare, Save, Check, AlertTriangle } from "lucide-react";
+import { MessageSquare, Save, Check, AlertTriangle, Search, CheckSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -48,6 +48,7 @@ export default function AttendancePage() {
   const [selectedDate, setSelectedDate] = useState(getTodayStr());
   const [students, setStudents] = useState<StudentRow[]>([]);
   const [noteStudentId, setNoteStudentId] = useState<string | null>(null);
+  const [studentSearch, setStudentSearch] = useState("");
   const [holiday, setHoliday] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingStudents, setLoadingStudents] = useState(false);
@@ -138,6 +139,11 @@ export default function AttendancePage() {
   useEffect(() => {
     if (selectedClass) loadAttendance();
   }, [selectedClass, selectedDate, loadAttendance]);
+
+  function markAllPresent() {
+    setSaved(false);
+    setStudents((prev) => prev.map((s) => ({ ...s, status: "present" as AttendanceStatus })));
+  }
 
   function setStatus(studentId: string, status: AttendanceStatus) {
     setSaved(false);
@@ -248,12 +254,38 @@ export default function AttendancePage() {
                   : ""}
               </p>
             </div>
-            {unmarked > 0 && (
-              <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">
-                {unmarked} unmarked
-              </span>
-            )}
+            <div className="flex items-center gap-2">
+              {unmarked > 0 && (
+                <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">
+                  {unmarked} unmarked
+                </span>
+              )}
+              {students.length > 0 && (
+                <button
+                  onClick={markAllPresent}
+                  className="flex items-center gap-1.5 text-xs bg-green-50 text-green-700 hover:bg-green-100 border border-green-200 px-2.5 py-1 rounded-lg transition-colors"
+                  title="Mark all students as Present"
+                >
+                  <CheckSquare className="w-3.5 h-3.5" />
+                  Mark All Present
+                </button>
+              )}
+            </div>
           </div>
+
+          {students.length > 0 && (
+            <div className="px-5 py-3 border-b border-border">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                <Input
+                  placeholder="Search students…"
+                  value={studentSearch}
+                  onChange={(e) => setStudentSearch(e.target.value)}
+                  className="pl-9 h-8 text-sm"
+                />
+              </div>
+            </div>
+          )}
 
           {students.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-10">
@@ -261,7 +293,9 @@ export default function AttendancePage() {
             </p>
           ) : (
             <div className="divide-y divide-border">
-              {students.map((student) => (
+              {students.filter((s) =>
+                !studentSearch || s.name.toLowerCase().includes(studentSearch.toLowerCase())
+              ).map((student) => (
                 <div key={student.studentId}>
                   <div className="flex items-center justify-between px-5 py-3.5 hover:bg-muted/40 transition-colors">
                     <div className="flex items-center gap-3">

@@ -1,12 +1,13 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { AlertTriangle, XCircle, Eye, X } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { Header } from "@/components/layout/Header";
 import { SchoolProvider, useSchoolContext } from "@/contexts/SchoolContext";
 import { Spinner } from "@/components/ui/spinner";
+import { createClient } from "@/lib/supabase/client";
 
 function TrialBanner() {
   const { trialStatus, trialDaysLeft, isTrialExpired } = useSchoolContext();
@@ -91,9 +92,31 @@ function ImpersonationBanner() {
 
 function Shell({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const { schoolName, activeYear, userName, userRole, loading, isTrialExpired } = useSchoolContext();
+  const [userAvatar, setUserAvatar] = useState<string | null>(null);
+  const { schoolName, activeYear, userName, userRole, userId, loading, isTrialExpired } = useSchoolContext();
+  const router = useRouter();
+  const pathname = usePathname();
+  const mainRef = useRef<HTMLElement>(null);
 
-  if (loading) {
+  useEffect(() => {
+    mainRef.current?.scrollTo({ top: 0 });
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!userId) return;
+    const supabase = createClient();
+    supabase.from("profiles").select("avatar_url").eq("id", userId).single()
+      .then(({ data }) => { if ((data as any)?.avatar_url) setUserAvatar((data as any).avatar_url); });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
+
+  useEffect(() => {
+    if (!loading && userRole === "parent") {
+      router.replace("/parent/dashboard");
+    }
+  }, [loading, userRole, router]);
+
+  if (loading || userRole === "parent") {
     return (
       <div className="flex items-center justify-center h-screen bg-background">
         <Spinner size="lg" />
@@ -105,7 +128,6 @@ function Shell({ children }: { children: React.ReactNode }) {
   const roleLabel =
     userRole === "school_admin" ? "School Admin"
     : userRole === "teacher"   ? "Teacher"
-    : userRole === "parent"    ? "Parent"
     : userRole === "super_admin" ? "Super Admin"
     : "User";
 
@@ -130,8 +152,9 @@ function Shell({ children }: { children: React.ReactNode }) {
             userName={userName || "User"}
             userRole={roleLabel}
             schoolYear={yearLabel}
+            userAvatar={userAvatar}
           />
-          <main className={`flex-1 overflow-y-auto p-6 ${isTrialExpired ? "pointer-events-none opacity-60" : ""}`}>
+          <main ref={mainRef} className={`flex-1 overflow-y-auto p-6 ${isTrialExpired ? "pointer-events-none opacity-60" : ""}`}>
             {isTrialExpired && (
               <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700 pointer-events-auto opacity-100">
                 Your trial has expired. Data is read-only.{" "}
