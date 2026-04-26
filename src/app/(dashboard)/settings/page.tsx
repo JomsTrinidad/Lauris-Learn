@@ -55,14 +55,24 @@ interface TeacherProfile {
   avatarUrl: string | null;
 }
 
-const SECTIONS = ["School Information", "School Years", "Academic Periods", "Holidays", "Teachers", "Student IDs", "Grading"] as const;
+const SECTIONS = ["School Information", "School Year & Terms", "Holidays", "Teachers", "Student IDs", "Grading"] as const;
 type Section = (typeof SECTIONS)[number];
 
 const SESSION_KEY = "settings_active_section";
 
 function getSavedSection(): Section {
   if (typeof window === "undefined") return "School Information";
-  return (sessionStorage.getItem(SESSION_KEY) as Section) ?? "School Information";
+  const saved = sessionStorage.getItem(SESSION_KEY);
+  // Remap legacy section names after the Academic Periods merge
+  if (saved === "School Years" || saved === "Academic Periods") return "School Year & Terms";
+  return (SECTIONS as readonly string[]).includes(saved ?? "") ? (saved as Section) : "School Information";
+}
+
+function formatDateRange(start: string, end: string) {
+  const opts: Intl.DateTimeFormatOptions = { month: "short", year: "numeric" };
+  const s = new Date(start + "T00:00:00").toLocaleDateString("en-US", opts);
+  const e = new Date(end + "T00:00:00").toLocaleDateString("en-US", opts);
+  return `${s} – ${e}`;
 }
 
 const EMPTY_TEACHER: Omit<TeacherProfile, "id"> = {
@@ -329,10 +339,10 @@ export default function SettingsPage() {
     refreshCtx();
   }
 
-  // ── Academic Periods ──
-  function openAddPeriod() {
+  // ── Academic Periods (Terms) ──
+  function openAddPeriod(schoolYearId: string) {
     setEditingPeriod(null);
-    setPeriodForm({ schoolYearId: schoolYears[0]?.id ?? "", name: "", startDate: "", endDate: "", isActive: false });
+    setPeriodForm({ schoolYearId, name: "", startDate: "", endDate: "", isActive: false });
     setPeriodModal(true);
   }
   function openEditPeriod(p: AcademicPeriod) {
@@ -342,7 +352,7 @@ export default function SettingsPage() {
   }
   async function savePeriod() {
     if (!schoolId || !periodForm.schoolYearId || !periodForm.name.trim() || !periodForm.startDate || !periodForm.endDate) {
-      setError("School year, name, start date, and end date are required.");
+      setError("Term name, start date, and end date are required.");
       return;
     }
     setSaving(true);
@@ -372,7 +382,7 @@ export default function SettingsPage() {
     await load();
   }
   async function deletePeriod(id: string) {
-    if (!confirm("Delete this academic period?")) return;
+    if (!confirm("Delete this term?")) return;
     await supabase.from("academic_periods").delete().eq("id", id);
     setAcademicPeriods((prev) => prev.filter((p) => p.id !== id));
   }
@@ -630,85 +640,86 @@ export default function SettingsPage() {
             </Card>
           )}
 
-          {/* ── School Years ── */}
-          {activeSection === "School Years" && (
+          {/* ── School Year & Terms ── */}
+          {activeSection === "School Year & Terms" && (
             <>
               <div className="flex items-center justify-between">
                 <div>
-                  <h2>School Years</h2>
+                  <h2>School Year &amp; Terms</h2>
                   <p className="text-sm text-muted-foreground mt-1">
-                    A school year covers the full academic calendar, e.g. SY 2026–2027.
-                    Academic Periods (terms, semesters) belong under a school year.
+                    Each school year can contain one or more terms — e.g. Regular Term, Summer Program.
+                    Terms are used for tuition setup, billing, and reporting.
                   </p>
                 </div>
                 <Button size="sm" onClick={openAddSy}><Plus className="w-4 h-4" /> Add School Year</Button>
               </div>
-              {schoolYears.length === 0 && <p className="text-sm text-muted-foreground">No school years yet. Add one to get started.</p>}
-              <div className="space-y-3">
-                {schoolYears.map((sy) => (
-                  <Card key={sy.id} className={sy.status === "active" ? "ring-2 ring-primary" : ""}>
-                    <CardContent className="p-4 flex items-center justify-between gap-4">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-1">
-                          <h3 className="font-semibold">{sy.name}</h3>
-                          <Badge variant={sy.status}>{sy.status}</Badge>
-                        </div>
-                        <p className="text-sm text-muted-foreground">{sy.startDate} — {sy.endDate}</p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {sy.status !== "active" && (
-                          <button onClick={() => setActiveSy(sy.id)} className="text-xs text-primary hover:underline">Set Active</button>
-                        )}
-                        <button onClick={() => openEditSy(sy)} className="p-1.5 hover:bg-accent rounded-lg transition-colors">
-                          <Pencil className="w-4 h-4 text-muted-foreground" />
-                        </button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            </>
-          )}
-
-          {/* ── Academic Periods ── */}
-          {activeSection === "Academic Periods" && (
-            <>
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2>Academic Periods</h2>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    Terms, semesters, or billing periods within a school year — e.g. Regular Term, Summer Program.
-                    These are used for tuition configuration, billing, and reporting.
-                  </p>
-                </div>
-                <Button size="sm" onClick={openAddPeriod}><Plus className="w-4 h-4" /> Add Period</Button>
-              </div>
-              {academicPeriods.length === 0 && (
-                <p className="text-sm text-muted-foreground">No academic periods yet.</p>
+              {schoolYears.length === 0 && (
+                <p className="text-sm text-muted-foreground">No school years yet. Add one to get started.</p>
               )}
-              <div className="space-y-3">
-                {academicPeriods.map((p) => (
-                  <Card key={p.id} className={p.isActive ? "ring-2 ring-primary" : ""}>
-                    <CardContent className="p-4 flex items-center justify-between gap-4">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-1">
-                          <h3 className="font-semibold">{p.name}</h3>
-                          {p.isActive && <Badge variant="active">Active</Badge>}
-                          <span className="text-xs text-muted-foreground">({p.schoolYearName})</span>
+              <div className="space-y-4">
+                {schoolYears.map((sy) => {
+                  const syTerms = academicPeriods.filter((p) => p.schoolYearId === sy.id);
+                  return (
+                    <Card key={sy.id} className={sy.status === "active" ? "ring-2 ring-primary" : ""}>
+                      <CardContent className="p-4">
+                        {/* School year row */}
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-0.5">
+                              <h3 className="font-semibold">{sy.name}</h3>
+                              <Badge variant={sy.status}>{sy.status}</Badge>
+                            </div>
+                            <p className="text-sm text-muted-foreground">{formatDateRange(sy.startDate, sy.endDate)}</p>
+                          </div>
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            {sy.status !== "active" && (
+                              <button onClick={() => setActiveSy(sy.id)} className="text-xs text-primary hover:underline">
+                                Set Active
+                              </button>
+                            )}
+                            <button onClick={() => openEditSy(sy)} className="p-1.5 hover:bg-accent rounded-lg transition-colors">
+                              <Pencil className="w-4 h-4 text-muted-foreground" />
+                            </button>
+                          </div>
                         </div>
-                        <p className="text-sm text-muted-foreground">{p.startDate} — {p.endDate}</p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button onClick={() => openEditPeriod(p)} className="p-1.5 hover:bg-accent rounded-lg transition-colors">
-                          <Pencil className="w-4 h-4 text-muted-foreground" />
+
+                        {/* Nested terms */}
+                        {syTerms.length > 0 && (
+                          <div className="mt-3 space-y-1 pl-4 border-l-2 border-border">
+                            {syTerms.map((term) => (
+                              <div key={term.id} className="flex items-center justify-between py-1.5">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-sm font-medium">{term.name}</span>
+                                  {term.isActive && <Badge variant="active">Active</Badge>}
+                                  <span className="text-xs text-muted-foreground">
+                                    {formatDateRange(term.startDate, term.endDate)}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1 flex-shrink-0">
+                                  <button onClick={() => openEditPeriod(term)} className="p-1.5 hover:bg-accent rounded-lg transition-colors">
+                                    <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
+                                  </button>
+                                  <button onClick={() => deletePeriod(term.id)} className="p-1.5 hover:bg-red-50 rounded-lg">
+                                    <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Add term inline */}
+                        <button
+                          onClick={() => openAddPeriod(sy.id)}
+                          className="mt-3 flex items-center gap-1.5 text-xs text-primary hover:underline pl-4"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          Add Term
                         </button>
-                        <button onClick={() => deletePeriod(p.id)} className="p-1.5 hover:bg-red-50 rounded-lg">
-                          <Trash2 className="w-4 h-4 text-red-500" />
-                        </button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
+                      </CardContent>
+                    </Card>
+                  );
+                })}
               </div>
             </>
           )}
@@ -946,17 +957,16 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      {/* Academic Period Modal */}
-      <Modal open={periodModal} onClose={() => setPeriodModal(false)} title={editingPeriod ? "Edit Academic Period" : "Add Academic Period"}>
+      {/* Term Modal */}
+      <Modal open={periodModal} onClose={() => setPeriodModal(false)} title={editingPeriod ? "Edit Term" : "Add Term"}>
         <div className="space-y-4">
+          {periodForm.schoolYearId && (
+            <p className="text-sm text-muted-foreground">
+              Under: <strong>{schoolYears.find((sy) => sy.id === periodForm.schoolYearId)?.name ?? ""}</strong>
+            </p>
+          )}
           <div>
-            <label className="block text-sm font-medium mb-1">School Year *</label>
-            <Select value={periodForm.schoolYearId} onChange={(e) => setPeriodForm({ ...periodForm, schoolYearId: e.target.value })}>
-              {schoolYears.map((sy) => <option key={sy.id} value={sy.id}>{sy.name}</option>)}
-            </Select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">Period Name *</label>
+            <label className="block text-sm font-medium mb-1">Term Name *</label>
             <Input value={periodForm.name} onChange={(e) => setPeriodForm({ ...periodForm, name: e.target.value })} placeholder="e.g. Regular Term, Summer Program" />
           </div>
           <div className="grid grid-cols-2 gap-4">
@@ -971,7 +981,7 @@ export default function SettingsPage() {
           </div>
           <label className="flex items-center gap-2 cursor-pointer text-sm">
             <input type="checkbox" checked={periodForm.isActive} onChange={(e) => setPeriodForm({ ...periodForm, isActive: e.target.checked })} className="w-4 h-4 rounded" />
-            Mark as Active Period
+            Mark as active term
           </label>
           <div className="flex justify-end gap-2 pt-2">
             <ModalCancelButton />

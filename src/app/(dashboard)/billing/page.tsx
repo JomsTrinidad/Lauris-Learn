@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState, useRef, useCallback } from "react";
 import {
-  Search, Plus, DollarSign, X, Pencil, Trash2, CheckSquare, History,
+  Search, Plus, Banknote, X, Pencil, Trash2, CheckSquare, History,
   FileText, Printer, AlertTriangle, Wand2, Check, ImageIcon, HelpCircle,
   ChevronDown, ChevronRight, BookOpen, Tag, Receipt, Settings2,
 } from "lucide-react";
@@ -1293,7 +1293,7 @@ export default function BillingPage() {
           )}
           {mainTab === "payments" && (
             <Button onClick={() => { setPayBillSearch(""); setPayBillSelectModal(true); }}>
-              <DollarSign className="w-4 h-4" /> Record Payment
+              <Banknote className="w-4 h-4" /> Record Payment
             </Button>
           )}
         </div>
@@ -1304,7 +1304,7 @@ export default function BillingPage() {
       {/* Main Tab Bar */}
       <div className="border-b border-border">
         <nav className="flex gap-1">
-          {([["bills", "Bills", Receipt], ["payments", "Payments", DollarSign], ["setup", "Setup", Settings2]] as const).map(([tab, label, Icon]) => (
+          {([["bills", "Bills", Receipt], ["payments", "Payments", Banknote], ["setup", "Setup", Settings2]] as const).map(([tab, label, Icon]) => (
             <button key={tab} onClick={() => setMainTab(tab as MainTab)}
               className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px ${mainTab === tab ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
               <Icon className="w-4 h-4" />{label}
@@ -1395,7 +1395,7 @@ export default function BillingPage() {
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-1 justify-end">
                             {r.status !== "paid" && r.status !== "cancelled" && r.status !== "refunded" && r.status !== "waived" && (
-                              <Button size="sm" variant="outline" onClick={() => openPaymentModal(r)}><DollarSign className="w-3.5 h-3.5" /> Pay</Button>
+                              <Button size="sm" variant="outline" onClick={() => openPaymentModal(r)}><Banknote className="w-3.5 h-3.5" /> Pay</Button>
                             )}
                             <Button size="sm" variant="ghost" onClick={() => openHistoryModal(r)} title="Payment history"><History className="w-3.5 h-3.5" /></Button>
                             <Button size="sm" variant="ghost" onClick={() => openEditModal(r)} title="Edit"><Pencil className="w-3.5 h-3.5" /></Button>

@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import {
   Users, UserCheck, AlertCircle, Calendar, CheckSquare, ArrowRight,
+  CheckCircle2, Clock, AlertTriangle,
 } from "lucide-react";
 import Link from "next/link";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -41,6 +42,14 @@ interface RecentUpdate {
   createdAt: string;
 }
 
+interface StudentAlert {
+  type: string;
+  label: string;
+  description: string;
+  href: string;
+  count: number;
+}
+
 function formatTime12(t: string) {
   const [h, m] = t.split(":");
   const hr = parseInt(h);
@@ -71,6 +80,9 @@ export default function DashboardPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [todayClasses, setTodayClasses] = useState<TodayClass[]>([]);
   const [recentUpdates, setRecentUpdates] = useState<RecentUpdate[]>([]);
+  const [totalAttByClass, setTotalAttByClass] = useState<Record<string, number>>({});
+  const [showEnrollmentSnapshot, setShowEnrollmentSnapshot] = useState(true);
+  const [studentAlerts, setStudentAlerts] = useState<StudentAlert[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -83,15 +95,15 @@ export default function DashboardPage() {
     setLoading(true);
     const today = new Date().toISOString().split("T")[0];
     const yearId = activeYear?.id ?? null;
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-    // Enrolled students count
     const { count: totalEnrolled } = await supabase
       .from("enrollments")
       .select("id", { count: "exact", head: true })
       .eq("status", "enrolled")
       .eq("school_year_id", yearId ?? "");
 
-    // Today attendance
     const { count: presentToday } = await supabase
       .from("attendance_records")
       .select("id", { count: "exact", head: true })
@@ -104,7 +116,6 @@ export default function DashboardPage() {
       .eq("status", "absent")
       .eq("date", today);
 
-    // Unpaid billing
     const { data: billingRows } = await supabase
       .from("billing_records")
       .select("id, amount_due")
@@ -115,10 +126,7 @@ export default function DashboardPage() {
       .from("payments")
       .select("billing_record_id, amount")
       .eq("status", "confirmed")
-      .in(
-        "billing_record_id",
-        (billingRows ?? []).map((b) => b.id)
-      );
+      .in("billing_record_id", (billingRows ?? []).map((b) => b.id));
 
     const paidByBilling = (paymentRows ?? []).reduce(
       (acc, p) => {
@@ -138,7 +146,6 @@ export default function DashboardPage() {
       return Number(b.amount_due) - paid > 0;
     }).length;
 
-    // Upcoming events (next 30 days)
     const future = new Date();
     future.setDate(future.getDate() + 30);
     const { count: upcomingEvents } = await supabase
@@ -148,15 +155,20 @@ export default function DashboardPage() {
       .gte("event_date", today)
       .lte("event_date", future.toISOString().split("T")[0]);
 
-    // Enrollment pipeline counts
     const { data: inquiryRows } = await supabase
       .from("enrollment_inquiries")
-      .select("status")
+      .select("status, created_at")
       .eq("school_id", schoolId!);
 
     const inquiryCount = (inquiryRows ?? []).filter((r) => r.status === "inquiry").length;
     const waitlistedCount = (inquiryRows ?? []).filter((r) => r.status === "waitlisted").length;
     const enrolledCount = totalEnrolled ?? 0;
+    const recentActivity = (inquiryRows ?? []).filter(
+      (r) => new Date(r.created_at) >= sevenDaysAgo
+    ).length;
+
+    const shouldShowSnapshot = inquiryCount > 0 || waitlistedCount > 0 || recentActivity > 0;
+    setShowEnrollmentSnapshot(shouldShowSnapshot);
 
     setStats({
       totalEnrolled: totalEnrolled ?? 0,
@@ -170,7 +182,6 @@ export default function DashboardPage() {
       enrolledCount,
     });
 
-    // Today's classes
     if (yearId) {
       const { data: classRows } = await supabase
         .from("classes")
@@ -184,8 +195,9 @@ export default function DashboardPage() {
         .eq("is_active", true)
         .order("start_time");
 
-      // Get today's present count per class
       const classIds = (classRows ?? []).map((c) => c.id);
+
+      // Present count per class today
       const { data: attRows } = await supabase
         .from("attendance_records")
         .select("class_id, status")
@@ -198,12 +210,25 @@ export default function DashboardPage() {
         presentByClass[a.class_id] = (presentByClass[a.class_id] ?? 0) + 1;
       });
 
-      // Get enrolled count per class
+      // Total records (all statuses) per class today — detects whether attendance was marked
+      const { data: totalAttRows } = await supabase
+        .from("attendance_records")
+        .select("class_id")
+        .in("class_id", classIds)
+        .eq("date", today);
+
+      const totalAttMap: Record<string, number> = {};
+      (totalAttRows ?? []).forEach((a) => {
+        totalAttMap[a.class_id] = (totalAttMap[a.class_id] ?? 0) + 1;
+      });
+      setTotalAttByClass(totalAttMap);
+
       const { data: enrollRows } = await supabase
         .from("enrollments")
         .select("class_id")
         .in("class_id", classIds)
         .eq("status", "enrolled");
+
       const enrolledByClass: Record<string, number> = {};
       (enrollRows ?? []).forEach((e) => {
         enrolledByClass[e.class_id] = (enrolledByClass[e.class_id] ?? 0) + 1;
@@ -227,9 +252,63 @@ export default function DashboardPage() {
           };
         })
       );
+
+      // Student alerts — only fetched when enrollment snapshot is hidden
+      if (!shouldShowSnapshot) {
+        const { data: enrolledForAlerts } = await supabase
+          .from("enrollments")
+          .select("student_id")
+          .eq("school_year_id", yearId)
+          .eq("status", "enrolled");
+
+        const allEnrolledIds = [
+          ...new Set((enrolledForAlerts ?? []).map((e) => e.student_id)),
+        ];
+
+        const alerts: StudentAlert[] = [];
+
+        if (allEnrolledIds.length > 0) {
+          const { data: billedStudents } = await supabase
+            .from("billing_records")
+            .select("student_id")
+            .eq("school_id", schoolId!);
+
+          const billedSet = new Set((billedStudents ?? []).map((b) => b.student_id));
+          const noBillingCount = allEnrolledIds.filter((id) => !billedSet.has(id)).length;
+
+          if (noBillingCount > 0) {
+            alerts.push({
+              type: "no_billing",
+              label: `${noBillingCount} student${noBillingCount > 1 ? "s" : ""} without billing records`,
+              description: "No billing records generated for this school year.",
+              href: "/billing",
+              count: noBillingCount,
+            });
+          }
+
+          const { data: guardiansData } = await supabase
+            .from("guardians")
+            .select("student_id")
+            .in("student_id", allEnrolledIds);
+
+          const guardianSet = new Set((guardiansData ?? []).map((g) => g.student_id));
+          const noGuardianCount = allEnrolledIds.filter((id) => !guardianSet.has(id)).length;
+
+          if (noGuardianCount > 0) {
+            alerts.push({
+              type: "no_guardian",
+              label: `${noGuardianCount} student${noGuardianCount > 1 ? "s" : ""} missing contact info`,
+              description: "No guardian linked to these students.",
+              href: "/students",
+              count: noGuardianCount,
+            });
+          }
+        }
+
+        setStudentAlerts(alerts);
+      }
     }
 
-    // Recent parent updates
     const { data: updateRows } = await supabase
       .from("parent_updates")
       .select("id, content, created_at, class:classes(name), author:profiles(full_name)")
@@ -253,6 +332,20 @@ export default function DashboardPage() {
   }
 
   if (loading) return <PageSpinner />;
+
+  // A class is considered "marked" if it has no enrolled students (nothing to mark)
+  // or has at least one attendance record today.
+  const isClassMarked = (cls: TodayClass) =>
+    cls.totalEnrolled === 0 || (totalAttByClass[cls.id] ?? 0) > 0;
+
+  const allClassesMarked =
+    todayClasses.length > 0 && todayClasses.every(isClassMarked);
+
+  const totalPresentAll = todayClasses.reduce((sum, c) => sum + c.presentCount, 0);
+  const totalAbsentAll = todayClasses.reduce(
+    (sum, c) => sum + Math.max(0, c.totalEnrolled - c.presentCount),
+    0
+  );
 
   const summaryCards = [
     {
@@ -290,10 +383,11 @@ export default function DashboardPage() {
           <h1>Dashboard</h1>
           {!activeYear && (
             <div className="mt-2 px-4 py-2 bg-yellow-50 border border-yellow-200 rounded-lg text-sm text-yellow-700">
-              No active school year. Go to <Link href="/settings" className="underline">Settings → School Years</Link> to set one.
+              No active school year. Go to{" "}
+              <Link href="/settings" className="underline">Settings → School Years</Link> to set one.
             </div>
           )}
-          <p className="text-muted-foreground mt-1 text-sm">Welcome back! Here's what's happening today.</p>
+          <p className="text-muted-foreground mt-1 text-sm">Welcome back! Here&apos;s what&apos;s happening today.</p>
         </div>
         <div className="text-right flex-shrink-0 hidden sm:block">
           <p className="text-base font-semibold text-foreground">{day}</p>
@@ -323,42 +417,90 @@ export default function DashboardPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Today's Classes */}
+        {/* Today's Progress */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between py-4">
-            <h2>Today's Classes</h2>
-            <Link href="/attendance" className="text-sm text-primary hover:underline flex items-center gap-1">
-              Mark Attendance <ArrowRight className="w-3.5 h-3.5" />
-            </Link>
+            <h2>Today&apos;s Progress</h2>
+            {!allClassesMarked && todayClasses.length > 0 && (
+              <Link href="/attendance" className="text-sm text-primary hover:underline flex items-center gap-1">
+                View Attendance <ArrowRight className="w-3.5 h-3.5" />
+              </Link>
+            )}
           </CardHeader>
           <CardContent className="p-0">
             {todayClasses.length === 0 ? (
               <p className="px-6 py-8 text-sm text-muted-foreground text-center">
-                {activeYear ? "No classes configured for today." : "Set up an active school year to see classes."}
+                {activeYear
+                  ? "No classes configured for today."
+                  : "Set up an active school year to see classes."}
               </p>
+            ) : allClassesMarked ? (
+              <div className="px-6 py-6 text-center space-y-4">
+                <div className="flex justify-center">
+                  <div className="bg-green-100 p-4 rounded-full">
+                    <CheckCircle2 className="w-8 h-8 text-green-600" />
+                  </div>
+                </div>
+                <div>
+                  <p className="font-semibold text-base">All classes completed today</p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {todayClasses.length}{" "}
+                    {todayClasses.length === 1 ? "class" : "classes"} &middot;{" "}
+                    {totalPresentAll} present &middot; {totalAbsentAll} absent
+                  </p>
+                </div>
+                <Link
+                  href="/attendance"
+                  className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline"
+                >
+                  View Attendance Summary <ArrowRight className="w-3.5 h-3.5" />
+                </Link>
+              </div>
             ) : (
               <div className="divide-y divide-border">
-                {todayClasses.map((cls) => (
-                  <div key={cls.id} className="flex items-center justify-between px-6 py-4">
-                    <div>
-                      <p className="font-medium text-sm">{cls.name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {formatTime12(cls.startTime)} – {formatTime12(cls.endTime)}
-                      </p>
-                      <p className="text-xs text-muted-foreground">Teacher: {cls.teacherName}</p>
+                {todayClasses.map((cls) => {
+                  const marked = isClassMarked(cls);
+                  return (
+                    <div key={cls.id} className="flex items-center justify-between px-6 py-4">
+                      <div className="flex items-start gap-3">
+                        {marked ? (
+                          <CheckCircle2 className="w-4 h-4 text-green-500 mt-0.5 shrink-0" />
+                        ) : (
+                          <Clock className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
+                        )}
+                        <div>
+                          <p className="font-medium text-sm">{cls.name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {formatTime12(cls.startTime)} – {formatTime12(cls.endTime)}
+                          </p>
+                          {marked && cls.totalEnrolled > 0 && (
+                            <p className="text-xs text-green-600 font-medium mt-0.5">
+                              {cls.presentCount}/{cls.totalEnrolled} present
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      <div>
+                        {marked ? (
+                          <Link
+                            href={`/attendance?class=${cls.id}`}
+                            className="text-xs text-primary hover:underline"
+                          >
+                            Update
+                          </Link>
+                        ) : (
+                          <Link
+                            href={`/attendance?class=${cls.id}`}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-primary-foreground rounded-lg text-xs font-medium hover:opacity-90 transition-opacity"
+                          >
+                            <CheckSquare className="w-3.5 h-3.5" />
+                            Mark Attendance
+                          </Link>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex flex-col items-end gap-2">
-                      <span className="text-sm">{cls.presentCount}/{cls.totalEnrolled} present</span>
-                      <Link
-                        href={`/attendance?class=${cls.id}`}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-primary-foreground rounded-lg text-xs font-medium hover:opacity-90 transition-opacity"
-                      >
-                        <CheckSquare className="w-3.5 h-3.5" />
-                        Mark Attendance
-                      </Link>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </CardContent>
@@ -405,7 +547,9 @@ export default function DashboardPage() {
           <CardContent className="space-y-3">
             <div className="flex items-center justify-between p-3 bg-red-50 border border-red-200 rounded-lg">
               <span className="text-sm">Unpaid / Overdue</span>
-              <span className="text-sm font-medium text-red-700">{stats?.unpaidCount ?? 0} records</span>
+              <span className="text-sm font-medium text-red-700">
+                {stats?.unpaidCount ?? 0} records
+              </span>
             </div>
             <div className="flex items-center justify-between p-3 bg-orange-50 border border-orange-200 rounded-lg">
               <span className="text-sm">Outstanding Balance</span>
@@ -416,23 +560,62 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
 
-        {/* Enrollment Snapshot */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between py-4">
-            <h2>Enrollment Snapshot</h2>
-            <Link href="/enrollment" className="text-sm text-primary hover:underline flex items-center gap-1">
-              Manage <ArrowRight className="w-3.5 h-3.5" />
-            </Link>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {enrollmentSnapshot.map((item) => (
-              <div key={item.status} className="flex items-center justify-between p-3 bg-muted rounded-lg">
-                <Badge variant={item.variant}>{item.status}</Badge>
-                <span className="text-primary font-semibold">{item.count}</span>
+        {/* Enrollment Snapshot or Student Alerts */}
+        {showEnrollmentSnapshot ? (
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between py-4">
+              <h2>Enrollment Snapshot</h2>
+              <Link href="/enrollment" className="text-sm text-primary hover:underline flex items-center gap-1">
+                Manage <ArrowRight className="w-3.5 h-3.5" />
+              </Link>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {enrollmentSnapshot.map((item) => (
+                <div key={item.status} className="flex items-center justify-between p-3 bg-muted rounded-lg">
+                  <Badge variant={item.variant}>{item.status}</Badge>
+                  <span className="text-primary font-semibold">{item.count}</span>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        ) : (
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between py-4">
+              <div className="flex items-center gap-2">
+                <h2>Student Alerts</h2>
+                {studentAlerts.length > 0 && (
+                  <span className="text-xs bg-amber-100 text-amber-700 font-medium px-2 py-0.5 rounded-full">
+                    {studentAlerts.length}
+                  </span>
+                )}
               </div>
-            ))}
-          </CardContent>
-        </Card>
+              <Link href="/students" className="text-sm text-primary hover:underline flex items-center gap-1">
+                View Students <ArrowRight className="w-3.5 h-3.5" />
+              </Link>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {studentAlerts.length === 0 ? (
+                <div className="flex items-center gap-3 p-4 bg-green-50 border border-green-200 rounded-lg">
+                  <CheckCircle2 className="w-5 h-5 text-green-600 shrink-0" />
+                  <p className="text-sm text-green-700">All clear — no action items.</p>
+                </div>
+              ) : (
+                studentAlerts.map((alert) => (
+                  <Link key={alert.type} href={alert.href}>
+                    <div className="flex items-start gap-3 p-3 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-amber-900">{alert.label}</p>
+                        <p className="text-xs text-amber-700 mt-0.5">{alert.description}</p>
+                      </div>
+                      <ArrowRight className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    </div>
+                  </Link>
+                ))
+              )}
+            </CardContent>
+          </Card>
+        )}
       </div>
     </div>
   );
