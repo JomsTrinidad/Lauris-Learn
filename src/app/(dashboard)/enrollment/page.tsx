@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Plus, ArrowRight, Search } from "lucide-react";
+import { Plus, ArrowRight, Search, TrendingUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -90,7 +90,7 @@ export default function EnrollmentPage() {
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<InquiryStatus | "">("");
-  const [view, setView] = useState<"pipeline" | "table">("pipeline");
+  const [view, setView] = useState<"pipeline" | "table" | "funnel">("pipeline");
 
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState<InquiryForm>(EMPTY_FORM);
@@ -325,13 +325,13 @@ export default function EnrollmentPage() {
           <Input placeholder="Search child or parent name..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
         </div>
         <div className="flex gap-1 bg-muted p-1 rounded-lg">
-          {(["pipeline", "table"] as const).map((v) => (
+          {(["pipeline", "table", "funnel"] as const).map((v) => (
             <button
               key={v}
               onClick={() => setView(v)}
               className={`px-3 py-1 rounded-md text-sm font-medium transition-colors capitalize ${view === v ? "bg-card shadow-sm" : "text-muted-foreground"}`}
             >
-              {v}
+              {v === "funnel" ? <span className="flex items-center gap-1"><TrendingUp className="w-3.5 h-3.5" />Analytics</span> : v}
             </button>
           ))}
         </div>
@@ -443,6 +443,178 @@ export default function EnrollmentPage() {
           </div>
         </Card>
       )}
+
+      {/* Analytics / Funnel View */}
+      {view === "funnel" && (() => {
+        const total = inquiries.length;
+        const notProceeding = inquiries.filter((i) => i.status === "not_proceeding").length;
+        const enrolled = inquiries.filter((i) => i.status === "enrolled").length;
+        const active = total - notProceeding;
+        const conversionRate = total > 0 ? Math.round((enrolled / total) * 100) : 0;
+        const dropOffRate = total > 0 ? Math.round((notProceeding / total) * 100) : 0;
+
+        // Stage counts (active pipeline only)
+        const activePipeline = PIPELINE.filter((s) => s.status !== "not_proceeding");
+        const stageCounts = activePipeline.map((s) => ({
+          ...s,
+          count: inquiries.filter((i) => i.status === s.status).length,
+        }));
+        const maxCount = Math.max(...stageCounts.map((s) => s.count), 1);
+
+        // Source breakdown
+        const sourceCounts: Record<string, number> = {};
+        inquiries.forEach((i) => {
+          const src = i.inquirySource || "Unknown";
+          sourceCounts[src] = (sourceCounts[src] ?? 0) + 1;
+        });
+        const sources = Object.entries(sourceCounts).sort((a, b) => b[1] - a[1]);
+        const maxSource = Math.max(...sources.map((s) => s[1]), 1);
+
+        // Stage-to-stage conversion (forward progression)
+        const stageConversions = activePipeline.slice(0, -1).map((s, i) => {
+          const fromCount = stageCounts.slice(i).reduce((sum, x) => sum + x.count, 0);
+          const toCount = stageCounts.slice(i + 1).reduce((sum, x) => sum + x.count, 0);
+          return {
+            from: s.label,
+            to: activePipeline[i + 1].label,
+            rate: fromCount > 0 ? Math.round((toCount / fromCount) * 100) : 0,
+          };
+        });
+
+        return (
+          <div className="space-y-6">
+            {/* Key metrics */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              {[
+                { label: "Total Inquiries", value: total, sub: "All time" },
+                { label: "Active Pipeline", value: active, sub: "Excl. not proceeding" },
+                { label: "Overall Conversion", value: `${conversionRate}%`, sub: "Inquiry → Enrolled" },
+                { label: "Drop-off Rate", value: `${dropOffRate}%`, sub: "Marked not proceeding" },
+              ].map((m) => (
+                <Card key={m.label}>
+                  <CardContent className="p-4">
+                    <p className="text-xs text-muted-foreground">{m.label}</p>
+                    <p className="text-2xl font-bold mt-1">{m.value}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">{m.sub}</p>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Funnel stages */}
+              <Card>
+                <CardContent className="p-5">
+                  <h3 className="font-semibold text-sm mb-4">Pipeline Funnel</h3>
+                  <div className="space-y-3">
+                    {stageCounts.map((stage, idx) => {
+                      const widthPct = maxCount > 0 ? Math.max(Math.round((stage.count / maxCount) * 100), 4) : 4;
+                      const pctOfTotal = total > 0 ? Math.round((stage.count / total) * 100) : 0;
+                      return (
+                        <div key={stage.status}>
+                          <div className="flex items-center justify-between mb-1 text-xs">
+                            <span className="font-medium">{stage.label}</span>
+                            <span className="text-muted-foreground">{stage.count} · {pctOfTotal}%</span>
+                          </div>
+                          <div className="h-7 bg-muted rounded-lg overflow-hidden">
+                            <div
+                              className="h-full bg-primary/80 rounded-lg transition-all flex items-center pl-2"
+                              style={{ width: `${widthPct}%` }}
+                            />
+                          </div>
+                          {idx < stageConversions.length && stageConversions[idx] && (
+                            <p className="text-xs text-muted-foreground mt-0.5 text-right">
+                              ↓ {stageConversions[idx].rate}% continue
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {notProceeding > 0 && (
+                    <div className="mt-3 pt-3 border-t border-border flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Not Proceeding</span>
+                      <span className="font-medium text-red-600">{notProceeding}</span>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Source breakdown */}
+              <Card>
+                <CardContent className="p-5">
+                  <h3 className="font-semibold text-sm mb-4">Inquiry Sources</h3>
+                  {sources.length === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-8">No source data yet.</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {sources.map(([src, count]) => {
+                        const widthPct = Math.max(Math.round((count / maxSource) * 100), 6);
+                        const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+                        return (
+                          <div key={src}>
+                            <div className="flex items-center justify-between mb-1 text-xs">
+                              <span className="font-medium">{src}</span>
+                              <span className="text-muted-foreground">{count} · {pct}%</span>
+                            </div>
+                            <div className="h-5 bg-muted rounded-lg overflow-hidden">
+                              <div
+                                className="h-full bg-blue-400/70 rounded-lg"
+                                style={{ width: `${widthPct}%` }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Class demand */}
+            {classOptions.length > 0 && (
+              <Card>
+                <CardContent className="p-5">
+                  <h3 className="font-semibold text-sm mb-4">Class Demand vs. Capacity</h3>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-border">
+                          <th className="text-left pb-2 text-xs text-muted-foreground font-medium">Class</th>
+                          <th className="text-right pb-2 text-xs text-muted-foreground font-medium">Inquiries</th>
+                          <th className="text-right pb-2 text-xs text-muted-foreground font-medium">Enrolled</th>
+                          <th className="text-right pb-2 text-xs text-muted-foreground font-medium">Capacity</th>
+                          <th className="text-right pb-2 text-xs text-muted-foreground font-medium">Seats Left</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {classOptions.map((cls) => {
+                          const classInquiries = inquiries.filter(
+                            (i) => i.desiredClassId === cls.id && i.status !== "not_proceeding"
+                          ).length;
+                          const seatsLeft = cls.capacity - cls.enrolled;
+                          return (
+                            <tr key={cls.id} className="border-b border-border last:border-0">
+                              <td className="py-2.5 font-medium">{cls.name}</td>
+                              <td className="py-2.5 text-right text-muted-foreground">{classInquiries}</td>
+                              <td className="py-2.5 text-right">{cls.enrolled}</td>
+                              <td className="py-2.5 text-right text-muted-foreground">{cls.capacity}</td>
+                              <td className={`py-2.5 text-right font-medium ${seatsLeft <= 0 ? "text-red-600" : seatsLeft <= 3 ? "text-amber-600" : "text-green-600"}`}>
+                                {seatsLeft <= 0 ? "Full" : seatsLeft}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Inquiry Detail Modal */}
       <Modal open={!!selectedInquiry} onClose={() => setSelectedInquiry(null)} title="Inquiry Details">

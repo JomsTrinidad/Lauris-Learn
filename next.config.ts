@@ -1,6 +1,17 @@
 import type { NextConfig } from "next";
 
+const ngrokDomain = process.env.NGROK_DOMAIN ?? "";
+
 const nextConfig: NextConfig = {
+  allowedDevOrigins: ngrokDomain ? [ngrokDomain] : [],
+  experimental: {
+    serverActions: {
+      allowedOrigins: [
+        "localhost:3000",
+        ...(ngrokDomain ? [ngrokDomain] : []),
+      ],
+    },
+  },
   images: {
     remotePatterns: [
       {

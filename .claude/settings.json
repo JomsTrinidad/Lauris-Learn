@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(unzip -l \"Progressive Web App.zip\")"
+      "Bash(unzip -l \"Progressive Web App.zip\")",
+      "Bash(node -e \"const fs = require\\('fs'\\); const content = fs.readFileSync\\('c:/Users/Desktop/Desktop/Clients/Lauris-Learn/package.json', 'utf8'\\); console.log\\('Length:', content.length\\); console.log\\('Chars around 121:', JSON.stringify\\(content.slice\\(115, 135\\)\\)\\); try { JSON.parse\\(content\\); console.log\\('Valid JSON'\\); } catch\\(e\\) { console.log\\('Error:', e.message\\); }\")",
+      "Bash(node -e \"const fs = require\\('fs'\\); const buf = fs.readFileSync\\('c:/Users/Desktop/Desktop/Clients/Lauris-Learn/package.json'\\); console.log\\('First 4 bytes hex:', buf.slice\\(0,4\\).toString\\('hex'\\)\\); console.log\\('Encoding check - BOM?', buf[0] === 0xEF && buf[1] === 0xBB && buf[2] === 0xBF\\);\")"
     ]
   }
 }

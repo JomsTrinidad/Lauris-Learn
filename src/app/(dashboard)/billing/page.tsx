@@ -1,12 +1,14 @@
 "use client";
 import { useEffect, useState, useRef } from "react";
-import { Search, Plus, DollarSign, X, Pencil, CheckSquare, Layers, History, FileText, Printer, AlertTriangle } from "lucide-react";
+import { Search, Plus, DollarSign, X, Pencil, CheckSquare, History, FileText, Printer, AlertTriangle, Wand2, Check, ImageIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Modal, ModalCancelButton } from "@/components/ui/modal";
+import { DatePicker } from "@/components/ui/datepicker";
+import { MonthPicker } from "@/components/ui/monthpicker";
 import { Card, CardContent } from "@/components/ui/card";
 import { PageSpinner, ErrorAlert } from "@/components/ui/spinner";
 import { InfoTooltip } from "@/components/ui/tooltip";
@@ -49,6 +51,7 @@ interface PaymentRecord {
   reference: string | null;
   orNumber: string | null;
   notes: string | null;
+  receiptPhotoPath: string | null;
 }
 
 interface PaymentForm {
@@ -58,6 +61,7 @@ interface PaymentForm {
   notes: string;
   date: string;
   orNumber: string;
+  receiptFile: File | null;
 }
 
 interface AddForm {
@@ -97,25 +101,6 @@ interface ClassOption {
   enrolled: number;
 }
 
-interface BulkForm {
-  classIds: string[];
-  monthFrom: string;
-  monthTo: string;
-  feeTypeId: string;
-  amount: string;
-  dueDate: string;
-  description: string;
-  skipExisting: boolean;
-  markAsPaid: boolean;
-  paymentMethod: PaymentMethod;
-}
-
-interface BulkPreviewSummary {
-  totalRecords: number;
-  months: string[];
-  studentCount: number;
-}
-
 interface StatementRow {
   billingRecord: BillingRecord;
   payments: PaymentRecord[];
@@ -125,23 +110,10 @@ function currentYearMonth() {
   return new Date().toISOString().substring(0, 7);
 }
 
-const EMPTY_BULK: BulkForm = {
-  classIds: [],
-  monthFrom: currentYearMonth(),
-  monthTo: currentYearMonth(),
-  feeTypeId: "",
-  amount: "",
-  dueDate: "",
-  description: "",
-  skipExisting: true,
-  markAsPaid: false,
-  paymentMethod: "cash",
-};
-
 const EMPTY_PAYMENT: PaymentForm = {
   amount: "", method: "cash", reference: "", notes: "",
   date: new Date().toISOString().split("T")[0],
-  orNumber: "",
+  orNumber: "", receiptFile: null,
 };
 
 const EMPTY_ADD: AddForm = {
@@ -261,6 +233,20 @@ function printContent(elementId: string, title: string) {
   setTimeout(() => win.print(), 350);
 }
 
+function computeNthWeekday(year: number, month: number, nth: number, weekday: number): string {
+  if (nth === -1) {
+    const lastDay = new Date(year, month + 1, 0);
+    const diff = (lastDay.getDay() - weekday + 7) % 7;
+    const date = lastDay.getDate() - diff;
+    return `${year}-${String(month + 1).padStart(2, "0")}-${String(date).padStart(2, "0")}`;
+  }
+  const firstDay = new Date(year, month, 1);
+  const firstOccurrence = 1 + ((weekday - firstDay.getDay() + 7) % 7) + (nth - 1) * 7;
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  if (firstOccurrence > daysInMonth) return "";
+  return `${year}-${String(month + 1).padStart(2, "0")}-${String(firstOccurrence).padStart(2, "0")}`;
+}
+
 function StudentCombobox({
   options, value, searchValue, onSearchChange, onSelect, onClear,
 }: {
@@ -365,10 +351,33 @@ export default function BillingPage() {
     description: "", amountDue: "", dueDate: "", billingMonth: "", status: "unpaid", notes: "", changeReason: "",
   });
 
-  const [bulkModal, setBulkModal] = useState(false);
-  const [bulkForm, setBulkForm] = useState<BulkForm>(EMPTY_BULK);
-  const [bulkPreview, setBulkPreview] = useState<BulkPreviewSummary | null>(null);
   const [bulkConfirmModal, setBulkConfirmModal] = useState<{ records: BillingRecord[]; total: number } | null>(null);
+
+  // Generate Billing modal
+  const [genModal, setGenModal] = useState(false);
+  const [genMode, setGenMode] = useState<"configs" | "flat">("configs");
+  const [genMonthFrom, setGenMonthFrom] = useState("");
+  const [genMonthTo, setGenMonthTo] = useState("");
+  const [genFeeTypeId, setGenFeeTypeId] = useState("");
+  const [genDueDate, setGenDueDate] = useState("");
+  const [genDueDateMode, setGenDueDateMode] = useState<"none" | "fixed" | "nth-weekday">("none");
+  const [genDueDateNth, setGenDueDateNth] = useState(1);
+  const [genDueDateWeekday, setGenDueDateWeekday] = useState(5);
+  const [genSkipExisting, setGenSkipExisting] = useState(true);
+  const [genMarkAsPaid, setGenMarkAsPaid] = useState(false);
+  const [genPaymentMethod, setGenPaymentMethod] = useState<PaymentMethod>("cash");
+  const [genPaymentDate, setGenPaymentDate] = useState(new Date().toISOString().split("T")[0]);
+  const [genLoading, setGenLoading] = useState(false);
+  const [genSaving, setGenSaving] = useState(false);
+  const [genError, setGenError] = useState<string | null>(null);
+  const [genResult, setGenResult] = useState<{ created: number; skipped: number } | null>(null);
+  const [genClasses, setGenClasses] = useState<Array<{
+    classId: string; className: string; level: string;
+    studentCount: number; configRate: number | null;
+    overrideRate: string; include: boolean;
+  }>>([]);
+  const [genFlatAmount, setGenFlatAmount] = useState("");
+  const [genFlatClassIds, setGenFlatClassIds] = useState<string[]>([]);
 
   // Payment history
   const [historyModal, setHistoryModal] = useState<BillingRecord | null>(null);
@@ -496,76 +505,201 @@ export default function BillingPage() {
     setFeeTypes(((result.data ?? []) as any[]).map((f: any) => ({ id: f.id, name: f.name, defaultAmount: f.default_amount ?? null })));
   }
 
-  async function refreshBulkPreview(form: BulkForm) {
-    if (!activeYear?.id || !schoolId || !form.monthFrom) { setBulkPreview(null); return; }
-    const months = getMonthRange(form.monthFrom, form.monthTo || form.monthFrom);
-    if (months.length === 0) { setBulkPreview(null); return; }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let query = (supabase as any).from("enrollments").select("student_id, class_id")
-      .eq("school_year_id", activeYear.id).eq("status", "enrolled");
-    if (form.classIds.length > 0) query = query.in("class_id", form.classIds);
-    const { data: enrRows } = await query;
-    const studentIds: string[] = ((enrRows ?? []) as { student_id: string }[]).map((e) => e.student_id);
-    let existingKeys = new Set<string>();
-    if (form.skipExisting && studentIds.length > 0) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: existing } = await (supabase as any).from("billing_records")
-        .select("student_id, billing_month").eq("school_id", schoolId)
-        .in("billing_month", months).in("student_id", studentIds);
-      existingKeys = new Set(((existing ?? []) as { student_id: string; billing_month: string }[]).map((e) => `${e.billing_month}:${e.student_id}`));
-    }
-    let total = 0;
-    for (const month of months) {
-      studentIds.forEach((id) => { if (!existingKeys.has(`${month}:${id}`)) total++; });
-    }
-    setBulkPreview({ totalRecords: total, months, studentCount: studentIds.length });
-  }
+  async function openGenModal() {
+    const thisMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+    setGenModal(true);
+    setGenMode("configs");
+    setGenMonthFrom(thisMonth);
+    setGenMonthTo(thisMonth);
+    setGenResult(null);
+    setGenError(null);
+    setGenMarkAsPaid(false);
+    setGenSkipExisting(true);
+    setGenDueDateMode("none");
+    setGenDueDate("");
+    setGenDueDateNth(1);
+    setGenDueDateWeekday(5);
+    setGenPaymentDate(new Date().toISOString().split("T")[0]);
 
-  async function handleBulkGenerate() {
-    if (!activeYear?.id || !schoolId) return;
-    const months = getMonthRange(bulkForm.monthFrom, bulkForm.monthTo || bulkForm.monthFrom);
-    if (months.length === 0) { setFormError("Select a billing month range."); return; }
-    if (feeTypes.length > 0 && !bulkForm.feeTypeId) { setFormError("Please select a fee type."); return; }
-    const amount = parseFloat(bulkForm.amount);
-    if (!amount || amount <= 0) { setFormError("Enter a valid amount."); return; }
-    if (!bulkPreview || bulkPreview.totalRecords === 0) { setFormError("No new records to create — all students may already have records for the selected months."); return; }
-    setBulkSaving(true); setFormError(null);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let query = (supabase as any).from("enrollments").select("student_id, class_id")
-      .eq("school_year_id", activeYear.id).eq("status", "enrolled");
-    if (bulkForm.classIds.length > 0) query = query.in("class_id", bulkForm.classIds);
-    const { data: enrRows } = await query;
-    const students = (enrRows ?? []) as { student_id: string; class_id: string | null }[];
-    let existingKeys = new Set<string>();
-    if (bulkForm.skipExisting && students.length > 0) {
+    const tuitionType = feeTypes.find((f) => f.name.toLowerCase().includes("tuition"));
+    setGenFeeTypeId(tuitionType?.id ?? feeTypes[0]?.id ?? "");
+
+    setGenLoading(true);
+
+    // Load tuition configs via active academic period
+    const rateByClassId: Record<string, number> = {};
+    const rateByLevel: Record<string, number> = {};
+    if (activeYear?.id && schoolId) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: existing } = await (supabase as any).from("billing_records")
-        .select("student_id, billing_month").eq("school_id", schoolId)
-        .in("billing_month", months).in("student_id", students.map((s) => s.student_id));
-      existingKeys = new Set(((existing ?? []) as { student_id: string; billing_month: string }[]).map((e) => `${e.billing_month}:${e.student_id}`));
-    }
-    const feeType = feeTypes.find((f) => f.id === bulkForm.feeTypeId);
-    const description = bulkForm.description.trim() || feeType?.name || null;
-    const initialStatus: BillingStatus = bulkForm.markAsPaid ? "paid" : "unpaid";
-    const insertRows: object[] = [];
-    for (const month of months) {
-      for (const s of students) {
-        if (existingKeys.has(`${month}:${s.student_id}`)) continue;
-        insertRows.push({
-          school_id: schoolId, student_id: s.student_id, school_year_id: activeYear.id,
-          class_id: s.class_id, amount_due: amount, status: initialStatus,
-          billing_month: month, due_date: bulkForm.dueDate || null, description,
+      const { data: period } = await (supabase as any)
+        .from("academic_periods")
+        .select("id")
+        .eq("school_id", schoolId)
+        .eq("school_year_id", activeYear.id)
+        .eq("is_active", true)
+        .maybeSingle();
+
+      if (period?.id) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: configs } = await (supabase as any)
+          .from("tuition_configs")
+          .select("class_id, level, monthly_amount, total_amount, months")
+          .eq("school_id", schoolId)
+          .eq("academic_period_id", period.id);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ((configs ?? []) as any[]).forEach((c: { class_id: string | null; level: string; monthly_amount: number | null; total_amount: number; months: number }) => {
+          const monthly = c.monthly_amount != null
+            ? Number(c.monthly_amount)
+            : c.months > 0 ? Math.round(c.total_amount / c.months) : Number(c.total_amount);
+          if (c.class_id) rateByClassId[c.class_id] = monthly;
+          if (c.level) rateByLevel[c.level] = monthly;
         });
+      } else {
+        setGenError("No active academic period found for this school year. Go to Finance Setup → Academic Periods and mark one as active.");
       }
     }
-    for (let i = 0; i < insertRows.length; i += 100) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { error } = await (supabase as any).from("billing_records").insert(insertRows.slice(i, i + 100));
-      if (error) { setFormError(`Failed to create records: ${error.message}`); setBulkSaving(false); return; }
-    }
-    setBulkSaving(false); setBulkModal(false); setBulkForm(EMPTY_BULK); setBulkPreview(null);
-    await loadRecords();
+
+    // Build rows — prefer class_id match, fall back to level match
+    const rows = classOptions
+      .filter((c) => c.enrolled > 0)
+      .map((c) => {
+        const rate = rateByClassId[c.id] ?? (c.level ? (rateByLevel[c.level] ?? null) : null);
+        return {
+          classId: c.id,
+          className: c.name,
+          level: c.level ?? "",
+          studentCount: c.enrolled,
+          configRate: rate,
+          overrideRate: rate !== null ? String(rate) : "",
+          include: true,
+        };
+      });
+
+    setGenClasses(rows);
+    setGenFlatClassIds(rows.map((r) => r.classId));
+    setGenLoading(false);
   }
+
+  async function executeGen() {
+    if (!schoolId || !activeYear) return;
+    if (!genFeeTypeId && feeTypes.length > 0) { setGenError("Select a fee type."); return; }
+    if (!genMonthFrom) { setGenError("Select a starting month."); return; }
+
+    if (genMode === "flat") {
+      if (!Number(genFlatAmount) || Number(genFlatAmount) <= 0) { setGenError("Enter a valid flat amount."); return; }
+      if (genFlatClassIds.length === 0) { setGenError("Select at least one class."); return; }
+    } else {
+      if (!genClasses.some((c) => c.include && Number(c.overrideRate) > 0)) {
+        setGenError("Select at least one class with a valid amount."); return;
+      }
+    }
+
+    setGenSaving(true);
+    setGenError(null);
+
+    function getDueDate(monthStr: string): string | null {
+      if (genDueDateMode === "fixed") return genDueDate || null;
+      if (genDueDateMode === "nth-weekday") {
+        const [y, mo] = monthStr.split("-").map(Number);
+        return computeNthWeekday(y, mo - 1, genDueDateNth, genDueDateWeekday) || null;
+      }
+      return null;
+    }
+
+    // Build months list
+    const months: string[] = [];
+    let cur = genMonthFrom;
+    const toMonth = genMonthTo || genMonthFrom;
+    while (cur <= toMonth) {
+      months.push(cur);
+      const [y, m] = cur.split("-").map(Number);
+      cur = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
+      if (months.length > 24) break;
+    }
+
+    let totalCreated = 0;
+    let totalSkipped = 0;
+    const selectedFeeType = feeTypes.find((f) => f.id === genFeeTypeId);
+
+    for (const month of months) {
+      const classTargets: Array<{ classId: string; amount: number }> =
+        genMode === "configs"
+          ? genClasses.filter((c) => c.include && Number(c.overrideRate) > 0).map((c) => ({ classId: c.classId, amount: Number(c.overrideRate) }))
+          : genFlatClassIds.map((classId) => ({ classId, amount: Number(genFlatAmount) }));
+
+      for (const target of classTargets) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: enrolls } = await (supabase as any)
+          .from("enrollments")
+          .select("student_id")
+          .eq("class_id", target.classId)
+          .eq("school_year_id", activeYear.id)
+          .eq("status", "enrolled");
+
+        const studentIds = ((enrolls ?? []) as { student_id: string }[]).map((e) => e.student_id);
+        if (studentIds.length === 0) continue;
+
+        let existingStudentIds = new Set<string>();
+        if (genSkipExisting) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: existing } = await (supabase as any)
+            .from("billing_records")
+            .select("student_id")
+            .eq("school_id", schoolId)
+            .eq("class_id", target.classId)
+            .eq("billing_month", month + "-01")
+            .in("student_id", studentIds);
+          existingStudentIds = new Set(((existing ?? []) as { student_id: string }[]).map((e) => e.student_id));
+        }
+
+        const description = selectedFeeType
+          ? `${selectedFeeType.name} — ${formatMonth(month + "-01")}`
+          : `Tuition — ${formatMonth(month + "-01")}`;
+
+        for (const studentId of studentIds) {
+          if (existingStudentIds.has(studentId)) { totalSkipped++; continue; }
+
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: inserted, error: insErr } = await (supabase as any)
+            .from("billing_records")
+            .insert({
+              school_id: schoolId,
+              student_id: studentId,
+              class_id: target.classId,
+              school_year_id: activeYear.id,
+              fee_type_id: genFeeTypeId || null,
+              amount_due: target.amount,
+              billing_month: month + "-01",
+              due_date: getDueDate(month),
+              description,
+              status: genMarkAsPaid ? "paid" : "unpaid",
+            })
+            .select("id")
+            .single();
+
+          if (insErr) { setGenError(insErr.message); setGenSaving(false); return; }
+          totalCreated++;
+
+          if (genMarkAsPaid && inserted?.id) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            await (supabase as any).from("payments").insert({
+              billing_record_id: inserted.id,
+              amount: target.amount,
+              payment_method: genPaymentMethod,
+              payment_date: genPaymentDate,
+              status: "confirmed",
+              recorded_by: userId || null,
+            });
+          }
+        }
+      }
+    }
+
+    setGenResult({ created: totalCreated, skipped: totalSkipped });
+    setGenSaving(false);
+    if (totalCreated > 0) loadRecords();
+  }
+
 
   async function openPaymentModal(record: BillingRecord) {
     setPaymentModal(record);
@@ -626,8 +760,20 @@ export default function BillingPage() {
       notes: noteParts.length > 0 ? noteParts.join(" | ") : null,
       payment_date: payment.date, status: "confirmed",
       recorded_by: userId || null,
-    });
+    }).select("id").single();
     if (pResult.error) { setFormError(pResult.error.message); setSaving(false); return; }
+
+    // Upload receipt photo if provided
+    if (payment.receiptFile && pResult.data?.id) {
+      const ext = payment.receiptFile.name.split(".").pop()?.toLowerCase() ?? "jpg";
+      const path = `payment-receipts/${pResult.data.id}.${ext}`;
+      const { error: uploadErr } = await supabase.storage.from("updates-media").upload(path, payment.receiptFile, { upsert: true });
+      if (!uploadErr) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (supabase as any).from("payments").update({ receipt_photo_path: path }).eq("id", pResult.data.id);
+      }
+    }
+
     const newPaid = paymentModal.amountPaid + amount;
     const newStatus = computeStatus("unpaid", paymentModal.amountDue, newPaid, paymentModal.dueDate);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -799,7 +945,7 @@ export default function BillingPage() {
     setHistoryModal(record); setHistoryPayments([]); setHistoryLoading(true);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data } = await (supabase as any).from("payments")
-      .select("id, amount, payment_method, payment_date, reference_number, or_number, notes, status")
+      .select("id, amount, payment_method, payment_date, reference_number, or_number, notes, status, receipt_photo_path")
       .eq("billing_record_id", record.id).order("payment_date", { ascending: false });
     setHistoryPayments(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -807,9 +953,15 @@ export default function BillingPage() {
         id: p.id, amount: Number(p.amount), method: p.payment_method as PaymentMethod,
         date: p.payment_date, reference: p.reference_number ?? null,
         orNumber: p.or_number ?? null, notes: p.notes ?? null,
+        receiptPhotoPath: p.receipt_photo_path ?? null,
       }))
     );
     setHistoryLoading(false);
+  }
+
+  async function openReceiptPhoto(path: string) {
+    const { data } = await supabase.storage.from("updates-media").createSignedUrl(path, 3600);
+    if (data?.signedUrl) window.open(data.signedUrl, "_blank");
   }
 
   async function openStatementModal(studentId: string, studentName: string) {
@@ -833,7 +985,8 @@ export default function BillingPage() {
         if (!paymentsByRecord[p.billing_record_id]) paymentsByRecord[p.billing_record_id] = [];
         paymentsByRecord[p.billing_record_id].push({
           id: p.id, amount: Number(p.amount), method: p.payment_method as PaymentMethod,
-          date: p.payment_date, reference: p.reference_number ?? null, orNumber: p.or_number ?? null, notes: null,
+          date: p.payment_date, reference: p.reference_number ?? null, orNumber: p.or_number ?? null,
+          notes: null, receiptPhotoPath: null,
         });
       });
       setStatementData(
@@ -908,11 +1061,11 @@ export default function BillingPage() {
           <p className="text-muted-foreground text-sm mt-1">Track tuition payments and balances</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => { setBulkForm(EMPTY_BULK); setBulkPreview(null); setFormError(null); setBulkModal(true); }}>
-            <Layers className="w-4 h-4" /> Generate Monthly Billing
+          <Button variant="outline" onClick={openGenModal}>
+            <Wand2 className="w-4 h-4" /> Generate Billing
           </Button>
           <Button onClick={() => { setAddForm(EMPTY_ADD); setAddDuplicateWarning(null); setAddOverrideReason(""); setFormError(null); setAddModal(true); }}>
-            <Plus className="w-4 h-4" /> Add Single Record
+            <Plus className="w-4 h-4" /> Add Record
           </Button>
         </div>
       </div>
@@ -947,14 +1100,12 @@ export default function BillingPage() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input placeholder="Search student..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
         </div>
-        <div className="relative">
-          <Input type="month" value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)} className="sm:w-44 pr-8" title="Filter by billing month" />
-          {monthFilter && (
-            <button onClick={() => setMonthFilter("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
-              <X className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
+        <MonthPicker
+          value={monthFilter}
+          onChange={setMonthFilter}
+          placeholder="All months"
+          className="sm:w-44"
+        />
         <Select value={classFilter} onChange={(e) => setClassFilter(e.target.value)} className="sm:w-40">
           <option value="">All Classes</option>
           {classNames.map((c) => <option key={c} value={c}>{c}</option>)}
@@ -1115,7 +1266,7 @@ export default function BillingPage() {
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1">Payment Date *</label>
-                <Input type="date" value={payment.date} onChange={(e) => setPayment({ ...payment, date: e.target.value })} />
+                <DatePicker value={payment.date} onChange={(v) => setPayment({ ...payment, date: v })} />
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -1134,6 +1285,24 @@ export default function BillingPage() {
             <div>
               <label className="block text-sm font-medium mb-1">Notes</label>
               <Textarea placeholder="Optional notes..." value={payment.notes} onChange={(e) => setPayment({ ...payment, notes: e.target.value })} rows={2} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1 flex items-center gap-1.5">
+                <ImageIcon className="w-3.5 h-3.5 text-muted-foreground" />
+                Receipt Photo <span className="text-muted-foreground font-normal">(optional)</span>
+              </label>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => setPayment({ ...payment, receiptFile: e.target.files?.[0] ?? null })}
+                className="w-full text-sm text-muted-foreground cursor-pointer
+                  file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0
+                  file:text-xs file:font-medium file:cursor-pointer
+                  file:bg-muted file:text-foreground hover:file:bg-muted/70"
+              />
+              {payment.receiptFile && (
+                <p className="text-xs text-green-600 mt-1">✓ {payment.receiptFile.name}</p>
+              )}
             </div>
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="outline" onClick={() => { setPaymentModal(null); setPayment(EMPTY_PAYMENT); setPaymentSequenceWarning(null); setPaymentOverrideReason(""); setFormError(null); }}>Cancel</Button>
@@ -1181,13 +1350,12 @@ export default function BillingPage() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium mb-1 flex items-center">Billing Month * <InfoTooltip text="The month this charge applies to." /></label>
-              <Input
-                type="month"
+              <MonthPicker
                 value={addForm.billingMonth}
-                onChange={(e) => {
-                  setAddForm({ ...addForm, billingMonth: e.target.value });
+                onChange={(v) => {
+                  setAddForm({ ...addForm, billingMonth: v });
                   setAddOverrideReason("");
-                  checkAddDuplicate(addForm.studentId, e.target.value);
+                  checkAddDuplicate(addForm.studentId, v);
                 }}
               />
             </div>
@@ -1222,7 +1390,7 @@ export default function BillingPage() {
 
           <div>
             <label className="block text-sm font-medium mb-1 flex items-center">Due Date <InfoTooltip text="Records past this date will automatically show as Overdue." /></label>
-            <Input type="date" value={addForm.dueDate} onChange={(e) => setAddForm({ ...addForm, dueDate: e.target.value })} />
+            <DatePicker value={addForm.dueDate} onChange={(v) => setAddForm({ ...addForm, dueDate: v })} placeholder="No due date" />
           </div>
           <div className="border-t border-border pt-4 space-y-3">
             <label className="flex items-center gap-2 cursor-pointer select-none">
@@ -1243,7 +1411,7 @@ export default function BillingPage() {
                   </div>
                   <div>
                     <label className="block text-sm font-medium mb-1">Payment Date</label>
-                    <Input type="date" value={addForm.paymentDate} onChange={(e) => setAddForm({ ...addForm, paymentDate: e.target.value })} />
+                    <DatePicker value={addForm.paymentDate} onChange={(v) => setAddForm({ ...addForm, paymentDate: v })} />
                   </div>
                 </div>
                 <div>
@@ -1287,7 +1455,7 @@ export default function BillingPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium mb-1">Billing Month *</label>
-                  <Input type="month" value={editForm.billingMonth} onChange={(e) => setEditForm({ ...editForm, billingMonth: e.target.value })} />
+                  <MonthPicker value={editForm.billingMonth} onChange={(v) => setEditForm({ ...editForm, billingMonth: v })} />
                 </div>
                 <div>
                   <label className="block text-sm font-medium mb-1">Amount Due *</label>
@@ -1299,7 +1467,7 @@ export default function BillingPage() {
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1">Due Date</label>
-                <Input type="date" value={editForm.dueDate} onChange={(e) => setEditForm({ ...editForm, dueDate: e.target.value })} />
+                <DatePicker value={editForm.dueDate} onChange={(v) => setEditForm({ ...editForm, dueDate: v })} placeholder="No due date" />
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1 flex items-center">
@@ -1357,87 +1525,312 @@ export default function BillingPage() {
         })()}
       </Modal>
 
-      {/* Generate Monthly Billing Modal */}
-      <Modal open={bulkModal} onClose={() => { setBulkModal(false); setFormError(null); }} title="Generate Monthly Billing">
-        <div className="space-y-4">
-          {formError && <ErrorAlert message={formError} />}
-          <div className="grid grid-cols-2 gap-4">
+      {/* Generate Billing Modal */}
+      <Modal open={genModal} onClose={() => { setGenModal(false); setGenResult(null); setGenError(null); }} title="Generate Billing" className="max-w-2xl">
+        <div className="space-y-6">
+
+          {/* Section 1: Billing Period */}
+          <div className="space-y-3">
             <div>
-              <label className="block text-sm font-medium mb-1 flex items-center">From Month * <InfoTooltip text="All enrolled students will get a billing record for each month in this range." /></label>
-              <Input type="month" value={bulkForm.monthFrom} onChange={(e) => { const f = { ...bulkForm, monthFrom: e.target.value }; setBulkForm(f); refreshBulkPreview(f); }} />
+              <p className="text-sm font-semibold">Billing Period</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Use the same month for one-time billing, or choose a range to generate bills for multiple months at once.</p>
             </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">To Month</label>
-              <Input type="month" value={bulkForm.monthTo} min={bulkForm.monthFrom} onChange={(e) => { const f = { ...bulkForm, monthTo: e.target.value }; setBulkForm(f); refreshBulkPreview(f); }} />
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">From Month *</label>
+                <MonthPicker value={genMonthFrom} onChange={setGenMonthFrom} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">To Month</label>
+                <MonthPicker value={genMonthTo} min={genMonthFrom} onChange={setGenMonthTo} placeholder="Same as From" />
+              </div>
             </div>
           </div>
-          <div>
-            <label className="block text-sm font-medium mb-2 flex items-center">Classes <InfoTooltip text="Leave all unchecked to bill every enrolled student." /></label>
-            <div className="space-y-2 max-h-40 overflow-y-auto border border-border rounded-lg p-3">
-              {classOptions.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No active classes found.</p>
-              ) : classOptions.map((cls) => (
-                <label key={cls.id} className="flex items-center gap-2 cursor-pointer text-sm">
-                  <input type="checkbox" checked={bulkForm.classIds.includes(cls.id)} onChange={(e) => {
-                    const next = e.target.checked ? [...bulkForm.classIds, cls.id] : bulkForm.classIds.filter((id) => id !== cls.id);
-                    const f = { ...bulkForm, classIds: next }; setBulkForm(f); refreshBulkPreview(f);
-                  }} className="w-4 h-4 rounded" />
-                  <span className="font-medium">{cls.name}</span>
-                  {cls.level && <span className="text-muted-foreground text-xs">· {cls.level}</span>}
-                  <span className="text-muted-foreground text-xs ml-auto">{cls.enrolled} students</span>
-                </label>
-              ))}
+
+          {/* Section 2: Who to Bill */}
+          <div className="space-y-3">
+            <p className="text-sm font-semibold">Who to Bill</p>
+            <div className="flex gap-1 bg-muted rounded-lg p-1">
+              <button
+                type="button"
+                onClick={() => setGenMode("configs")}
+                className={`flex-1 text-sm py-1.5 px-3 rounded-md transition-colors ${genMode === "configs" ? "bg-card shadow-sm font-medium" : "text-muted-foreground hover:text-foreground"}`}
+              >
+                Use tuition configs
+              </button>
+              <button
+                type="button"
+                onClick={() => setGenMode("flat")}
+                className={`flex-1 text-sm py-1.5 px-3 rounded-md transition-colors ${genMode === "flat" ? "bg-card shadow-sm font-medium" : "text-muted-foreground hover:text-foreground"}`}
+              >
+                Flat amount for all classes
+              </button>
             </div>
-            {bulkForm.classIds.length === 0 && <p className="text-xs text-muted-foreground mt-1">No classes selected — all classes will be billed.</p>}
-          </div>
-          {feeTypes.length > 0 && (
-            <div>
-              <label className="block text-sm font-medium mb-1">Fee Type *</label>
-              <Select value={bulkForm.feeTypeId} onChange={(e) => {
-                const ft = feeTypes.find((f) => f.id === e.target.value);
-                setBulkForm({ ...bulkForm, feeTypeId: e.target.value, amount: ft?.defaultAmount ? String(ft.defaultAmount) : bulkForm.amount });
-              }}>
-                <option value="">— Select fee type —</option>
-                {feeTypes.map((f) => <option key={f.id} value={f.id}>{f.name}{f.defaultAmount ? ` — ${formatCurrency(f.defaultAmount)}` : ""}</option>)}
-              </Select>
-            </div>
-          )}
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium mb-1">Amount *</label>
-              <Input type="number" min={0} step={100} placeholder="0.00" value={bulkForm.amount} onChange={(e) => setBulkForm({ ...bulkForm, amount: e.target.value })} />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">Due Date</label>
-              <Input type="date" value={bulkForm.dueDate} onChange={(e) => setBulkForm({ ...bulkForm, dueDate: e.target.value })} />
-            </div>
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">Description</label>
-            <Input placeholder="e.g. Monthly Tuition — May 2026 (optional)" value={bulkForm.description} onChange={(e) => setBulkForm({ ...bulkForm, description: e.target.value })} />
-          </div>
-          <label className="flex items-center gap-2 cursor-pointer text-sm select-none">
-            <input type="checkbox" checked={bulkForm.skipExisting} onChange={(e) => { const f = { ...bulkForm, skipExisting: e.target.checked }; setBulkForm(f); refreshBulkPreview(f); }} className="w-4 h-4 rounded" />
-            <span className="font-medium">Skip students who already have a record for this month</span>
-            <InfoTooltip text="Recommended. Prevents duplicate billing." />
-          </label>
-          {bulkForm.monthFrom && (
-            <div className={`p-3 rounded-lg text-sm ${bulkPreview && bulkPreview.totalRecords > 0 ? "bg-primary/5 border border-primary/20" : "bg-muted"}`}>
-              {bulkPreview && bulkPreview.totalRecords > 0 ? (
-                <>
-                  <p className="font-medium text-primary">{bulkPreview.totalRecords} record{bulkPreview.totalRecords > 1 ? "s" : ""} will be created ({bulkPreview.studentCount} student{bulkPreview.studentCount > 1 ? "s" : ""}, {bulkPreview.months.length} month{bulkPreview.months.length > 1 ? "s" : ""})</p>
-                  <p className="text-muted-foreground mt-0.5">Total: {bulkPreview.totalRecords} × {bulkForm.amount ? formatCurrency(parseFloat(bulkForm.amount)) : "?"} = {bulkForm.amount ? formatCurrency(bulkPreview.totalRecords * parseFloat(bulkForm.amount)) : "?"}</p>
-                </>
+
+            {/* Configs mode: per-class table */}
+            {genMode === "configs" && (
+              genLoading ? (
+                <div className="flex justify-center py-8">
+                  <div className="animate-spin rounded-full border-2 border-border border-t-primary w-8 h-8" />
+                </div>
+              ) : genClasses.length === 0 ? (
+                <div className="text-center py-6 border border-dashed border-border rounded-xl text-sm text-muted-foreground">
+                  No enrolled students found for the active school year.
+                </div>
               ) : (
-                <p className="text-muted-foreground">{bulkPreview ? "No students to bill — all may already have records for the selected months." : "Select a billing month to see the preview."}</p>
+                <div className="border border-border rounded-xl overflow-hidden">
+                  <div className="px-4 py-2.5 bg-muted border-b border-border">
+                    <div className="grid grid-cols-12 gap-2 text-xs font-medium text-muted-foreground">
+                      <div className="col-span-1" />
+                      <div className="col-span-4">Class</div>
+                      <div className="col-span-2">Level</div>
+                      <div className="col-span-2 text-center">Students</div>
+                      <div className="col-span-3">Monthly Amount</div>
+                    </div>
+                  </div>
+                  <div className="divide-y divide-border max-h-64 overflow-y-auto">
+                    {genClasses.map((cls) => (
+                      <div key={cls.classId} className={`px-4 py-3 ${!cls.include ? "opacity-50" : ""}`}>
+                        <div className="grid grid-cols-12 gap-2 items-start">
+                          <div className="col-span-1 pt-0.5">
+                            <input type="checkbox" checked={cls.include} onChange={(e) => setGenClasses((prev) => prev.map((c) => c.classId === cls.classId ? { ...c, include: e.target.checked } : c))} className="rounded" />
+                          </div>
+                          <div className="col-span-4">
+                            <p className="text-sm font-medium">{cls.className}</p>
+                          </div>
+                          <div className="col-span-2">
+                            <span className="text-xs text-muted-foreground">{cls.level || "—"}</span>
+                          </div>
+                          <div className="col-span-2 text-center">
+                            <span className="text-sm">{cls.studentCount}</span>
+                          </div>
+                          <div className="col-span-3">
+                            <Input type="number" min="0" step="0.01" value={cls.overrideRate} onChange={(e) => setGenClasses((prev) => prev.map((c) => c.classId === cls.classId ? { ...c, overrideRate: e.target.value } : c))} disabled={!cls.include} className="h-8 text-sm" placeholder="0.00" />
+                            {cls.configRate === null && cls.include && (
+                              <p className="text-xs text-amber-600 mt-1">No tuition amount set. Enter an amount manually or update tuition settings.</p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )
+            )}
+
+            {/* Flat mode: single amount + class checkboxes */}
+            {genMode === "flat" && (
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Amount per student *</label>
+                  <Input type="number" min={0} step={100} placeholder="0.00" value={genFlatAmount} onChange={(e) => setGenFlatAmount(e.target.value)} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-2">Apply to these classes</label>
+                  <div className="space-y-2 max-h-44 overflow-y-auto border border-border rounded-lg p-3">
+                    {classOptions.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No active classes found.</p>
+                    ) : classOptions.map((cls) => (
+                      <label key={cls.id} className="flex items-center gap-2 cursor-pointer text-sm">
+                        <input type="checkbox" checked={genFlatClassIds.includes(cls.id)} onChange={(e) => setGenFlatClassIds((prev) => e.target.checked ? [...prev, cls.id] : prev.filter((id) => id !== cls.id))} className="w-4 h-4 rounded" />
+                        <span className="font-medium">{cls.name}</span>
+                        {cls.level && <span className="text-muted-foreground text-xs">· {cls.level}</span>}
+                        <span className="text-muted-foreground text-xs ml-auto">{cls.enrolled} enrolled</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Section 3: Billing Details */}
+          <div className="space-y-3">
+            <p className="text-sm font-semibold">Billing Details</p>
+            {feeTypes.length > 0 && (
+              <div>
+                <label className="block text-sm font-medium mb-1">Fee Type *</label>
+                <Select value={genFeeTypeId} onChange={(e) => setGenFeeTypeId(e.target.value)}>
+                  <option value="">— Select fee type —</option>
+                  {feeTypes.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+                </Select>
+              </div>
+            )}
+            <div className="space-y-2">
+              <label className="block text-sm font-medium">Due Date</label>
+              <div className="flex gap-1.5">
+                {(["none", "fixed", "nth-weekday"] as const).map((mode) => (
+                  <button key={mode} type="button" onClick={() => setGenDueDateMode(mode)}
+                    className={`px-3 py-1.5 text-xs rounded-lg border transition-colors ${genDueDateMode === mode ? "border-primary bg-primary/10 text-primary font-medium" : "border-border text-muted-foreground hover:text-foreground"}`}
+                  >
+                    {mode === "none" ? "No due date" : mode === "fixed" ? "Fixed date" : "Nth weekday"}
+                  </button>
+                ))}
+              </div>
+              {genDueDateMode === "none" && (
+                <p className="text-xs text-muted-foreground">Overdue tracking won&apos;t apply to these bills.</p>
+              )}
+              {genDueDateMode === "fixed" && (
+                <>
+                  <DatePicker value={genDueDate} onChange={setGenDueDate} placeholder="Select date" />
+                  <p className="text-xs text-muted-foreground">All generated bills share this due date.</p>
+                </>
+              )}
+              {genDueDateMode === "nth-weekday" && (
+                <div className="space-y-2">
+                  <div className="flex gap-2">
+                    <Select value={String(genDueDateNth)} onChange={(e) => setGenDueDateNth(Number(e.target.value))} className="flex-1">
+                      <option value="1">1st</option>
+                      <option value="2">2nd</option>
+                      <option value="3">3rd</option>
+                      <option value="4">4th</option>
+                      <option value="-1">Last</option>
+                    </Select>
+                    <Select value={String(genDueDateWeekday)} onChange={(e) => setGenDueDateWeekday(Number(e.target.value))} className="flex-1">
+                      <option value="1">Monday</option>
+                      <option value="2">Tuesday</option>
+                      <option value="3">Wednesday</option>
+                      <option value="4">Thursday</option>
+                      <option value="5">Friday</option>
+                      <option value="6">Saturday</option>
+                      <option value="0">Sunday</option>
+                    </Select>
+                  </div>
+                  {genMonthFrom && (() => {
+                    const [y, mo] = genMonthFrom.split("-").map(Number);
+                    const preview = computeNthWeekday(y, mo - 1, genDueDateNth, genDueDateWeekday);
+                    return preview ? (
+                      <p className="text-xs text-muted-foreground">
+                        e.g. {formatMonth(genMonthFrom + "-01")} → due <strong className="text-foreground">{preview}</strong>
+                      </p>
+                    ) : <p className="text-xs text-amber-600">That weekday doesn&apos;t occur this many times in the month.</p>;
+                  })()}
+                  <p className="text-xs text-muted-foreground">Each month&apos;s due date is computed from this rule.</p>
+                </div>
               )}
             </div>
+            <label className="flex items-start gap-2.5 cursor-pointer text-sm select-none">
+              <input type="checkbox" checked={genSkipExisting} onChange={(e) => setGenSkipExisting(e.target.checked)} className="w-4 h-4 rounded mt-0.5 flex-shrink-0" />
+              <span>
+                <span className="font-medium">Do not create duplicate bills</span>
+                <span className="text-muted-foreground block text-xs mt-0.5">Students who already have a bill for the selected month will be skipped.</span>
+              </span>
+            </label>
+          </div>
+
+          {/* Section 4: Optional Payment Shortcut */}
+          <div className={`border rounded-xl transition-colors ${genMarkAsPaid ? "border-primary/40 bg-primary/5" : "border-border"}`}>
+            <label className="flex items-start gap-3 cursor-pointer select-none p-4">
+              <input type="checkbox" checked={genMarkAsPaid} onChange={(e) => setGenMarkAsPaid(e.target.checked)} className="w-4 h-4 rounded mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="text-sm font-medium">Also record payment now</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Use this only when parents already paid during enrollment or paid in advance.</p>
+              </div>
+            </label>
+            {genMarkAsPaid && (
+              <div className="px-4 pb-4 grid grid-cols-2 gap-3 border-t border-border/60 pt-3">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Payment Method</label>
+                  <Select value={genPaymentMethod} onChange={(e) => setGenPaymentMethod(e.target.value as PaymentMethod)}>
+                    <option value="cash">Cash</option>
+                    <option value="gcash">GCash</option>
+                    <option value="maya">Maya</option>
+                    <option value="bank_transfer">Bank Transfer</option>
+                    <option value="other">Other</option>
+                  </Select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Payment Date</label>
+                  <DatePicker value={genPaymentDate} onChange={setGenPaymentDate} />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Section 5: Preview Summary */}
+          {(() => {
+            const months = genMonthFrom ? getMonthRange(genMonthFrom, genMonthTo || genMonthFrom) : [];
+            let selectedClassesCount = 0;
+            let estimatedBills = 0;
+            let estimatedTotal = 0;
+
+            if (genMode === "configs") {
+              const included = genClasses.filter((c) => c.include && Number(c.overrideRate) > 0);
+              selectedClassesCount = included.length;
+              estimatedBills = included.reduce((a, c) => a + c.studentCount, 0) * months.length;
+              estimatedTotal = included.reduce((a, c) => a + c.studentCount * Number(c.overrideRate), 0) * months.length;
+            } else if (Number(genFlatAmount) > 0 && genFlatClassIds.length > 0) {
+              selectedClassesCount = genFlatClassIds.length;
+              const totalStudents = genFlatClassIds.reduce((a, id) => a + (classOptions.find((c) => c.id === id)?.enrolled ?? 0), 0);
+              estimatedBills = totalStudents * months.length;
+              estimatedTotal = totalStudents * Number(genFlatAmount) * months.length;
+            }
+
+            if (!genMonthFrom || selectedClassesCount === 0) return null;
+
+            const monthLabel = months.length === 1
+              ? formatMonth(months[0] + "-01")
+              : `${formatMonth(months[0] + "-01")} – ${formatMonth(months[months.length - 1] + "-01")}`;
+
+            return (
+              <div className="bg-muted rounded-xl px-4 py-3 space-y-2">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Summary</p>
+                <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-sm">
+                  <span className="text-muted-foreground">Billing period</span>
+                  <span className="font-medium">{monthLabel}</span>
+                  <span className="text-muted-foreground">Classes selected</span>
+                  <span className="font-medium">{selectedClassesCount} class{selectedClassesCount !== 1 ? "es" : ""}</span>
+                  <span className="text-muted-foreground">Bills to create</span>
+                  <span className="font-medium">up to {estimatedBills} bill{estimatedBills !== 1 ? "s" : ""}</span>
+                  {estimatedTotal > 0 && (
+                    <>
+                      <span className="text-muted-foreground">Estimated total</span>
+                      <span className="font-medium">{formatCurrency(estimatedTotal)}</span>
+                    </>
+                  )}
+                  <span className="text-muted-foreground">Existing bills</span>
+                  <span className="font-medium">{genSkipExisting ? "Skip duplicates" : "Allow duplicates"}</span>
+                  {genMarkAsPaid && (
+                    <>
+                      <span className="text-muted-foreground">Payment</span>
+                      <span className="font-medium text-green-700">Recorded as paid ({genPaymentMethod.replace("_", " ")})</span>
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+
+          {genError && <ErrorAlert message={genError} />}
+
+          {genResult && (
+            <div className={`flex items-center gap-2 rounded-lg px-4 py-3 text-sm ${genResult.created > 0 ? "bg-green-50 border border-green-200 text-green-800" : "bg-muted text-muted-foreground"}`}>
+              <Check className="w-4 h-4 flex-shrink-0" />
+              <span>
+                {genResult.created > 0
+                  ? <><strong>{genResult.created}</strong> bill{genResult.created !== 1 ? "s" : ""} created{genResult.skipped > 0 ? `, ${genResult.skipped} already existed (skipped)` : ""}.</>
+                  : `All ${genResult.skipped} student records already existed and were skipped.`
+                }
+              </span>
+            </div>
           )}
+
           <div className="flex justify-end gap-2 pt-2">
-            <ModalCancelButton />
-            <Button onClick={handleBulkGenerate} disabled={bulkSaving || !bulkPreview || bulkPreview.totalRecords === 0 || !bulkForm.amount}>
-              {bulkSaving ? "Generating…" : `Generate ${bulkPreview && bulkPreview.totalRecords > 0 ? `(${bulkPreview.totalRecords})` : ""}`}
+            <Button variant="outline" onClick={() => { setGenModal(false); setGenResult(null); setGenError(null); }}>
+              {genResult ? "Close" : "Cancel"}
             </Button>
+            {!genResult && (() => {
+              const canGen = genMonthFrom && (
+                genMode === "configs"
+                  ? genClasses.some((c) => c.include && Number(c.overrideRate) > 0)
+                  : Number(genFlatAmount) > 0 && genFlatClassIds.length > 0
+              );
+              return (
+                <Button onClick={executeGen} disabled={genSaving || genLoading || !canGen}>
+                  {genSaving ? "Creating…" : genMarkAsPaid ? "Create Bills and Record Payment" : "Create Bills"}
+                </Button>
+              );
+            })()}
           </div>
         </div>
       </Modal>
@@ -1496,9 +1889,20 @@ export default function BillingPage() {
                       <p className="text-muted-foreground text-xs">{p.date} · {p.method.replace("_", " ")}{p.reference ? ` · Ref: ${p.reference}` : ""}</p>
                       {p.orNumber && <p className="text-xs font-mono text-muted-foreground">OR# {p.orNumber}</p>}
                     </div>
-                    <Button variant="outline" size="sm" onClick={() => setReceiptData({ payment: p, record: historyModal })}>
-                      <Printer className="w-3.5 h-3.5" /> Receipt
-                    </Button>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {p.receiptPhotoPath && (
+                        <button
+                          onClick={() => openReceiptPhoto(p.receiptPhotoPath!)}
+                          className="flex items-center gap-1 text-xs text-primary hover:underline"
+                          title="View uploaded receipt photo"
+                        >
+                          <ImageIcon className="w-3.5 h-3.5" /> Photo
+                        </button>
+                      )}
+                      <Button variant="outline" size="sm" onClick={() => setReceiptData({ payment: p, record: historyModal })}>
+                        <Printer className="w-3.5 h-3.5" /> Receipt
+                      </Button>
+                    </div>
                   </div>
                 ))}
               </div>

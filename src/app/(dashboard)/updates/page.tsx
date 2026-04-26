@@ -2,7 +2,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import {
   ImagePlus, Send, Lightbulb, ChevronDown, ChevronUp, X,
-  Eye, EyeOff, Trash2, RotateCcw, AlertTriangle, FileText, Pencil,
+  Eye, EyeOff, Trash2, RotateCcw, AlertTriangle, FileText, Pencil, Megaphone,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -116,6 +116,14 @@ export default function ParentUpdatesPage() {
   const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Broadcast modal state
+  const [broadcastOpen, setBroadcastOpen] = useState(false);
+  const [broadcastTarget, setBroadcastTarget] = useState<string>("all");
+  const [broadcastMessage, setBroadcastMessage] = useState("");
+  const [broadcastSending, setBroadcastSending] = useState(false);
+  const [broadcastError, setBroadcastError] = useState<string | null>(null);
+  const [broadcastSent, setBroadcastSent] = useState(false);
+
   // Action modal state
   const [actionUpdate, setActionUpdate] = useState<Update | null>(null);
   const [actionType, setActionType] = useState<"hide" | "restore" | "delete" | null>(null);
@@ -141,6 +149,35 @@ export default function ParentUpdatesPage() {
     setError(null);
     await Promise.all([loadClasses(), loadUpdates()]);
     setLoading(false);
+  }
+
+  async function sendBroadcast() {
+    if (!broadcastMessage.trim() || !schoolId || !userId) return;
+    setBroadcastSending(true);
+    setBroadcastError(null);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error: err } = await (supabase as any)
+      .from("parent_updates")
+      .insert({
+        school_id: schoolId,
+        class_id: broadcastTarget === "all" ? null : broadcastTarget,
+        author_id: userId,
+        content: broadcastMessage.trim(),
+        status: "posted",
+      });
+    setBroadcastSending(false);
+    if (err) {
+      setBroadcastError(err.message);
+    } else {
+      setBroadcastSent(true);
+      setBroadcastMessage("");
+      setTimeout(() => {
+        setBroadcastOpen(false);
+        setBroadcastSent(false);
+        setBroadcastTarget("all");
+      }, 1500);
+      await loadUpdates();
+    }
   }
 
   async function loadClasses() {
@@ -439,9 +476,18 @@ export default function ParentUpdatesPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1>Parent Updates</h1>
-        <p className="text-muted-foreground text-sm mt-1">Share updates with parents about class activities</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1>Parent Updates</h1>
+          <p className="text-muted-foreground text-sm mt-1">Share updates with parents about class activities</p>
+        </div>
+        <Button
+          variant="outline"
+          onClick={() => { setBroadcastOpen(true); setBroadcastError(null); setBroadcastSent(false); }}
+          className="flex-shrink-0"
+        >
+          <Megaphone className="w-4 h-4" /> Broadcast
+        </Button>
       </div>
 
       {error && <ErrorAlert message={error} />}
@@ -693,6 +739,73 @@ export default function ParentUpdatesPage() {
           ))
         )}
       </div>
+
+      {/* ── Broadcast Modal ──────────────────────────────────────────────── */}
+      <Modal open={broadcastOpen} onClose={() => { setBroadcastOpen(false); setBroadcastMessage(""); setBroadcastError(null); }} title="Send Broadcast" className="max-w-lg">
+        <div className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            Broadcasts go straight to the parent feed — no photos, no drafts. Use this for quick announcements, reminders, or school-wide notices.
+          </p>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Send to</label>
+            <Select value={broadcastTarget} onChange={(e) => setBroadcastTarget(e.target.value)}>
+              <option value="all">All Parents (School-wide)</option>
+              {classOptions.map((c) => (
+                <option key={c.id} value={c.id}>{c.name} parents only</option>
+              ))}
+            </Select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Message</label>
+            <Textarea
+              value={broadcastMessage}
+              onChange={(e) => setBroadcastMessage(e.target.value)}
+              placeholder="Type your announcement or reminder here…"
+              rows={5}
+            />
+            <p className="text-xs text-muted-foreground mt-1">{broadcastMessage.length} characters</p>
+          </div>
+
+          {/* Quick templates */}
+          <div>
+            <p className="text-xs text-muted-foreground mb-1.5">Quick templates:</p>
+            <div className="flex flex-wrap gap-2">
+              {[
+                { label: "No class", text: "Hi parents! Please be informed that there will be NO CLASS on [date] due to [reason]. Classes will resume on [next date]. Thank you!" },
+                { label: "Reminder", text: "Friendly reminder: [what parents need to do or bring] by [date/deadline]. Thank you for your cooperation! 😊" },
+                { label: "Event", text: "We have an upcoming event! 📅\n\nEvent: [name]\nDate: [date]\nTime: [time]\nVenue: [location]\n\nKindly take note. See you there!" },
+              ].map((t) => (
+                <button
+                  key={t.label}
+                  onClick={() => setBroadcastMessage(t.text)}
+                  className="text-xs px-2.5 py-1 border border-border rounded-lg hover:bg-muted transition-colors"
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {broadcastError && <ErrorAlert message={broadcastError} />}
+          {broadcastSent && (
+            <div className="flex items-center gap-2 text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2 text-sm">
+              <Send className="w-4 h-4" /> Broadcast sent! Parents can see it now.
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => { setBroadcastOpen(false); setBroadcastMessage(""); }}>Cancel</Button>
+            <Button
+              onClick={sendBroadcast}
+              disabled={broadcastSending || !broadcastMessage.trim() || broadcastSent}
+            >
+              {broadcastSending ? "Sending…" : <><Megaphone className="w-4 h-4" /> Send Broadcast</>}
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       {/* ── Preview Modal ────────────────────────────────────────────────── */}
       <Modal open={showPreview} onClose={() => setShowPreview(false)} title={editingDraftId ? "Preview Draft" : "Preview Update"} className="max-w-lg">

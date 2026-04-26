@@ -23,6 +23,7 @@ type Tab = "fee-types" | "tuition" | "discounts" | "credits";
 interface AcademicPeriod {
   id: string;
   name: string;
+  schoolYearId: string;
   schoolYearName: string;
   startDate: string;
   endDate: string;
@@ -42,6 +43,16 @@ interface TuitionConfig {
   level: string;
   totalAmount: number;
   months: number;
+  classId: string | null;
+  className: string | null;
+  monthlyAmount: number;
+}
+
+interface ClassOption {
+  id: string;
+  name: string;
+  level: string;
+  schoolYearId: string;
 }
 
 type DiscountType = "fixed" | "percentage" | "credit";
@@ -121,16 +132,17 @@ export default function FinancePage() {
   const [discounts, setDiscounts] = useState<Discount[]>([]);
   const [credits, setCredits] = useState<StudentCredit[]>([]);
   const [students, setStudents] = useState<StudentOption[]>([]);
+  const [classes, setClasses] = useState<ClassOption[]>([]);
 
   const fetchAll = useCallback(async () => {
     if (!schoolId) return;
     setLoading(true);
     setError("");
 
-    const [periodsRes, feeRes, tuitionRes, discountRes, creditsRes, studentsRes] = await Promise.all([
+    const [periodsRes, feeRes, tuitionRes, discountRes, creditsRes, studentsRes, classesRes] = await Promise.all([
       supabase
         .from("academic_periods")
-        .select("id, name, start_date, end_date, school_years(name)")
+        .select("id, name, school_year_id, start_date, end_date, school_years(name)")
         .eq("school_id", schoolId)
         .order("start_date"),
       supabase
@@ -140,7 +152,7 @@ export default function FinancePage() {
         .order("name"),
       supabase
         .from("tuition_configs")
-        .select("id, academic_period_id, level, total_amount, months, academic_periods(name)")
+        .select("id, academic_period_id, level, total_amount, months, monthly_amount, class_id, academic_periods(name), classes(name)")
         .eq("school_id", schoolId)
         .order("level"),
       supabase
@@ -159,6 +171,12 @@ export default function FinancePage() {
         .select("id, first_name, last_name")
         .eq("school_id", schoolId)
         .order("last_name"),
+      supabase
+        .from("classes")
+        .select("id, name, level, school_year_id")
+        .eq("school_id", schoolId)
+        .eq("is_active", true)
+        .order("name"),
     ]);
 
     if (periodsRes.error) { setError(periodsRes.error.message); setLoading(false); return; }
@@ -167,6 +185,7 @@ export default function FinancePage() {
     setAcademicPeriods((periodsRes.data ?? []).map((p: any) => ({
       id: p.id,
       name: p.name,
+      schoolYearId: p.school_year_id,
       schoolYearName: p.school_years?.name ?? "",
       startDate: p.start_date,
       endDate: p.end_date,
@@ -184,9 +203,22 @@ export default function FinancePage() {
       id: t.id,
       academicPeriodId: t.academic_period_id,
       periodName: t.academic_periods?.name ?? "",
-      level: t.level,
+      level: t.level ?? "",
       totalAmount: Number(t.total_amount),
       months: t.months,
+      classId: t.class_id ?? null,
+      className: t.classes?.name ?? null,
+      monthlyAmount: t.monthly_amount != null
+        ? Number(t.monthly_amount)
+        : t.months > 0 ? Number(t.total_amount) / t.months : Number(t.total_amount),
+    })));
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    setClasses(((classesRes.data ?? []) as any[]).map((c: any) => ({
+      id: c.id,
+      name: c.name,
+      level: c.level ?? "",
+      schoolYearId: c.school_year_id,
     })));
 
     setDiscounts((discountRes.data ?? []).map((d) => ({
@@ -249,6 +281,7 @@ export default function FinancePage() {
         <TuitionTab
           tuitionConfigs={tuitionConfigs}
           academicPeriods={academicPeriods}
+          classes={classes}
           schoolId={schoolId!}
           onRefresh={fetchAll}
         />
@@ -391,9 +424,10 @@ function FeeTypesTab({ feeTypes, schoolId, onRefresh }: {
 // ─────────────────────────────────────
 // Tuition Setup Tab
 // ─────────────────────────────────────
-function TuitionTab({ tuitionConfigs, academicPeriods, schoolId, onRefresh }: {
+function TuitionTab({ tuitionConfigs, academicPeriods, classes, schoolId, onRefresh }: {
   tuitionConfigs: TuitionConfig[];
   academicPeriods: AcademicPeriod[];
+  classes: ClassOption[];
   schoolId: string;
   onRefresh: () => void;
 }) {
@@ -401,48 +435,69 @@ function TuitionTab({ tuitionConfigs, academicPeriods, schoolId, onRefresh }: {
   const [selectedPeriodId, setSelectedPeriodId] = useState<string>(academicPeriods[0]?.id ?? "");
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<TuitionConfig | null>(null);
-  const [form, setForm] = useState({ level: "", totalAmount: "", months: "10" });
+  const [form, setForm] = useState({ classId: "", totalAmount: "", months: "10" });
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
 
   const filtered = tuitionConfigs.filter((t) => t.academicPeriodId === selectedPeriodId);
 
+  // Classes available for the selected period's school year
+  const selectedPeriod = academicPeriods.find((p) => p.id === selectedPeriodId);
+  const periodClasses = selectedPeriod
+    ? classes.filter((c) => c.schoolYearId === selectedPeriod.schoolYearId)
+    : [];
+
+  // Already-configured class IDs for this period (excluding the one being edited)
+  const configuredClassIds = new Set(
+    filtered.map((t) => t.classId).filter((id): id is string => !!id && id !== editing?.classId)
+  );
+  const availableClasses = periodClasses.filter((c) => !configuredClassIds.has(c.id));
+
   function openAdd() {
     setEditing(null);
-    setForm({ level: "", totalAmount: "", months: "10" });
+    setForm({ classId: "", totalAmount: "", months: "10" });
     setFormError("");
     setShowModal(true);
   }
 
   function openEdit(t: TuitionConfig) {
     setEditing(t);
-    setForm({ level: t.level, totalAmount: String(t.totalAmount), months: String(t.months) });
+    setForm({ classId: t.classId ?? "", totalAmount: String(t.totalAmount), months: String(t.months) });
     setFormError("");
     setShowModal(true);
   }
 
   async function handleSave() {
-    if (!form.level.trim() || !form.totalAmount || !selectedPeriodId) {
-      setFormError("Level, amount, and academic period are required.");
+    if (!form.classId || !form.totalAmount || !selectedPeriodId) {
+      setFormError("Class, amount, and academic period are required.");
       return;
     }
     setSaving(true);
     setFormError("");
 
+    const selectedClass = periodClasses.find((c) => c.id === form.classId);
+    const totalAmount = parseFloat(form.totalAmount);
+    const months = parseInt(form.months) || 1;
+    const monthlyAmount = Math.round((totalAmount / months) * 100) / 100;
+
     if (editing) {
       const { error } = await supabase.from("tuition_configs").update({
-        level: form.level.trim(),
-        total_amount: parseFloat(form.totalAmount),
-        months: parseInt(form.months),
+        class_id: form.classId,
+        level: selectedClass?.level ?? "",
+        total_amount: totalAmount,
+        months,
+        monthly_amount: monthlyAmount,
       }).eq("id", editing.id);
       if (error) { setFormError(error.message); setSaving(false); return; }
     } else {
       const { error } = await supabase.from("tuition_configs").insert({
         school_id: schoolId,
         academic_period_id: selectedPeriodId,
-        level: form.level.trim(),
-        total_amount: parseFloat(form.totalAmount),
-        months: parseInt(form.months),
+        class_id: form.classId,
+        level: selectedClass?.level ?? "",
+        total_amount: totalAmount,
+        months,
+        monthly_amount: monthlyAmount,
       });
       if (error) { setFormError(error.message); setSaving(false); return; }
     }
@@ -465,7 +520,6 @@ function TuitionTab({ tuitionConfigs, academicPeriods, schoolId, onRefresh }: {
           <Select
             value={selectedPeriodId}
             onChange={(e) => setSelectedPeriodId(e.target.value)}
-            className="w-56"
           >
             {academicPeriods.map((p) => (
               <option key={p.id} value={p.id}>{p.name} ({p.schoolYearName})</option>
@@ -473,7 +527,7 @@ function TuitionTab({ tuitionConfigs, academicPeriods, schoolId, onRefresh }: {
           </Select>
         </div>
         {selectedPeriodId && (
-          <Button size="sm" onClick={openAdd}><Plus className="w-4 h-4 mr-1" /> Add Level</Button>
+          <Button size="sm" onClick={openAdd}><Plus className="w-4 h-4 mr-1" /> Add Class</Button>
         )}
       </div>
 
@@ -485,45 +539,59 @@ function TuitionTab({ tuitionConfigs, academicPeriods, schoolId, onRefresh }: {
         <div className="grid gap-3">
           {filtered.length === 0 ? (
             <Card><CardContent className="p-8 text-center text-sm text-muted-foreground">
-              No tuition configured for this period. Click "Add Level" to start.
+              No tuition configured for this period. Click "Add Class" to start.
             </CardContent></Card>
-          ) : filtered.map((t) => {
-            const monthly = t.months > 0 ? t.totalAmount / t.months : 0;
-            return (
-              <Card key={t.id}>
-                <CardContent className="p-4 flex items-center justify-between">
-                  <div>
-                    <p className="font-medium">{t.level}</p>
-                    <p className="text-sm text-muted-foreground">
-                      {formatCurrency(t.totalAmount)} total · {t.months} months ·{" "}
-                      <span className="text-foreground font-medium">{formatCurrency(monthly)}/mo</span>
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button size="sm" variant="outline" onClick={() => openEdit(t)}>
-                      <Pencil className="w-3.5 h-3.5" />
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => handleDelete(t.id)}>
-                      <Trash2 className="w-3.5 h-3.5 text-destructive" />
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
+          ) : filtered.map((t) => (
+            <Card key={t.id}>
+              <CardContent className="p-4 flex items-center justify-between">
+                <div>
+                  <p className="font-medium">{t.className ?? t.level}</p>
+                  {t.className && t.level && (
+                    <p className="text-xs text-muted-foreground">{t.level}</p>
+                  )}
+                  <p className="text-sm text-muted-foreground mt-0.5">
+                    {formatCurrency(t.totalAmount)} total · {t.months} months ·{" "}
+                    <span className="text-foreground font-medium">{formatCurrency(t.monthlyAmount)}/mo</span>
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="outline" onClick={() => openEdit(t)}>
+                    <Pencil className="w-3.5 h-3.5" />
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => handleDelete(t.id)}>
+                    <Trash2 className="w-3.5 h-3.5 text-destructive" />
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
         </div>
       )}
 
-      <Modal open={showModal} onClose={() => setShowModal(false)} title={editing ? "Edit Tuition" : "Add Tuition Level"}>
+      <Modal open={showModal} onClose={() => setShowModal(false)} title={editing ? "Edit Tuition Config" : "Add Tuition Config"}>
         <div className="space-y-4">
           {formError && <ErrorAlert message={formError} />}
           <div>
-            <label className="block text-sm font-medium mb-1.5">Level / Class Name *</label>
-            <Input
-              value={form.level}
-              onChange={(e) => setForm((f) => ({ ...f, level: e.target.value }))}
-              placeholder="e.g. Toddlers, Pre-Kinder, Kinder"
-            />
+            <label className="block text-sm font-medium mb-1.5">Class *</label>
+            <Select
+              value={form.classId}
+              onChange={(e) => setForm((f) => ({ ...f, classId: e.target.value }))}
+            >
+              <option value="">— Select class —</option>
+              {availableClasses.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}{c.level ? ` (${c.level})` : ""}</option>
+              ))}
+            </Select>
+            {periodClasses.length === 0 && selectedPeriodId && (
+              <p className="text-xs text-muted-foreground mt-1">
+                No active classes found for this period&apos;s school year.
+              </p>
+            )}
+            {periodClasses.length > 0 && availableClasses.length === 0 && !editing && (
+              <p className="text-xs text-muted-foreground mt-1">
+                All classes for this period are already configured.
+              </p>
+            )}
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -550,7 +618,7 @@ function TuitionTab({ tuitionConfigs, academicPeriods, schoolId, onRefresh }: {
           </div>
           {form.totalAmount && form.months && (
             <p className="text-sm text-muted-foreground">
-              Monthly equivalent: <strong>
+              Monthly amount: <strong>
                 {formatCurrency(parseFloat(form.totalAmount) / parseInt(form.months || "1"))}
               </strong>
             </p>

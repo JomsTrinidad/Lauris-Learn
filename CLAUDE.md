@@ -29,12 +29,12 @@ src/
       students/page.tsx         — Students + guardian management
       classes/page.tsx          — Class setup
       attendance/page.tsx       — Daily attendance marking
-      enrollment/page.tsx       — Inquiry pipeline
+      enrollment/page.tsx       — Inquiry pipeline + funnel analytics
       events/page.tsx           — School events
-      billing/page.tsx          — Billing records + payments
+      billing/page.tsx          — Billing records + payments + generate modal
       progress/page.tsx         — Student progress observations
       online-classes/page.tsx   — Online session scheduling
-      updates/page.tsx          — Parent updates / class feed
+      updates/page.tsx          — Parent updates / class feed + broadcast
       settings/page.tsx         — School years + holidays
   components/
     layout/
@@ -42,7 +42,10 @@ src/
       Sidebar.tsx
     ui/
       badge.tsx | button.tsx | card.tsx | input.tsx
-      modal.tsx | select.tsx | spinner.tsx | textarea.tsx
+      modal.tsx | select.tsx | spinner.tsx | textarea.tsx | tooltip.tsx
+      datepicker.tsx            — Custom date picker (portal-based, matches design system)
+      monthpicker.tsx           — Custom month picker (portal-based, matches design system)
+      avatar-upload.tsx
   contexts/
     SchoolContext.tsx            — schoolId, activeYear, userId, userRole, userName
   lib/
@@ -52,9 +55,24 @@ src/
     types/database.ts           — Full TypeScript types for all tables
     utils.ts                    — formatCurrency, formatTime, getInitials, cn
   middleware.ts                 — Route protection
+  app/
+    invite/                     — Invite flow for parents (guardian linking)
+    parent/
+      layout.tsx                — Parent shell: bottom nav (6 items) + ParentContext
+      dashboard/page.tsx        — Parent dashboard: attendance, announcements, updates, billing alert
+      student/page.tsx          — Child profile view
+      updates/page.tsx          — Class updates feed (with photos + refresh)
+      billing/page.tsx          — Billing history + receipts + payment photo
+      progress/page.tsx         — Child progress observations (parent_visible only)
+      events/page.tsx           — Upcoming events + RSVP (going/not going/maybe)
 supabase/
   schema.sql                    — Full DB schema (run first on fresh project)
   migrations/001_additions.sql  — Indexes + visibility column + seed data
+  migrations/014_updates_media_bucket.sql — Storage bucket for update photos (private)
+  migrations/015_parent_updates_update_policy.sql — RLS UPDATE policy on parent_updates
+  migrations/016_parent_features.sql — absence_notifications table, event_rsvps unique index,
+                                        parent RLS on progress_observations
+  migrations/017_payment_receipt_photo.sql — receipt_photo_path column on payments
 ```
 
 ---
@@ -128,14 +146,28 @@ loading: boolean
 refresh: () => void   // call after changing school-level settings
 ```
 
+## ParentContext
+
+Available everywhere inside `app/parent/` via `useParentContext()`:
+
+```ts
+childId: string | null       // selected child's student ID
+child: ChildInfo | null      // full child object
+schoolName: string
+schoolId: string | null      // needed for scoped queries in parent pages
+classId: string | null       // child's active enrolled class ID
+messengerLink: string | null // class messenger link
+```
+
 ---
 
 ## Supabase Setup (New Project)
 
 1. Run `supabase/schema.sql` in SQL Editor
-2. Run `supabase/migrations/001_additions.sql` in SQL Editor
-3. Sign up as admin user via `/login`
-4. In SQL Editor, assign the admin to BK school:
+2. Run all migrations in order (`001` → `017`) in SQL Editor
+3. In Supabase Dashboard → Storage, create a **private** bucket named `updates-media` (migration 014 adds its RLS policies). Receipt photos also upload here under the `payment-receipts/` prefix.
+4. Sign up as admin user via `/login`
+5. In SQL Editor, assign the admin to BK school:
    ```sql
    UPDATE profiles
      SET school_id = '00000000-0000-0000-0000-000000000001',
@@ -143,7 +175,15 @@ refresh: () => void   // call after changing school-level settings
          full_name = 'Your Name'
    WHERE email = 'your@email.com';
    ```
-5. Add sample classes if needed (see commented SQL in 001_additions.sql)
+6. Add sample classes if needed (see commented SQL in 001_additions.sql)
+
+### Storage Buckets
+
+Currently all media lives in one private bucket (`updates-media`). Path conventions:
+- `updates-media/{post_id}/{filename}` — class update photos
+- `payment-receipts/{payment_id}.{ext}` — payment receipt photos
+
+**Future split (not yet done):** Separate `receipts` bucket (admin-only RLS) and `student-documents` bucket when the document hub is built. The current single-bucket approach works but means receipt photos share RLS policies with update photos.
 
 ---
 
@@ -161,33 +201,44 @@ refresh: () => void   // call after changing school-level settings
 | Enrollment pipeline | ✅ Complete | Inquiry list, status progression, add inquiry, notes |
 | Events | ✅ Complete | List, add/edit event, applies-to filter |
 | Billing | ✅ Complete | Billing records list, record payment modal, status tracking |
-| Parent updates | ✅ Complete | Post update (text), filter by class, feed display |
+| Parent updates | ✅ Complete | Post update (text + photos), filter by class, feed display; photos stored in private bucket with signed URLs |
 | Progress tracking | ✅ Complete | Observations per student, rating + visibility, category-based |
 | Online classes | ⚠️ Partial | UI scaffolded, not wired to Supabase (static state only) |
 | Settings | ✅ Complete | School years (CRUD, set active), academic periods (CRUD), holidays management |
 | Finance Setup | ✅ Complete | Fee types, tuition configs per period/level, discounts, student credits |
 | Super Admin Panel | ✅ Complete | Schools list, trial management, create school, impersonation |
 | Trial System | ✅ Complete | Trial banner in dashboard, read-only on expiry, days countdown |
-| UI component library | ✅ Complete | Button, Card, Input, Modal, Select, Textarea, Badge, Spinner |
+| UI component library | ✅ Complete | Button, Card, Input, Modal, Select, Textarea, Badge, Spinner, DatePicker, MonthPicker |
+| Parent portal — progress | ✅ Complete | `/parent/progress` shows parent_visible observations, latest per category, rating bars |
+| Parent portal — events + RSVP | ✅ Complete | `/parent/events` shows upcoming events, RSVP buttons (going/not going/maybe), upsert on conflict |
+| Parent portal — absence reporting | ✅ Complete | Parent dashboard: "Report absent today" button → optional reason → notifies school; teacher sees amber badge on attendance page |
+| Parent portal — announcements | ✅ Complete | Parent dashboard shows school-wide broadcasts (class_id IS NULL) in a separate Announcements section |
+| Enrollment funnel analytics | ✅ Complete | `/enrollment` Analytics view: conversion %, funnel bars, source breakdown, class demand table |
+| Broadcast announcements | ✅ Complete | Updates page: Broadcast modal → posts to parent_updates with class_id=null (school-wide) or specific class |
+| Billing — receipt photo upload | ✅ Complete | Record Payment modal has optional photo upload; stored in updates-media/payment-receipts/; viewable via signed URL in payment history |
+| Billing — auto-generate | ✅ Complete | Reads tuition configs per level, pre-fills per-class amounts, skips existing records; defaults fee type to "Tuition" |
 
 ---
 
 ## What Is NOT Yet Built
 
 ### High Priority (Core Features)
-- [x] **Multi-school / Super Admin panel** — done: schools list, trial management, create school, impersonation
-- [x] **Trial system** — done: 14-day trial, banner, read-only on expiry
-- [x] **Academic Period** — done: CRUD in Settings, linked to school year
-- [x] **Tuition configuration** — done: per-level, per-period pricing with monthly breakdown
-- [x] **Fee types** — done: CRUD in Finance Setup
-- [x] **Discounts & promos** — done: fixed, percentage, credit types; scoped presets
-- [x] **Credits system** — done: issue credits, track applied vs outstanding
-- [x] **Billing enhancements (Phase 1)** — done: month filter, collection rate % card, aging badges (30d/60d/90d+), payment history drawer per record
-- [x] **Receipts & statements (Phase 2)** — done: OR number on payments (migration 008), printable official receipt, printable billing statement per student; print opens clean new window
-- [x] **Parent billing portal (Phase 3)** — done: `/parent/billing` upgraded with expandable payment history per record, receipt modal per payment (with print), printable billing statement; `schoolName` added to ParentContext
-- [x] **Billing validation guardrails (Phase 4)** — done: duplicate billing check with override reason, payment sequence warning (earlier unpaid months), overpayment hard block, paid status consistency guard, amount-change safety with change reason, cancel/waive/refund requires reason, `waived` status added, bulk mark-paid confirmation modal, fee type required, human-friendly error messages; migration 009 adds `change_reason`/`changed_by`/`changed_at` on billing_records and `recorded_by` on payments
+- [x] **Multi-school / Super Admin panel** — done
+- [x] **Trial system** — done
+- [x] **Academic Period** — done
+- [x] **Tuition configuration** — done
+- [x] **Fee types** — done
+- [x] **Discounts & promos** — done
+- [x] **Credits system** — done
+- [x] **Billing enhancements (Phase 1–4)** — done (month filter, aging badges, payment history, OR number, printable receipts/statements, validation guardrails)
+- [x] **Parent billing portal** — done
+- [x] **Parent portal — progress, events, RSVP, absence reporting, announcements** — done
+- [x] **Enrollment funnel analytics** — done
+- [x] **Broadcast announcements** — done
+- [x] **Billing — generate modal** ⚠️ Pending merge: Auto-Generate + Bulk Generate are two separate modals with overlapping functionality. Plan is to merge into one "Generate Billing" modal with a "Use tuition configs / Flat amount" toggle and month range support. See Session Log 2026-04-26.
 - [ ] **Resource / Document Hub** — file uploads, categorized downloads for parents
 - [ ] **Online classes** — wire `online-classes` page to Supabase (currently static)
+- [ ] **Storage bucket separation** — split `updates-media` into `receipts` (admin-only) + `student-documents` when document hub is built
 
 ### Billing — Remaining Gaps
 - [ ] **Scheduled recurring billing** — set monthly fee per class/level, auto-generate on chosen day each month
@@ -196,9 +247,8 @@ refresh: () => void   // call after changing school-level settings
 - [ ] **Sibling / family grouping** — combined family balance view, sibling discount auto-apply
 
 ### Medium Priority
-- [ ] **RSVP for events** — per-student RSVP UI
+- [x] **RSVP for events** — done (parent events page)
 - [ ] **Field trip / event fees** — link fees to events, per-student opt-in
-- [ ] **Parent portal / view** — parent-specific read-only dashboard (billing is one piece; also updates feed, progress, events)
 - [ ] **Waitlist management UI** — explicit waitlist queue, promote-to-enrolled flow
 - [ ] **Sibling enrollment** — link students as siblings, auto-apply sibling discount
 
@@ -209,6 +259,21 @@ refresh: () => void   // call after changing school-level settings
 - [ ] **PWA icons** — icon-192.png / icon-512.png missing from public/
 - [ ] **Role-based UI gating** — hide admin-only actions from teachers/parents
 - [ ] **Tighten RLS policies** — per-role write policies (currently broad "school member" policies)
+
+---
+
+## Schema Additions (Migrations 016–017)
+
+### Migration 016 — Parent Features
+- `absence_notifications` table: `school_id`, `student_id`, `class_id`, `date`, `reason`; UNIQUE(student_id, date); RLS: parents insert/select via guardian email, staff select via school_id
+- `event_rsvps`: added UNIQUE INDEX on (event_id, student_id) — required for upsert with onConflict
+- `progress_observations`: added parent SELECT policy where `visibility = 'parent_visible'`
+
+### Migration 017 — Payment Receipt Photo
+- `payments`: added `receipt_photo_path TEXT` — stores storage path in `updates-media/payment-receipts/{payment_id}.{ext}`
+
+### Billing Status Enum (Migration 009)
+- Added `waived` status — excluded from outstanding balance and revenue totals; requires change reason
 
 ---
 
@@ -230,6 +295,24 @@ All implemented in `supabase/migrations/002_super_admin_trial_periods_tuition.sq
 
 ---
 
+## UI Component Conventions
+
+### DatePicker (`src/components/ui/datepicker.tsx`)
+- Props: `value: string` (YYYY-MM-DD or ""), `onChange`, `placeholder`, `disabled`, `className`
+- Uses `createPortal` to render dropdown on `document.body` — safe inside modals with `overflow-hidden`
+- Portal dropdown positions itself above or below the trigger based on available viewport space
+- Has "Today" shortcut and "Clear" button (when value is set)
+- Replace all `<Input type="date">` with `<DatePicker>` for consistency
+
+### MonthPicker (`src/components/ui/monthpicker.tsx`)
+- Props: `value: string` (YYYY-MM or ""), `onChange`, `placeholder`, `min` (YYYY-MM), `disabled`, `className`
+- Same portal pattern as DatePicker
+- Shows 3×4 month grid with year navigation
+- Has "This month" shortcut and "Clear" button
+- Replace all `<Input type="month">` with `<MonthPicker>` for consistency
+
+---
+
 ## Coding Conventions
 
 - All pages are `"use client"` with `useEffect` + Supabase client for data fetching
@@ -245,6 +328,61 @@ All implemented in `supabase/migrations/002_super_admin_trial_periods_tuition.sq
 ---
 
 ## Session Log
+
+### 2026-04-26 — UI Polish + Parent Features + Billing Generate Merge Plan
+
+**Custom date/month pickers:**
+- Created `DatePicker` (`src/components/ui/datepicker.tsx`) — portal-based, replaces all `<Input type="date">` across attendance and billing modals; positions above/below trigger based on viewport space
+- Created `MonthPicker` (`src/components/ui/monthpicker.tsx`) — same pattern, 3×4 month grid, replaces all `<Input type="month">`; supports `min` prop for range pickers; "This month" shortcut built in
+- Both match the app's design tokens (border-border, bg-card, primary for selected, muted for hover)
+
+**Parent dashboard — broadcast announcements:**
+- `loadAnnouncements()` queries `parent_updates` where `class_id IS NULL` (school-wide posts)
+- Shown in a separate "Announcements" section above class updates, styled with primary tint + Megaphone icon
+- Class-specific updates remain in "Recent Updates" section below
+
+**Billing — auto-generate fix:**
+- Auto-Generate modal: all classes now default to `include: true` regardless of whether tuition configs exist; classes without configs show amber "No config — enter manually" hint and empty editable amount field
+- Fee type now defaults to the first fee type whose name includes "Tuition" (falls back to first fee type)
+
+**Billing — receipt photo upload:**
+- `PaymentForm` gained `receiptFile: File | null`; `PaymentRecord` gained `receiptPhotoPath: string | null`
+- Record Payment modal: optional file input (image/*) uploads to `updates-media/payment-receipts/{payment_id}.{ext}` on save
+- Payment history modal: shows "Photo" link (generates signed URL via `createSignedUrl`) when a receipt photo exists
+- Migration 017 adds `receipt_photo_path TEXT` to payments
+
+**Billing cleanup SQL** (run in Supabase SQL Editor to wipe billing data):
+```sql
+DELETE FROM payments WHERE billing_record_id IN (SELECT id FROM billing_records WHERE school_id = '00000000-0000-0000-0000-000000000001');
+DELETE FROM billing_discounts WHERE billing_record_id IN (SELECT id FROM billing_records WHERE school_id = '00000000-0000-0000-0000-000000000001');
+DELETE FROM billing_records WHERE school_id = '00000000-0000-0000-0000-000000000001';
+```
+
+**Billing — generate modal merge (PLANNED, not yet implemented):**
+- Auto-Generate + Bulk Generate are two separate modals with overlapping logic; plan is to merge into one "Generate Billing" modal
+- Toggle: "Use tuition configs" (per-class pre-filled amounts) vs "Flat amount" (single amount, all classes)
+- Month range (From/To, same month = single month); fee type defaults to Tuition; due date optional
+- "Skip existing" checkbox (default on); "Mark as paid" checkbox (edge case, always available in both modes)
+- Single `executeGen()` function replaces `executeAutoGen()` and `handleBulkGenerate()`
+- Header: one "Generate Billing" button replaces both "Auto-Generate" and "Bulk Generate"
+
+**Parent portal — new pages:**
+- `/parent/progress` — fetches `progress_observations` where `visibility = 'parent_visible'`, deduplicates by category (latest per category), renders rating pills + CSS progress bars; ratings: emerging/developing/consistent/advanced
+- `/parent/events` — fetches upcoming events for school, filters to `applies_to = 'all'` or class match, fetches existing RSVPs in one batch, upserts on `(event_id, student_id)` conflict
+- Both linked in parent nav (6-item bottom nav: Home, Child, Updates, Events, Progress, Billing)
+
+**Parent portal — absence reporting:**
+- `absence_notifications` table (migration 016): UNIQUE(student_id, date) — idempotent; duplicate insert (code 23505) handled gracefully
+- Parent dashboard: attendance card expands when status is null → "Report absent today" link → inline form with optional reason → "Notify School" → confirmation state
+- Attendance page: loads `absence_notifications` for the selected date, shows amber callout + per-student "parent notified" badge
+
+**Enrollment funnel analytics:**
+- New "Analytics" view toggle on enrollment page (alongside Pipeline and Table views)
+- Client-side: computes stage counts, conversion rates, source breakdown, class demand vs capacity from already-loaded `inquiries` array — no extra API calls
+
+**Broadcast announcements (admin):**
+- Updates page: "Broadcast" button opens modal with target (All Classes or specific class), textarea with 280-char counter, 3 quick-template buttons
+- Inserts to `parent_updates` with `class_id = null` for school-wide; auto-closes after 1500ms on success
 
 ### 2026-04-25 — Billing Phase 4 (Validation Guardrails)
 - Migration 009: added `waived` to billing_status enum; `change_reason`, `changed_by`, `changed_at` on billing_records; `recorded_by` on payments
@@ -301,6 +439,15 @@ All implemented in `supabase/migrations/002_super_admin_trial_periods_tuition.sq
 - Sidebar: added Finance Setup nav item, Super Admin Platform section (super_admin role only)
 - Seed data in 002: 2 academic periods for BK (Regular Term + Summer), 5 fee types, 3 tuition configs, 4 discounts
 - TypeScript: 0 errors confirmed
+
+### 2026-04-26 — Parent Updates Fixes + Storage + UX
+- **Parent updates visibility fix**: query was filtering strictly by `class_id`; changed to `.or("class_id.eq.{id},class_id.is.null")` so school-wide posts (All Classes) also appear in the parent feed
+- **`schoolId` added to ParentContext**: parent pages now scope queries by `schoolId`; parent updates page no longer bails when `classId` is null
+- **Private storage bucket for photos**: migration 014 creates `updates-media` bucket as private with authenticated-only policies; bucket must be manually created in Supabase Dashboard → Storage as private
+- **Signed URLs for photos**: `uploadPhotos` now stores storage paths (not public URLs); both admin feed and parent feed call `createSignedUrls` in one batch on load, using index-based mapping (not `s.path` key) to build the signed URL map; signed URLs expire after 1 hour
+- **RLS UPDATE policy fix**: migration 015 adds missing `UPDATE` policy on `parent_updates`; without it all UPDATEs (image path saves, hide/restore/delete) silently returned 204 with no rows modified
+- **Scroll-to-top on navigation**: dashboard layout (`<main overflow-y-auto>`) and parent layout both now reset scroll via `usePathname` + `mainRef.current.scrollTo(0,0)` on route change
+- **Parent updates refresh button**: subtle `RotateCw` icon next to the heading; spins while reloading; does not trigger full-page spinner
 
 ### 2026-04-25 — Project Kickoff
 - Defined full product spec (multi-school SaaS, preschool focus)

@@ -1,42 +1,12 @@
 "use client";
-import { useState } from "react";
+import { useActionState } from "react";
 import Image from "next/image";
-import { createClient } from "@/lib/supabase/client";
-import { useRouter } from "next/navigation";
+import { login } from "./actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 export default function LoginPage() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const router = useRouter();
-
-  async function handleLogin(e: React.FormEvent) {
-    e.preventDefault();
-    setLoading(true);
-    setError("");
-
-    const supabase = createClient();
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-
-    if (error) {
-      setError(error.message);
-      setLoading(false);
-    } else {
-      const { data: { user } } = await supabase.auth.getUser();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: profile } = await (supabase as any)
-        .from("profiles")
-        .select("role")
-        .eq("id", user?.id)
-        .single();
-      const dest = profile?.role === "parent" ? "/parent/dashboard" : "/dashboard";
-      router.push(dest);
-      router.refresh();
-    }
-  }
+  const [state, formAction, pending] = useActionState(login, { error: "" });
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
@@ -58,14 +28,13 @@ export default function LoginPage() {
 
         {/* Card */}
         <div className="bg-card border border-border rounded-2xl p-6 shadow-sm">
-          <form onSubmit={handleLogin} className="space-y-4">
+          <form action={formAction} className="space-y-4">
             <div>
               <label className="block text-sm font-medium mb-1.5">Email</label>
               <Input
                 type="email"
+                name="email"
                 placeholder="you@school.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
                 required
                 autoComplete="email"
               />
@@ -75,27 +44,26 @@ export default function LoginPage() {
               <label className="block text-sm font-medium mb-1.5">Password</label>
               <Input
                 type="password"
+                name="password"
                 placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
                 required
                 autoComplete="current-password"
               />
             </div>
 
-            {error && (
+            {state.error && (
               <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
-                {error}
+                {state.error}
               </div>
             )}
 
             <Button
               type="submit"
-              disabled={loading}
+              disabled={pending}
               className="w-full"
               size="lg"
             >
-              {loading ? "Signing in..." : "Sign In"}
+              {pending ? "Signing in..." : "Sign In"}
             </Button>
           </form>
         </div>

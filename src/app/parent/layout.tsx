@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Home, MessageSquare, User, CreditCard, LogOut, GraduationCap } from "lucide-react";
+import { Home, MessageSquare, User, CreditCard, LogOut, GraduationCap, TrendingUp, CalendarDays } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { Spinner } from "@/components/ui/spinner";
 
@@ -17,10 +17,12 @@ interface ChildInfo {
 }
 
 const NAV = [
-  { href: "/parent/dashboard", icon: Home,           label: "Home" },
-  { href: "/parent/student",   icon: User,           label: "My Child" },
-  { href: "/parent/updates",   icon: MessageSquare,  label: "Updates" },
-  { href: "/parent/billing",   icon: CreditCard,     label: "Billing" },
+  { href: "/parent/dashboard", icon: Home,          label: "Home" },
+  { href: "/parent/student",   icon: User,          label: "Child" },
+  { href: "/parent/updates",   icon: MessageSquare, label: "Updates" },
+  { href: "/parent/events",    icon: CalendarDays,  label: "Events" },
+  { href: "/parent/progress",  icon: TrendingUp,    label: "Progress" },
+  { href: "/parent/billing",   icon: CreditCard,    label: "Billing" },
 ];
 
 export default function ParentLayout({ children }: { children: React.ReactNode }) {

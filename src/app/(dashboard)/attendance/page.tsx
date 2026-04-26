@@ -1,10 +1,11 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
-import { MessageSquare, Save, Check, AlertTriangle, Search, CheckSquare } from "lucide-react";
+import { MessageSquare, Save, Check, AlertTriangle, Search, CheckSquare, Bell } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { DatePicker } from "@/components/ui/datepicker";
 import { Card } from "@/components/ui/card";
 import { PageSpinner, ErrorAlert } from "@/components/ui/spinner";
 import { getInitials } from "@/lib/utils";
@@ -25,6 +26,12 @@ interface StudentRow {
 interface ClassOption {
   id: string;
   name: string;
+}
+
+interface AbsenceNotif {
+  studentId: string;
+  studentName: string;
+  reason: string | null;
 }
 
 const STATUS_OPTIONS = [
@@ -50,6 +57,7 @@ export default function AttendancePage() {
   const [noteStudentId, setNoteStudentId] = useState<string | null>(null);
   const [studentSearch, setStudentSearch] = useState("");
   const [holiday, setHoliday] = useState<string | null>(null);
+  const [absenceNotifs, setAbsenceNotifs] = useState<AbsenceNotif[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingStudents, setLoadingStudents] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -106,6 +114,24 @@ export default function AttendancePage() {
     const enrollRows = ((eResult.data ?? []) as any[]) as Array<{ id: string; student_id: string; students: { first_name: string; last_name: string } | null }>;
 
     const studentIds: string[] = enrollRows.map((e) => e.student_id);
+
+    // Parent-reported absence notifications for this date (scoped to enrolled students)
+    if (studentIds.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const nResult = await supabase.from("absence_notifications").select("student_id, reason").eq("date", selectedDate).in("student_id", studentIds) as any;
+      const notifRows = ((nResult.data ?? []) as any[]) as Array<{ student_id: string; reason: string | null }>;
+      const studentNameMap: Record<string, string> = {};
+      enrollRows.forEach((e) => {
+        if (e.students) studentNameMap[e.student_id] = `${e.students.first_name} ${e.students.last_name}`;
+      });
+      setAbsenceNotifs(notifRows.map((n) => ({
+        studentId: n.student_id,
+        studentName: studentNameMap[n.student_id] ?? "Unknown",
+        reason: n.reason,
+      })));
+    } else {
+      setAbsenceNotifs([]);
+    }
 
     // Existing attendance records for this class+date
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -211,10 +237,9 @@ export default function AttendancePage() {
       <div className="flex flex-col sm:flex-row gap-4">
         <div className="flex-1">
           <label className="block text-sm font-medium mb-1">Date</label>
-          <Input
-            type="date"
+          <DatePicker
             value={selectedDate}
-            onChange={(e) => { setSelectedDate(e.target.value); setSaved(false); }}
+            onChange={(v) => { setSelectedDate(v); setSaved(false); }}
           />
         </div>
         <div className="flex-1">
@@ -231,6 +256,27 @@ export default function AttendancePage() {
           </Select>
         </div>
       </div>
+
+      {/* Parent-reported absences callout */}
+      {absenceNotifs.length > 0 && (
+        <div className="flex items-start gap-3 px-4 py-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+          <Bell className="w-4 h-4 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="font-medium">
+              {absenceNotifs.length === 1
+                ? "1 parent has pre-reported an absence"
+                : `${absenceNotifs.length} parents have pre-reported absences`}
+            </p>
+            <ul className="mt-1 space-y-0.5">
+              {absenceNotifs.map((n) => (
+                <li key={n.studentId} className="text-amber-700">
+                  {n.studentName}{n.reason ? ` — ${n.reason}` : ""}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
 
       {/* Holiday warning */}
       {holiday && (
@@ -302,7 +348,14 @@ export default function AttendancePage() {
                       <div className="w-9 h-9 bg-primary text-primary-foreground rounded-full flex items-center justify-center text-xs font-semibold flex-shrink-0">
                         {getInitials(student.name)}
                       </div>
-                      <span className="text-sm font-medium">{student.name}</span>
+                      <div>
+                        <span className="text-sm font-medium">{student.name}</span>
+                        {absenceNotifs.some((n) => n.studentId === student.studentId) && (
+                          <span className="ml-2 inline-flex items-center gap-1 text-xs text-amber-600 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-full">
+                            <Bell className="w-2.5 h-2.5" /> parent notified
+                          </span>
+                        )}
+                      </div>
                     </div>
 
                     <div className="flex items-center gap-1.5 flex-wrap justify-end">

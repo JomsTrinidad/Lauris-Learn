@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Plus, BookOpen, Eye, EyeOff } from "lucide-react";
+import { Plus, BookOpen, Eye, EyeOff, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
@@ -34,6 +34,8 @@ interface Observation {
 interface StudentOption {
   id: string;
   name: string;
+  classId: string;
+  className: string;
 }
 
 const RATING_COLORS: Record<Rating, string> = {
@@ -58,6 +60,8 @@ export default function ProgressPage() {
   const [formError, setFormError] = useState<string | null>(null);
 
   const [selectedStudent, setSelectedStudent] = useState("");
+  const [classFilter, setClassFilter] = useState("");
+  const [studentSearch, setStudentSearch] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState({
     studentId: "",
@@ -95,15 +99,17 @@ export default function ProgressPage() {
     if (!activeYear?.id) { setStudents([]); return; }
     const { data } = await supabase
       .from("enrollments")
-      .select("student_id, students(first_name, last_name)")
+      .select("student_id, class_id, students(first_name, last_name), classes(name)")
       .eq("school_year_id", activeYear.id)
       .eq("status", "enrolled");
 
-    const opts: StudentOption[] = (data ?? []).map((e) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const s = (e as any).students;
-      return { id: e.student_id, name: s ? `${s.first_name} ${s.last_name}` : e.student_id };
-    }).sort((a, b) => a.name.localeCompare(b.name));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const opts: StudentOption[] = ((data ?? []) as any[]).map((e: any) => ({
+      id: e.student_id,
+      name: e.students ? `${e.students.first_name} ${e.students.last_name}` : e.student_id,
+      classId: e.class_id ?? "",
+      className: e.classes?.name ?? "",
+    })).sort((a: StudentOption, b: StudentOption) => a.name.localeCompare(b.name));
 
     setStudents(opts);
     if (opts.length > 0 && !selectedStudent) setSelectedStudent(opts[0].id);
@@ -180,6 +186,15 @@ export default function ProgressPage() {
 
   const studentName = students.find((s) => s.id === selectedStudent)?.name ?? "";
 
+  const classOptions = Array.from(
+    new Map(students.filter((s) => s.classId).map((s) => [s.classId, { id: s.classId, name: s.className }])).values()
+  ).sort((a, b) => a.name.localeCompare(b.name));
+
+  const filteredStudents = students.filter((s) =>
+    (!classFilter || s.classId === classFilter) &&
+    (!studentSearch || s.name.toLowerCase().includes(studentSearch.toLowerCase()))
+  );
+
   if (loading) return <PageSpinner />;
 
   return (
@@ -202,13 +217,35 @@ export default function ProgressPage() {
         <>
           {/* Student selector */}
           <Card>
-            <CardContent className="flex items-center gap-4 py-4">
-              <BookOpen className="w-5 h-5 text-muted-foreground flex-shrink-0" />
-              <div className="flex-1">
-                <label className="block text-sm font-medium mb-1">View progress for</label>
-                <Select value={selectedStudent} onChange={(e) => setSelectedStudent(e.target.value)} className="w-64">
-                  {students.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            <CardContent className="py-4 space-y-3">
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <BookOpen className="w-4 h-4 flex-shrink-0" />
+                <span className="text-sm font-medium text-foreground">View progress for</span>
+              </div>
+              <div className="flex gap-3 flex-wrap">
+                <Select value={classFilter} onChange={(e) => { setClassFilter(e.target.value); setStudentSearch(""); }} className="sm:w-44">
+                  <option value="">All Classes</option>
+                  {classOptions.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </Select>
+                <div className="relative flex-1 min-w-[180px]">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+                  <Input
+                    placeholder="Search student…"
+                    value={studentSearch}
+                    onChange={(e) => setStudentSearch(e.target.value)}
+                    className="pl-9"
+                  />
+                </div>
+              </div>
+              <div>
+                <Select value={selectedStudent} onChange={(e) => setSelectedStudent(e.target.value)}>
+                  {filteredStudents.length === 0 ? (
+                    <option value="">No students match</option>
+                  ) : filteredStudents.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name}{s.className ? ` · ${s.className}` : ""}</option>
+                  ))}
+                </Select>
+                <p className="text-xs text-muted-foreground mt-1">{filteredStudents.length} of {students.length} student{students.length !== 1 ? "s" : ""}</p>
               </div>
             </CardContent>
           </Card>
