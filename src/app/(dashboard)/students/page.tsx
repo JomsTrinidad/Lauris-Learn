@@ -1,6 +1,11 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Search, Plus, Pencil, ChevronDown, ChevronUp, Link as LinkIcon, Copy, Check } from "lucide-react";
+import {
+  Search, Plus, Pencil, ChevronDown, ChevronUp,
+  Link as LinkIcon, Copy, Check, BookOpen,
+  ArrowRight, RefreshCw, Users, GraduationCap,
+} from "lucide-react";
+import { DatePicker } from "@/components/ui/datepicker";
 import { AvatarUpload } from "@/components/ui/avatar-upload";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,15 +13,18 @@ import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Modal, ModalCancelButton } from "@/components/ui/modal";
-import { Card } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { PageSpinner, ErrorAlert } from "@/components/ui/spinner";
-import { getInitials } from "@/lib/utils";
+import { getInitials, cn } from "@/lib/utils";
 import { compressImage, PROFILE_PHOTO_MAX_W, PROFILE_PHOTO_MAX_BYTES } from "@/lib/image-compress";
 import { createClient } from "@/lib/supabase/client";
 import { useSchoolContext } from "@/contexts/SchoolContext";
 
+// ─── Types ────────────────────────────────────────────────────────────────────
+
 type EnrollmentStatus = "enrolled" | "waitlisted" | "inquiry" | "withdrawn" | "completed";
 type CommPref = "app" | "sms_phone" | "printed_note" | "in_person" | "assisted_by_school";
+type PromoteAction = "promote" | "repeat" | "skip";
 
 const COMM_PREF_LABELS: Record<CommPref, string> = {
   app: "App",
@@ -40,80 +48,60 @@ function calcAge(dob: string | null): string {
   return `${years} yr${years !== 1 ? "s" : ""} ${months} mo`;
 }
 
+interface AcademicPeriod { id: string; name: string; }
+
+interface EnrollmentEntry {
+  id: string; classId: string; className: string;
+  periodId: string | null; periodName: string | null;
+  status: EnrollmentStatus; startDate: string | null; endDate: string | null;
+}
+
 interface Student {
-  id: string;
-  firstName: string;
-  lastName: string;
-  dateOfBirth: string | null;
-  gender: string | null;
-  studentCode: string | null;
-  preferredName: string | null;
-  classId: string | null;
-  className: string;
-  enrollmentId: string | null;
-  enrollmentStatus: EnrollmentStatus | null;
-  guardianId: string | null;
-  guardianName: string;
-  guardianPhone: string;
-  guardianEmail: string;
-  guardianRelationship: string;
-  guardianCommPref: CommPref | null;
-  // Health / Emergency (loaded from migration 004)
-  allergies: string | null;
-  medicalConditions: string | null;
-  emergencyContactName: string | null;
-  emergencyContactPhone: string | null;
-  authorizedPickups: string | null;
-  primaryLanguage: string | null;
-  specialNeeds: string | null;
-  teacherNotes: string | null;
-  adminNotes: string | null;
-  // Progression
-  progressionStatus: string | null;
-  progressionNotes: string | null;
+  id: string; firstName: string; lastName: string;
+  dateOfBirth: string | null; gender: string | null;
+  studentCode: string | null; preferredName: string | null;
+  classId: string | null; className: string;
+  enrollmentId: string | null; enrollmentStatus: EnrollmentStatus | null;
+  allEnrollments: EnrollmentEntry[];
+  guardianId: string | null; guardianName: string; guardianPhone: string;
+  guardianEmail: string; guardianRelationship: string; guardianCommPref: CommPref | null;
+  allergies: string | null; medicalConditions: string | null;
+  emergencyContactName: string | null; emergencyContactPhone: string | null;
+  authorizedPickups: string | null; primaryLanguage: string | null;
+  specialNeeds: string | null; teacherNotes: string | null; adminNotes: string | null;
+  progressionStatus: string | null; progressionNotes: string | null;
   photoUrl: string | null;
 }
 
-interface ClassOption {
-  id: string;
-  name: string;
-  enrolled: number;
-  capacity: number;
-}
+interface ClassOption { id: string; name: string; enrolled: number; capacity: number; }
 
 interface StudentForm {
-  firstName: string;
-  lastName: string;
-  preferredName: string;
-  dateOfBirth: string;
-  gender: string;
-  classId: string;
-  enrollmentStatus: string;
-  parentName: string;
-  relationship: string;
-  contact: string;
-  email: string;
-  commPref: CommPref;
-  // Health
-  allergies: string;
-  medicalConditions: string;
-  emergencyContactName: string;
-  emergencyContactPhone: string;
-  specialNeeds: string;
-  teacherNotes: string;
-  adminNotes: string;
-  // Additional
-  authorizedPickups: string;
-  primaryLanguage: string;
-  // Progression
-  progressionStatus: string;
-  progressionNotes: string;
-  photoUrl: string;
+  firstName: string; lastName: string; preferredName: string;
+  dateOfBirth: string; gender: string; classId: string; periodId: string;
+  enrollmentStatus: string; parentName: string; relationship: string;
+  contact: string; email: string; commPref: CommPref;
+  allergies: string; medicalConditions: string; emergencyContactName: string;
+  emergencyContactPhone: string; specialNeeds: string; teacherNotes: string;
+  adminNotes: string; authorizedPickups: string; primaryLanguage: string;
+  progressionStatus: string; progressionNotes: string; photoUrl: string;
 }
+
+// Promote tab types
+interface PromotePeriod { id: string; name: string; schoolYearId: string; schoolYearName: string; }
+interface PromoteClassOption { id: string; name: string; level: string; schoolYearId: string; }
+interface PromoteRow {
+  studentId: string; studentName: string;
+  currentEnrollmentId: string; currentClassId: string; currentClassName: string;
+  suggestedClassId: string | null; suggestedClassName: string | null;
+  selectedClassId: string; action: PromoteAction;
+}
+interface PromoteResult { created: number; skipped: number; errors: string[]; }
+
+// ─── Constants ────────────────────────────────────────────────────────────────
 
 const EMPTY_FORM: StudentForm = {
   firstName: "", lastName: "", preferredName: "", dateOfBirth: "", gender: "",
-  classId: "", enrollmentStatus: "enrolled",
+  classId: "", periodId: "", enrollmentStatus: "enrolled",
   parentName: "", relationship: "Mother", contact: "", email: "",
   commPref: "app",
   allergies: "", medicalConditions: "", emergencyContactName: "",
@@ -132,6 +120,8 @@ const STATUS_OPTIONS = [
   { value: "completed", label: "Completed" },
 ];
 
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
 function SectionToggle({ title, children }: { title: string; children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   return (
@@ -149,18 +139,36 @@ function SectionToggle({ title, children }: { title: string; children: React.Rea
   );
 }
 
-interface SchoolCodeConfig {
-  prefix: string;
-  padding: number;
-  includeYear: boolean;
+function ActionBtn({ active, onClick, className, children }: {
+  active: boolean; onClick: () => void; className: string; children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`px-2.5 py-1 text-xs rounded-lg border transition-colors font-medium
+        ${active ? className : "border-border text-muted-foreground hover:bg-muted"}`}
+    >
+      {children}
+    </button>
+  );
 }
+
+interface SchoolCodeConfig { prefix: string; padding: number; includeYear: boolean; }
+
+// ─── Page component ───────────────────────────────────────────────────────────
 
 export default function StudentsPage() {
   const { schoolId, activeYear } = useSchoolContext();
   const supabase = createClient();
 
+  // Tab
+  const [activeTab, setActiveTab] = useState<"students" | "promote">("students");
+
+  // Students tab state
   const [students, setStudents] = useState<Student[]>([]);
   const [classOptions, setClassOptions] = useState<ClassOption[]>([]);
+  const [academicPeriods, setAcademicPeriods] = useState<AcademicPeriod[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -179,15 +187,34 @@ export default function StudentsPage() {
   const [editForm, setEditForm] = useState<StudentForm>(EMPTY_FORM);
   const [editFormError, setEditFormError] = useState<string | null>(null);
 
-  // Photo upload state
   const [addPhotoFile, setAddPhotoFile] = useState<File | null>(null);
   const [editPhotoFile, setEditPhotoFile] = useState<File | null>(null);
 
-  // Invite state
+  const [enrollmentModal, setEnrollmentModal] = useState<Student | null>(null);
+  const [enrollmentForm, setEnrollmentForm] = useState({ periodId: "", classId: "", status: "enrolled", startDate: "", endDate: "" });
+  const [enrollmentFormError, setEnrollmentFormError] = useState<string | null>(null);
+  const [enrollmentSaving, setEnrollmentSaving] = useState(false);
+
   const [inviteStudent, setInviteStudent] = useState<Student | null>(null);
   const [inviteLink, setInviteLink] = useState<string | null>(null);
   const [inviteGenerating, setInviteGenerating] = useState(false);
   const [inviteCopied, setInviteCopied] = useState(false);
+
+  // Promote tab state
+  const [promoteInitialized, setPromoteInitialized] = useState(false);
+  const [promoteLoading, setPromoteLoading] = useState(false);
+  const [promoteError, setPromoteError] = useState<string | null>(null);
+  const [allPeriods, setAllPeriods] = useState<PromotePeriod[]>([]);
+  const [allPromoteClasses, setAllPromoteClasses] = useState<PromoteClassOption[]>([]);
+  const [sourcePeriodId, setSourcePeriodId] = useState("");
+  const [targetPeriodId, setTargetPeriodId] = useState("");
+  const [promoteRows, setPromoteRows] = useState<PromoteRow[]>([]);
+  const [promoteRowsLoading, setPromoteRowsLoading] = useState(false);
+  const [promoteRowsError, setPromoteRowsError] = useState<string | null>(null);
+  const [promoteSaving, setPromoteSaving] = useState(false);
+  const [promoteResult, setPromoteResult] = useState<PromoteResult | null>(null);
+
+  // ─── Effects ───────────────────────────────────────────────────────────────
 
   useEffect(() => {
     if (!schoolId) { setLoading(false); return; }
@@ -195,11 +222,31 @@ export default function StudentsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [schoolId, activeYear?.id]);
 
+  useEffect(() => {
+    if (activeTab === "promote" && !promoteInitialized && schoolId) {
+      loadPromoteSetup();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, promoteInitialized, schoolId]);
+
+  // ─── Students tab functions ────────────────────────────────────────────────
+
   async function loadAll() {
     setLoading(true);
     setError(null);
-    await Promise.all([loadStudents(), loadClasses(), loadCodeConfig()]);
+    await Promise.all([loadStudents(), loadClasses(), loadCodeConfig(), loadAcademicPeriods()]);
     setLoading(false);
+  }
+
+  async function loadAcademicPeriods() {
+    if (!schoolId || !activeYear?.id) return;
+    const { data } = await supabase
+      .from("academic_periods")
+      .select("id, name")
+      .eq("school_id", schoolId)
+      .eq("school_year_id", activeYear.id)
+      .order("start_date");
+    setAcademicPeriods((data ?? []).map((p) => ({ id: p.id, name: p.name })));
   }
 
   async function loadCodeConfig() {
@@ -238,10 +285,7 @@ export default function StudentsPage() {
     ((existing ?? []) as Array<{ student_code: string | null }>).forEach((s) => {
       if (!s.student_code) return;
       const match = s.student_code.match(/(\d+)$/);
-      if (match) {
-        const n = parseInt(match[1]);
-        if (n > maxNum) maxNum = n;
-      }
+      if (match) { const n = parseInt(match[1]); if (n > maxNum) maxNum = n; }
     });
     const nextNum = maxNum + 1;
     const yearPart = includeYear ? String(new Date().getFullYear()).slice(-2) : "";
@@ -253,7 +297,6 @@ export default function StudentsPage() {
 
   async function loadStudents() {
     const yearId = activeYear?.id ?? null;
-
     const { data, error: err } = await supabase
       .from("students")
       .select(`
@@ -262,7 +305,7 @@ export default function StudentsPage() {
         allergies, medical_conditions, emergency_contact_name, emergency_contact_phone,
         authorized_pickups, primary_language, special_needs, teacher_notes, admin_notes,
         guardians(id, full_name, relationship, phone, email, is_primary, communication_preference),
-        enrollments(id, status, class_id, school_year_id, progression_status, progression_notes, classes(name))
+        enrollments(id, status, class_id, school_year_id, academic_period_id, start_date, end_date, progression_status, progression_notes, classes(name), academic_periods(name))
       `)
       .eq("school_id", schoolId!)
       .eq("is_active", true)
@@ -279,8 +322,21 @@ export default function StudentsPage() {
 
         const primaryGuardian = guardians.find((g) => g.is_primary) ?? guardians[0] ?? null;
         const activeEnrollment = yearId
-          ? enrollments.find((e) => e.school_year_id === yearId)
+          ? (enrollments.find((e) => e.school_year_id === yearId && e.status === "enrolled") ??
+             enrollments.find((e) => e.school_year_id === yearId))
           : enrollments[0] ?? null;
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const allEnrollments: EnrollmentEntry[] = enrollments.map((e: any) => ({
+          id: e.id,
+          classId: e.class_id,
+          className: e.classes?.name ?? "—",
+          periodId: e.academic_period_id ?? null,
+          periodName: e.academic_periods?.name ?? null,
+          status: e.status as EnrollmentStatus,
+          startDate: e.start_date ?? null,
+          endDate: e.end_date ?? null,
+        }));
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const sx = s as any;
@@ -296,6 +352,7 @@ export default function StudentsPage() {
           className: activeEnrollment?.classes?.name ?? "—",
           enrollmentId: activeEnrollment?.id ?? null,
           enrollmentStatus: activeEnrollment?.status ?? null,
+          allEnrollments,
           guardianId: primaryGuardian?.id ?? null,
           guardianName: primaryGuardian?.full_name ?? "—",
           guardianPhone: primaryGuardian?.phone ?? "—",
@@ -346,10 +403,7 @@ export default function StudentsPage() {
 
     setClassOptions(
       (data ?? []).map((c) => ({
-        id: c.id,
-        name: c.name,
-        capacity: c.capacity ?? 0,
-        enrolled: enrolledByClass[c.id] ?? 0,
+        id: c.id, name: c.name, capacity: c.capacity ?? 0, enrolled: enrolledByClass[c.id] ?? 0,
       }))
     );
   }
@@ -395,10 +449,8 @@ export default function StudentsPage() {
 
     if (sErr || !student) { setFormError(sErr?.message ?? "Failed to create student."); setSaving(false); return; }
 
-    // Auto-generate student code
     await generateStudentCode(student.id);
 
-    // Upload photo if selected
     if (addPhotoFile) {
       const photoUrl = await uploadProfilePhoto(student.id, addPhotoFile);
       if (photoUrl) {
@@ -423,6 +475,7 @@ export default function StudentsPage() {
         student_id: student.id,
         class_id: form.classId,
         school_year_id: activeYear.id,
+        academic_period_id: form.periodId || null,
         status: form.enrollmentStatus,
       });
     }
@@ -436,27 +489,21 @@ export default function StudentsPage() {
   function openEdit(student: Student) {
     setEditingStudent(student);
     setEditForm({
-      firstName: student.firstName,
-      lastName: student.lastName,
-      preferredName: student.preferredName ?? "",
-      dateOfBirth: student.dateOfBirth ?? "",
-      gender: student.gender ?? "",
-      classId: student.classId ?? "",
+      firstName: student.firstName, lastName: student.lastName,
+      preferredName: student.preferredName ?? "", dateOfBirth: student.dateOfBirth ?? "",
+      gender: student.gender ?? "", classId: student.classId ?? "", periodId: "",
       enrollmentStatus: student.enrollmentStatus ?? "enrolled",
       parentName: student.guardianName === "—" ? "" : student.guardianName,
       relationship: student.guardianRelationship || "Mother",
       contact: student.guardianPhone === "—" ? "" : student.guardianPhone,
-      email: student.guardianEmail,
-      commPref: student.guardianCommPref ?? "app",
-      allergies: student.allergies ?? "",
-      medicalConditions: student.medicalConditions ?? "",
+      email: student.guardianEmail, commPref: student.guardianCommPref ?? "app",
+      allergies: student.allergies ?? "", medicalConditions: student.medicalConditions ?? "",
       emergencyContactName: student.emergencyContactName ?? "",
       emergencyContactPhone: student.emergencyContactPhone ?? "",
       authorizedPickups: student.authorizedPickups ?? "",
       primaryLanguage: student.primaryLanguage ?? "",
       specialNeeds: student.specialNeeds ?? "",
-      teacherNotes: student.teacherNotes ?? "",
-      adminNotes: student.adminNotes ?? "",
+      teacherNotes: student.teacherNotes ?? "", adminNotes: student.adminNotes ?? "",
       progressionStatus: student.progressionStatus ?? "",
       progressionNotes: student.progressionNotes ?? "",
       photoUrl: student.photoUrl ?? "",
@@ -478,10 +525,8 @@ export default function StudentsPage() {
     const { error: sErr } = await supabase
       .from("students")
       .update({
-        first_name: editForm.firstName.trim(),
-        last_name: editForm.lastName.trim(),
-        date_of_birth: editForm.dateOfBirth || null,
-        gender: editForm.gender || null,
+        first_name: editForm.firstName.trim(), last_name: editForm.lastName.trim(),
+        date_of_birth: editForm.dateOfBirth || null, gender: editForm.gender || null,
         preferred_name: editForm.preferredName.trim() || null,
         allergies: editForm.allergies.trim() || null,
         medical_conditions: editForm.medicalConditions.trim() || null,
@@ -499,20 +544,15 @@ export default function StudentsPage() {
 
     if (editingStudent.guardianId) {
       await supabase.from("guardians").update({
-        full_name: editForm.parentName.trim(),
-        relationship: editForm.relationship,
-        phone: editForm.contact.trim() || null,
-        email: editForm.email.trim() || null,
+        full_name: editForm.parentName.trim(), relationship: editForm.relationship,
+        phone: editForm.contact.trim() || null, email: editForm.email.trim() || null,
         communication_preference: editForm.commPref,
       } as any).eq("id", editingStudent.guardianId); // eslint-disable-line @typescript-eslint/no-explicit-any
     } else {
       await supabase.from("guardians").insert({
-        student_id: editingStudent.id,
-        full_name: editForm.parentName.trim(),
-        relationship: editForm.relationship,
-        phone: editForm.contact.trim() || null,
-        email: editForm.email.trim() || null,
-        is_primary: true,
+        student_id: editingStudent.id, full_name: editForm.parentName.trim(),
+        relationship: editForm.relationship, phone: editForm.contact.trim() || null,
+        email: editForm.email.trim() || null, is_primary: true,
         communication_preference: editForm.commPref,
       } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
     }
@@ -522,24 +562,11 @@ export default function StudentsPage() {
       progression_notes: editForm.progressionNotes.trim() || null,
       slot_reserved_at: editForm.progressionStatus === "slot_reserved" ? new Date().toISOString() : undefined,
     };
-
     if (editingStudent.enrollmentId) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (supabase as any).from("enrollments").update({
-        class_id: editForm.classId || undefined,
-        status: editForm.enrollmentStatus,
-        ...progressionPayload,
-      }).eq("id", editingStudent.enrollmentId);
-    } else if (editForm.classId && activeYear?.id) {
-      await supabase.from("enrollments").insert({
-        student_id: editingStudent.id,
-        class_id: editForm.classId,
-        school_year_id: activeYear.id,
-        status: editForm.enrollmentStatus,
-      });
+      await (supabase as any).from("enrollments").update(progressionPayload).eq("id", editingStudent.enrollmentId);
     }
 
-    // Upload photo if selected
     if (editPhotoFile) {
       const photoUrl = await uploadProfilePhoto(editingStudent.id, editPhotoFile);
       if (photoUrl) {
@@ -555,16 +582,35 @@ export default function StudentsPage() {
     await loadAll();
   }
 
+  async function handleAddEnrollment() {
+    if (!enrollmentModal) return;
+    if (!enrollmentForm.classId) { setEnrollmentFormError("Please select a class."); return; }
+    if (!activeYear?.id) { setEnrollmentFormError("No active school year."); return; }
+    setEnrollmentSaving(true);
+    setEnrollmentFormError(null);
+    const { error } = await supabase.from("enrollments").insert({
+      student_id: enrollmentModal.id,
+      class_id: enrollmentForm.classId,
+      school_year_id: activeYear.id,
+      academic_period_id: enrollmentForm.periodId || null,
+      status: enrollmentForm.status as EnrollmentStatus,
+      start_date: enrollmentForm.startDate || null,
+      end_date: enrollmentForm.endDate || null,
+    });
+    if (error) { setEnrollmentFormError(error.message); setEnrollmentSaving(false); return; }
+    setEnrollmentSaving(false);
+    setEnrollmentModal(null);
+    await loadAll();
+  }
+
   async function handleGenerateInvite(student: Student) {
     if (!schoolId) return;
     setInviteGenerating(true);
     setInviteLink(null);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error: iErr } = await (supabase as any).from("guardian_invites").insert({
-      school_id: schoolId,
-      student_id: student.id,
-      guardian_id: student.guardianId || null,
-      email: student.guardianEmail || null,
+      school_id: schoolId, student_id: student.id,
+      guardian_id: student.guardianId || null, email: student.guardianEmail || null,
     }).select("token").single();
     setInviteGenerating(false);
     if (iErr || !data) return;
@@ -580,6 +626,158 @@ export default function StudentsPage() {
     setTimeout(() => setInviteCopied(false), 2000);
   }
 
+  // ─── Promote tab functions ─────────────────────────────────────────────────
+
+  async function loadPromoteSetup() {
+    setPromoteLoading(true);
+    setPromoteError(null);
+    const [periodsRes, classesRes] = await Promise.all([
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (supabase as any)
+        .from("academic_periods")
+        .select("id, name, school_year_id, school_years(name)")
+        .eq("school_id", schoolId!)
+        .order("start_date"),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (supabase as any)
+        .from("classes")
+        .select("id, name, level, school_year_id")
+        .eq("school_id", schoolId!)
+        .eq("is_active", true)
+        .order("name"),
+    ]);
+    if (periodsRes.error) { setPromoteError(periodsRes.error.message); setPromoteLoading(false); return; }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    setAllPeriods(((periodsRes.data ?? []) as any[]).map((p: any) => ({
+      id: p.id, name: p.name, schoolYearId: p.school_year_id,
+      schoolYearName: p.school_years?.name ?? "",
+    })));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    setAllPromoteClasses(((classesRes.data ?? []) as any[]).map((c: any) => ({
+      id: c.id, name: c.name, level: c.level ?? "", schoolYearId: c.school_year_id,
+    })));
+    setPromoteInitialized(true);
+    setPromoteLoading(false);
+  }
+
+  async function loadStudentsForPromote() {
+    if (!sourcePeriodId) { setPromoteRowsError("Select a source academic period."); return; }
+    if (!targetPeriodId) { setPromoteRowsError("Select a target academic period."); return; }
+    if (sourcePeriodId === targetPeriodId) { setPromoteRowsError("Source and target periods must be different."); return; }
+    setPromoteRowsLoading(true);
+    setPromoteRowsError(null);
+    setPromoteRows([]);
+    setPromoteResult(null);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: enrollments, error: enrollErr } = await (supabase as any)
+      .from("enrollments")
+      .select(`
+        id, student_id, class_id,
+        students(first_name, last_name),
+        classes(id, name, next_class_id, next_class:classes!next_class_id(id, name))
+      `)
+      .eq("academic_period_id", sourcePeriodId)
+      .eq("status", "enrolled");
+
+    if (enrollErr) { setPromoteRowsError(enrollErr.message); setPromoteRowsLoading(false); return; }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const built: PromoteRow[] = ((enrollments ?? []) as any[]).map((e: any) => {
+      const student = e.students;
+      const cls = e.classes;
+      const nextCls = cls?.next_class;
+      const studentName = student ? `${student.first_name} ${student.last_name}` : e.student_id;
+      const suggestedClassId = nextCls?.id ?? null;
+      const suggestedClassName = nextCls?.name ?? null;
+      return {
+        studentId: e.student_id,
+        studentName,
+        currentEnrollmentId: e.id,
+        currentClassId: e.class_id,
+        currentClassName: cls?.name ?? "—",
+        suggestedClassId,
+        suggestedClassName,
+        selectedClassId: suggestedClassId ?? "",
+        action: suggestedClassId ? "promote" : "skip",
+      };
+    });
+
+    built.sort((a, b) => a.studentName.localeCompare(b.studentName));
+    setPromoteRows(built);
+    setPromoteRowsLoading(false);
+  }
+
+  function setPromoteRowAction(studentId: string, action: PromoteAction) {
+    setPromoteRows((prev) => prev.map((r) => {
+      if (r.studentId !== studentId) return r;
+      return {
+        ...r, action,
+        selectedClassId:
+          action === "repeat" ? r.currentClassId :
+          action === "skip" ? "" :
+          r.suggestedClassId ?? "",
+      };
+    }));
+  }
+
+  function setPromoteRowClass(studentId: string, classId: string) {
+    setPromoteRows((prev) => prev.map((r) => r.studentId === studentId ? { ...r, selectedClassId: classId } : r));
+  }
+
+  function setPromoteBulkAction(action: PromoteAction) {
+    setPromoteRows((prev) => prev.map((r) => ({
+      ...r, action,
+      selectedClassId:
+        action === "repeat" ? r.currentClassId :
+        action === "skip" ? "" :
+        r.suggestedClassId ?? r.selectedClassId,
+    })));
+  }
+
+  async function handlePromoteConfirm() {
+    if (!schoolId || !targetPeriodId) return;
+    const toPromote = promoteRows.filter((r) => r.action !== "skip" && r.selectedClassId);
+    if (toPromote.length === 0) { setPromoteRowsError("No students selected for promotion."); return; }
+
+    setPromoteSaving(true);
+    setPromoteRowsError(null);
+
+    const targetPeriod = allPeriods.find((p) => p.id === targetPeriodId);
+    const targetSchoolYearId = targetPeriod?.schoolYearId ?? "";
+    let created = 0, skipped = 0;
+    const errors: string[] = [];
+
+    for (const row of toPromote) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: existing } = await (supabase as any)
+        .from("enrollments")
+        .select("id")
+        .eq("student_id", row.studentId)
+        .eq("class_id", row.selectedClassId)
+        .eq("academic_period_id", targetPeriodId)
+        .maybeSingle();
+
+      if (existing) { skipped++; continue; }
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error: insErr } = await (supabase as any).from("enrollments").insert({
+        student_id: row.studentId,
+        class_id: row.selectedClassId,
+        school_year_id: targetSchoolYearId,
+        academic_period_id: targetPeriodId,
+        status: "upcoming",
+      });
+
+      if (insErr) { errors.push(`${row.studentName}: ${insErr.message}`); } else { created++; }
+    }
+
+    setPromoteResult({ created, skipped, errors });
+    setPromoteSaving(false);
+  }
+
+  // ─── Derived values ────────────────────────────────────────────────────────
+
   const filtered = students.filter((s) => {
     const fullName = `${s.firstName} ${s.lastName}`.toLowerCase();
     const code = (s.studentCode ?? "").toLowerCase();
@@ -589,108 +787,391 @@ export default function StudentsPage() {
     return matchSearch && matchClass && matchStatus;
   });
 
+  const periodsByYear = allPeriods.reduce<Record<string, PromotePeriod[]>>((acc, p) => {
+    const key = p.schoolYearName || p.schoolYearId;
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(p);
+    return acc;
+  }, {});
+
+  const targetPeriod = allPeriods.find((p) => p.id === targetPeriodId);
+  const promoteCount = promoteRows.filter((r) => r.action !== "skip" && r.selectedClassId).length;
+  const skipCount = promoteRows.filter((r) => r.action === "skip").length;
+
   if (loading) return <PageSpinner />;
+
+  // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
     <div className="space-y-6">
+      {/* Page header */}
       <div className="flex items-center justify-between">
         <div>
           <h1>Students</h1>
           <p className="text-muted-foreground text-sm mt-1">Manage student information and enrollment</p>
         </div>
-        <Button onClick={() => { setForm(EMPTY_FORM); setFormError(null); setAddModalOpen(true); }}>
-          <Plus className="w-4 h-4" /> Add Student
-        </Button>
+        {activeTab === "students" && (
+          <Button onClick={() => { setForm(EMPTY_FORM); setFormError(null); setAddModalOpen(true); }}>
+            <Plus className="w-4 h-4" /> Add Student
+          </Button>
+        )}
       </div>
 
-      {error && <ErrorAlert message={error} />}
-
-      {/* Search & Filters */}
-      <div className="flex flex-col sm:flex-row gap-3">
-        <div className="flex-1 relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input
-            type="text"
-            placeholder="Search by name, student code, or parent..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-9"
-          />
-        </div>
-        <Select value={classFilter} onChange={(e) => setClassFilter(e.target.value)} className="sm:w-44">
-          <option value="">All Classes</option>
-          {classOptions.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </Select>
-        <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="sm:w-44">
-          {STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-        </Select>
+      {/* Tab nav */}
+      <div className="flex border-b border-border -mt-2">
+        <button
+          onClick={() => setActiveTab("students")}
+          className={cn(
+            "flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors",
+            activeTab === "students"
+              ? "border-primary text-primary"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          )}
+        >
+          <Users className="w-4 h-4" />
+          Students
+        </button>
+        <button
+          onClick={() => setActiveTab("promote")}
+          className={cn(
+            "flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors",
+            activeTab === "promote"
+              ? "border-primary text-primary"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          )}
+        >
+          <GraduationCap className="w-4 h-4" />
+          Promote Students
+        </button>
       </div>
 
-      {/* Table */}
-      <Card className="overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-muted border-b border-border">
-              <tr>
-                <th className="text-left px-5 py-3 font-medium text-muted-foreground">Student</th>
-                <th className="text-left px-5 py-3 font-medium text-muted-foreground">Class</th>
-                <th className="text-left px-5 py-3 font-medium text-muted-foreground">Parent / Guardian</th>
-                <th className="text-left px-5 py-3 font-medium text-muted-foreground">Contact</th>
-                <th className="text-left px-5 py-3 font-medium text-muted-foreground">Status</th>
-                <th className="px-5 py-3" />
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="text-center py-10 text-muted-foreground">
-                    {students.length === 0 ? 'No students yet. Click "Add Student" to get started.' : "No students match your filters."}
-                  </td>
-                </tr>
-              ) : (
-                filtered.map((student) => (
-                  <tr key={student.id} className="border-b border-border last:border-0 hover:bg-muted/50 transition-colors">
-                    <td className="px-5 py-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-semibold flex-shrink-0 overflow-hidden">
-                          {student.photoUrl
-                            ? <img src={student.photoUrl} alt={student.firstName} className="w-full h-full object-cover" />
-                            : getInitials(`${student.firstName} ${student.lastName}`)
-                          }
-                        </div>
-                        <div>
-                          <span className="font-medium">{student.firstName} {student.lastName}</span>
-                          {student.studentCode && (
-                            <span className="ml-2 text-xs text-muted-foreground font-mono">{student.studentCode}</span>
-                          )}
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-5 py-4 text-muted-foreground">{student.className}</td>
-                    <td className="px-5 py-4">{student.guardianName}</td>
-                    <td className="px-5 py-4 text-muted-foreground">{student.guardianPhone}</td>
-                    <td className="px-5 py-4">
-                      {student.enrollmentStatus
-                        ? <Badge variant={student.enrollmentStatus}>{student.enrollmentStatus}</Badge>
-                        : <span className="text-muted-foreground text-xs">—</span>}
-                    </td>
-                    <td className="px-5 py-4 text-right">
-                      <div className="flex items-center justify-end gap-3">
-                        <button onClick={() => setSelectedStudent(student)} className="text-primary text-sm hover:underline">
-                          View
-                        </button>
-                        <button onClick={() => openEdit(student)} className="text-muted-foreground hover:text-foreground transition-colors">
-                          <Pencil className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </td>
+      {/* ── Students tab ─────────────────────────────────────────────────── */}
+      {activeTab === "students" && (
+        <>
+          {error && <ErrorAlert message={error} />}
+
+          {/* Search & Filters */}
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="flex-1 relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                type="text"
+                placeholder="Search by name, student code, or parent..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="pl-9"
+              />
+            </div>
+            <Select value={classFilter} onChange={(e) => setClassFilter(e.target.value)} className="sm:w-44">
+              <option value="">All Classes</option>
+              {classOptions.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </Select>
+            <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="sm:w-44">
+              {STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+            </Select>
+          </div>
+
+          {/* Table */}
+          <Card className="overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-muted border-b border-border">
+                  <tr>
+                    <th className="text-left px-5 py-3 font-medium text-muted-foreground">Student</th>
+                    <th className="text-left px-5 py-3 font-medium text-muted-foreground">Class</th>
+                    <th className="text-left px-5 py-3 font-medium text-muted-foreground">Parent / Guardian</th>
+                    <th className="text-left px-5 py-3 font-medium text-muted-foreground">Contact</th>
+                    <th className="text-left px-5 py-3 font-medium text-muted-foreground">Status</th>
+                    <th className="px-5 py-3" />
                   </tr>
-                ))
+                </thead>
+                <tbody>
+                  {filtered.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="text-center py-10 text-muted-foreground">
+                        {students.length === 0 ? 'No students yet. Click "Add Student" to get started.' : "No students match your filters."}
+                      </td>
+                    </tr>
+                  ) : (
+                    filtered.map((student) => (
+                      <tr key={student.id} className="border-b border-border last:border-0 hover:bg-muted/50 transition-colors">
+                        <td className="px-5 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-semibold flex-shrink-0 overflow-hidden">
+                              {student.photoUrl
+                                ? <img src={student.photoUrl} alt={student.firstName} className="w-full h-full object-cover" />
+                                : getInitials(`${student.firstName} ${student.lastName}`)
+                              }
+                            </div>
+                            <div>
+                              <span className="font-medium">{student.firstName} {student.lastName}</span>
+                              {student.studentCode && (
+                                <span className="ml-2 text-xs text-muted-foreground font-mono">{student.studentCode}</span>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-5 py-4 text-muted-foreground">{student.className}</td>
+                        <td className="px-5 py-4">{student.guardianName}</td>
+                        <td className="px-5 py-4 text-muted-foreground">{student.guardianPhone}</td>
+                        <td className="px-5 py-4">
+                          {student.enrollmentStatus
+                            ? <Badge variant={student.enrollmentStatus}>{student.enrollmentStatus}</Badge>
+                            : <span className="text-muted-foreground text-xs">—</span>}
+                        </td>
+                        <td className="px-5 py-4 text-right">
+                          <div className="flex items-center justify-end gap-3">
+                            <button onClick={() => setSelectedStudent(student)} className="text-primary text-sm hover:underline">
+                              View
+                            </button>
+                            <button onClick={() => openEdit(student)} className="text-muted-foreground hover:text-foreground transition-colors">
+                              <Pencil className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        </>
+      )}
+
+      {/* ── Promote tab ──────────────────────────────────────────────────── */}
+      {activeTab === "promote" && (
+        <div className="space-y-6">
+          {promoteLoading && <PageSpinner />}
+          {promoteError && <ErrorAlert message={promoteError} />}
+
+          {!promoteLoading && (
+            <>
+              {/* Period selectors */}
+              <Card>
+                <CardContent className="p-5 space-y-4">
+                  <p className="text-sm font-semibold">Step 1 — Select periods</p>
+                  <div className="flex flex-col sm:flex-row items-start sm:items-end gap-4">
+                    <div className="flex-1 space-y-1.5">
+                      <label className="text-sm font-medium">From (source period)</label>
+                      <Select
+                        value={sourcePeriodId}
+                        onChange={(e) => { setSourcePeriodId(e.target.value); setPromoteRows([]); setPromoteResult(null); }}
+                      >
+                        <option value="">— Select source period —</option>
+                        {Object.entries(periodsByYear).map(([yearName, periods]) => (
+                          <optgroup key={yearName} label={yearName}>
+                            {periods.map((p) => (
+                              <option key={p.id} value={p.id}>{p.name}</option>
+                            ))}
+                          </optgroup>
+                        ))}
+                      </Select>
+                    </div>
+
+                    <ArrowRight className="w-5 h-5 text-muted-foreground flex-shrink-0 hidden sm:block mb-2" />
+
+                    <div className="flex-1 space-y-1.5">
+                      <label className="text-sm font-medium">To (target period)</label>
+                      <Select
+                        value={targetPeriodId}
+                        onChange={(e) => { setTargetPeriodId(e.target.value); setPromoteRows([]); setPromoteResult(null); }}
+                      >
+                        <option value="">— Select target period —</option>
+                        {Object.entries(periodsByYear).map(([yearName, periods]) => (
+                          <optgroup key={yearName} label={yearName}>
+                            {periods.filter((p) => p.id !== sourcePeriodId).map((p) => (
+                              <option key={p.id} value={p.id}>{p.name}</option>
+                            ))}
+                          </optgroup>
+                        ))}
+                      </Select>
+                    </div>
+
+                    <Button onClick={loadStudentsForPromote} disabled={!sourcePeriodId || !targetPeriodId || promoteRowsLoading}>
+                      <RefreshCw className={`w-4 h-4 ${promoteRowsLoading ? "animate-spin" : ""}`} />
+                      Load Students
+                    </Button>
+                  </div>
+
+                  {allPeriods.length === 0 && (
+                    <p className="text-sm text-amber-600">
+                      No academic periods found. Set them up in Settings → Academic Periods first.
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+
+              {promoteRowsError && <ErrorAlert message={promoteRowsError} />}
+
+              {/* Student promotion table */}
+              {promoteRows.length > 0 && !promoteResult && (
+                <>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-semibold">
+                        Step 2 — Review and confirm ({promoteRows.length} student{promoteRows.length !== 1 ? "s" : ""})
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Promoting to <strong>{targetPeriod?.name}</strong>
+                        {targetPeriod?.schoolYearName ? ` · ${targetPeriod.schoolYearName}` : ""}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground">Set all:</span>
+                      <button
+                        onClick={() => setPromoteBulkAction("promote")}
+                        className="px-2.5 py-1 text-xs rounded-lg border border-primary/40 text-primary hover:bg-primary/5 transition-colors font-medium"
+                      >
+                        Promote
+                      </button>
+                      <button
+                        onClick={() => setPromoteBulkAction("repeat")}
+                        className="px-2.5 py-1 text-xs rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                      >
+                        Repeat
+                      </button>
+                      <button
+                        onClick={() => setPromoteBulkAction("skip")}
+                        className="px-2.5 py-1 text-xs rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                      >
+                        Skip
+                      </button>
+                    </div>
+                  </div>
+
+                  <Card className="overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="bg-muted border-b border-border">
+                            <th className="text-left px-4 py-3 font-medium text-muted-foreground">Student</th>
+                            <th className="text-left px-4 py-3 font-medium text-muted-foreground">Current Class</th>
+                            <th className="text-left px-4 py-3 font-medium text-muted-foreground">Next Class</th>
+                            <th className="text-left px-4 py-3 font-medium text-muted-foreground">Action</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border">
+                          {promoteRows.map((row) => {
+                            const targetClasses = allPromoteClasses.filter((c) => c.schoolYearId === targetPeriod?.schoolYearId);
+                            return (
+                              <tr key={row.studentId} className={`transition-colors ${row.action === "skip" ? "opacity-50 bg-muted/30" : "hover:bg-muted/40"}`}>
+                                <td className="px-4 py-3 font-medium">{row.studentName}</td>
+                                <td className="px-4 py-3 text-muted-foreground">{row.currentClassName}</td>
+                                <td className="px-4 py-3">
+                                  {row.action === "skip" ? (
+                                    <span className="text-xs text-muted-foreground">—</span>
+                                  ) : row.action === "repeat" ? (
+                                    <span className="text-muted-foreground italic text-xs">Same class ({row.currentClassName})</span>
+                                  ) : (
+                                    <div className="flex items-center gap-1.5">
+                                      <Select
+                                        value={row.selectedClassId}
+                                        onChange={(e) => setPromoteRowClass(row.studentId, e.target.value)}
+                                        className="text-sm h-8"
+                                      >
+                                        <option value="">— Select class —</option>
+                                        {(targetClasses.length > 0 ? targetClasses : allPromoteClasses).map((c) => (
+                                          <option key={c.id} value={c.id}>
+                                            {c.name}{c.level ? ` (${c.level})` : ""}
+                                          </option>
+                                        ))}
+                                      </Select>
+                                      {row.suggestedClassId && row.selectedClassId === row.suggestedClassId && (
+                                        <Badge variant="enrolled" className="text-xs whitespace-nowrap">suggested</Badge>
+                                      )}
+                                    </div>
+                                  )}
+                                </td>
+                                <td className="px-4 py-3">
+                                  <div className="flex items-center gap-1">
+                                    <ActionBtn active={row.action === "promote"} onClick={() => setPromoteRowAction(row.studentId, "promote")}
+                                      className="text-primary border-primary/40 bg-primary/5">
+                                      Promote
+                                    </ActionBtn>
+                                    <ActionBtn active={row.action === "repeat"} onClick={() => setPromoteRowAction(row.studentId, "repeat")}
+                                      className="text-amber-600 border-amber-300 bg-amber-50">
+                                      Repeat
+                                    </ActionBtn>
+                                    <ActionBtn active={row.action === "skip"} onClick={() => setPromoteRowAction(row.studentId, "skip")}
+                                      className="text-muted-foreground border-border">
+                                      Skip
+                                    </ActionBtn>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Card>
+
+                  <div className="flex items-center justify-between bg-muted rounded-xl px-5 py-4">
+                    <div className="text-sm space-y-1">
+                      <p>
+                        <span className="font-semibold text-primary">{promoteCount} student{promoteCount !== 1 ? "s" : ""}</span>
+                        {" "}will be enrolled in the new period
+                      </p>
+                      {skipCount > 0 && (
+                        <p className="text-muted-foreground text-xs">{skipCount} student{skipCount !== 1 ? "s" : ""} skipped</p>
+                      )}
+                    </div>
+                    <Button onClick={handlePromoteConfirm} disabled={promoteSaving || promoteCount === 0} className="min-w-[160px]">
+                      {promoteSaving ? (
+                        <><RefreshCw className="w-4 h-4 animate-spin" /> Promoting…</>
+                      ) : (
+                        <><Check className="w-4 h-4" /> Promote {promoteCount} Student{promoteCount !== 1 ? "s" : ""}</>
+                      )}
+                    </Button>
+                  </div>
+                </>
               )}
-            </tbody>
-          </table>
+
+              {/* Empty state */}
+              {promoteRows.length === 0 && !promoteRowsLoading && sourcePeriodId && targetPeriodId && !promoteResult && (
+                <Card>
+                  <CardContent className="p-12 text-center text-sm text-muted-foreground">
+                    <Users className="w-8 h-8 mx-auto mb-3 opacity-40" />
+                    No enrolled students found for the selected source period.
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Result */}
+              {promoteResult && (
+                <Card>
+                  <CardContent className="p-6 space-y-4">
+                    <div className="flex items-start gap-3">
+                      <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center flex-shrink-0">
+                        <Check className="w-5 h-5 text-green-600" />
+                      </div>
+                      <div>
+                        <p className="font-semibold">Promotion complete</p>
+                        <p className="text-sm text-muted-foreground mt-0.5">
+                          <strong className="text-foreground">{promoteResult.created}</strong> enrollment{promoteResult.created !== 1 ? "s" : ""} created
+                          {promoteResult.skipped > 0 && <>, <strong className="text-foreground">{promoteResult.skipped}</strong> already existed (skipped)</>}
+                        </p>
+                      </div>
+                    </div>
+                    {promoteResult.errors.length > 0 && (
+                      <div className="border border-destructive/30 rounded-lg p-3 text-sm text-destructive space-y-1">
+                        <p className="font-medium">Some records failed:</p>
+                        {promoteResult.errors.map((e, i) => <p key={i} className="text-xs">{e}</p>)}
+                      </div>
+                    )}
+                    <Button variant="outline" onClick={() => { setPromoteResult(null); setPromoteRows([]); }}>
+                      Promote Another Batch
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
+            </>
+          )}
         </div>
-      </Card>
+      )}
+
+      {/* ── Modals (students tab) ─────────────────────────────────────────── */}
 
       {/* Student Profile Modal */}
       <Modal open={!!selectedStudent} onClose={() => setSelectedStudent(null)} title="Student Profile" className="max-w-xl">
@@ -722,7 +1203,6 @@ export default function StudentsPage() {
               </div>
             </div>
 
-            {/* Basic info */}
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div className="space-y-3">
                 <div>
@@ -757,16 +1237,11 @@ export default function StudentsPage() {
               </div>
             </div>
 
-            {/* Health & Emergency — only show if data present */}
             {(selectedStudent.allergies || selectedStudent.medicalConditions || selectedStudent.emergencyContactName || selectedStudent.specialNeeds) && (
               <div className="border border-border rounded-lg p-4 space-y-2 text-sm">
                 <p className="font-semibold text-xs uppercase tracking-wide text-muted-foreground">Health & Emergency</p>
-                {selectedStudent.allergies && (
-                  <div><span className="text-muted-foreground">Allergies:</span> {selectedStudent.allergies}</div>
-                )}
-                {selectedStudent.medicalConditions && (
-                  <div><span className="text-muted-foreground">Medical Conditions:</span> {selectedStudent.medicalConditions}</div>
-                )}
+                {selectedStudent.allergies && <div><span className="text-muted-foreground">Allergies:</span> {selectedStudent.allergies}</div>}
+                {selectedStudent.medicalConditions && <div><span className="text-muted-foreground">Medical Conditions:</span> {selectedStudent.medicalConditions}</div>}
                 {selectedStudent.emergencyContactName && (
                   <div>
                     <span className="text-muted-foreground">Emergency Contact:</span>{" "}
@@ -774,13 +1249,10 @@ export default function StudentsPage() {
                     {selectedStudent.emergencyContactPhone && ` · ${selectedStudent.emergencyContactPhone}`}
                   </div>
                 )}
-                {selectedStudent.specialNeeds && (
-                  <div><span className="text-muted-foreground">Special Needs:</span> {selectedStudent.specialNeeds}</div>
-                )}
+                {selectedStudent.specialNeeds && <div><span className="text-muted-foreground">Special Needs:</span> {selectedStudent.specialNeeds}</div>}
               </div>
             )}
 
-            {/* Notes */}
             {selectedStudent.teacherNotes && (
               <div className="text-sm">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Teacher Notes</p>
@@ -788,7 +1260,6 @@ export default function StudentsPage() {
               </div>
             )}
 
-            {/* Progression status — show if set */}
             {selectedStudent.progressionStatus && (
               <div className="border border-border rounded-lg p-4 text-sm">
                 <p className="font-semibold text-xs uppercase tracking-wide text-muted-foreground mb-2">Next Year Progression</p>
@@ -808,22 +1279,52 @@ export default function StudentsPage() {
               </div>
             )}
 
-            {/* Guardian invite section */}
+            <div className="border border-border rounded-lg p-4 space-y-3 text-sm">
+              <div className="flex items-center justify-between">
+                <p className="font-semibold text-xs uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+                  <BookOpen className="w-3.5 h-3.5" /> Enrollments
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEnrollmentModal(selectedStudent);
+                    setEnrollmentForm({ periodId: "", classId: "", status: "enrolled", startDate: "", endDate: "" });
+                    setEnrollmentFormError(null);
+                    setSelectedStudent(null);
+                  }}
+                  className="flex items-center gap-1 text-xs text-primary hover:underline"
+                >
+                  <Plus className="w-3 h-3" /> Add
+                </button>
+              </div>
+              {selectedStudent.allEnrollments.length === 0 ? (
+                <p className="text-muted-foreground text-xs">No enrollments yet.</p>
+              ) : (
+                <div className="space-y-2">
+                  {selectedStudent.allEnrollments.map((e) => (
+                    <div key={e.id} className="flex items-center justify-between gap-2">
+                      <div>
+                        <span className="font-medium">{e.className}</span>
+                        {e.periodName && <span className="text-muted-foreground ml-1.5 text-xs">· {e.periodName}</span>}
+                        {(e.startDate || e.endDate) && (
+                          <span className="text-muted-foreground ml-1.5 text-xs">· {e.startDate ?? "?"} – {e.endDate ?? "?"}</span>
+                        )}
+                      </div>
+                      <Badge variant={e.status}>{e.status}</Badge>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <div className="border border-border rounded-lg p-4 space-y-2 text-sm">
               <p className="font-semibold text-xs uppercase tracking-wide text-muted-foreground">Parent Portal Access</p>
               {inviteStudent?.id === selectedStudent.id && inviteLink ? (
                 <div className="space-y-2">
                   <p className="text-xs text-muted-foreground">Share this link with the guardian to give them access:</p>
                   <div className="flex items-center gap-2">
-                    <input
-                      readOnly
-                      value={inviteLink}
-                      className="flex-1 text-xs border border-border rounded px-2 py-1.5 bg-muted font-mono truncate"
-                    />
-                    <button
-                      onClick={copyInviteLink}
-                      className="flex items-center gap-1 px-2 py-1.5 text-xs border border-border rounded hover:bg-accent transition-colors"
-                    >
+                    <input readOnly value={inviteLink} className="flex-1 text-xs border border-border rounded px-2 py-1.5 bg-muted font-mono truncate" />
+                    <button onClick={copyInviteLink} className="flex items-center gap-1 px-2 py-1.5 text-xs border border-border rounded hover:bg-accent transition-colors">
                       {inviteCopied ? <Check className="w-3.5 h-3.5 text-green-600" /> : <Copy className="w-3.5 h-3.5" />}
                       {inviteCopied ? "Copied!" : "Copy"}
                     </button>
@@ -831,12 +1332,7 @@ export default function StudentsPage() {
                   <p className="text-xs text-muted-foreground">Link expires in 30 days.</p>
                 </div>
               ) : (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => { setInviteStudent(selectedStudent); setInviteLink(null); handleGenerateInvite(selectedStudent); }}
-                  disabled={inviteGenerating}
-                >
+                <Button size="sm" variant="outline" onClick={() => { setInviteStudent(selectedStudent); setInviteLink(null); handleGenerateInvite(selectedStudent); }} disabled={inviteGenerating}>
                   <LinkIcon className="w-3.5 h-3.5" />
                   {inviteGenerating ? "Generating…" : "Generate Invite Link"}
                 </Button>
@@ -853,7 +1349,7 @@ export default function StudentsPage() {
         )}
       </Modal>
 
-      {/* Shared form fields component */}
+      {/* Add / Edit Student Modals */}
       {[
         { open: editModalOpen, onClose: () => { setEditModalOpen(false); setEditingStudent(null); }, title: "Edit Student", fErr: editFormError, f: editForm, setF: setEditForm, onSave: handleEdit, isEdit: true, photoFile: editPhotoFile, setPhotoFile: setEditPhotoFile },
         { open: addModalOpen, onClose: () => { setAddModalOpen(false); setForm(EMPTY_FORM); }, title: "Add Student", fErr: formError, f: form, setF: setForm, onSave: handleAdd, isEdit: false, photoFile: addPhotoFile, setPhotoFile: setAddPhotoFile },
@@ -862,7 +1358,6 @@ export default function StudentsPage() {
           <div className="space-y-4">
             {fErr && <ErrorAlert message={fErr} />}
 
-            {/* Photo */}
             <div className="flex items-center gap-4">
               <AvatarUpload
                 currentUrl={photoFile ? URL.createObjectURL(photoFile) : (f.photoUrl || null)}
@@ -876,7 +1371,6 @@ export default function StudentsPage() {
               </div>
             </div>
 
-            {/* Basic Info */}
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium mb-1">First Name *</label>
@@ -907,33 +1401,40 @@ export default function StudentsPage() {
               <div>
                 <label className="block text-sm font-medium mb-1">Date of Birth</label>
                 <Input type="date" value={f.dateOfBirth} onChange={(e) => setF({ ...f, dateOfBirth: e.target.value })} min="1990-01-01" max="2099-12-31" />
-                {f.dateOfBirth && (
-                  <p className="text-xs text-muted-foreground mt-1">Age: {calcAge(f.dateOfBirth)}</p>
-                )}
+                {f.dateOfBirth && <p className="text-xs text-muted-foreground mt-1">Age: {calcAge(f.dateOfBirth)}</p>}
               </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Class</label>
-                <Select value={f.classId} onChange={(e) => setF({ ...f, classId: e.target.value })}>
-                  <option value="">— No class —</option>
-                  {classOptions.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name} ({c.enrolled}/{c.capacity})
-                    </option>
-                  ))}
-                </Select>
-              </div>
+              {!isEdit && (
+                <div>
+                  <label className="block text-sm font-medium mb-1">Class (Initial Enrollment)</label>
+                  <Select value={f.classId} onChange={(e) => setF({ ...f, classId: e.target.value })}>
+                    <option value="">— No class —</option>
+                    {classOptions.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name} ({c.enrolled}/{c.capacity})</option>
+                    ))}
+                  </Select>
+                </div>
+              )}
             </div>
 
-            <div>
-              <label className="block text-sm font-medium mb-1">Enrollment Status</label>
-              <Select value={f.enrollmentStatus} onChange={(e) => setF({ ...f, enrollmentStatus: e.target.value })}>
-                <option value="enrolled">Enrolled</option>
-                <option value="inquiry">Inquiry</option>
-                <option value="waitlisted">Waitlisted</option>
-                {isEdit && <option value="withdrawn">Withdrawn</option>}
-                {isEdit && <option value="completed">Completed</option>}
-              </Select>
-            </div>
+            {!isEdit && (
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Academic Period</label>
+                  <Select value={f.periodId} onChange={(e) => setF({ ...f, periodId: e.target.value })}>
+                    <option value="">— No period —</option>
+                    {academicPeriods.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </Select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Enrollment Status</label>
+                  <Select value={f.enrollmentStatus} onChange={(e) => setF({ ...f, enrollmentStatus: e.target.value })}>
+                    <option value="enrolled">Enrolled</option>
+                    <option value="inquiry">Inquiry</option>
+                    <option value="waitlisted">Waitlisted</option>
+                  </Select>
+                </div>
+              </div>
+            )}
 
             <hr className="border-border" />
             <p className="text-sm font-semibold">Parent / Guardian</p>
@@ -946,11 +1447,8 @@ export default function StudentsPage() {
               <div>
                 <label className="block text-sm font-medium mb-1">Relationship</label>
                 <Select value={f.relationship} onChange={(e) => setF({ ...f, relationship: e.target.value })}>
-                  <option>Mother</option>
-                  <option>Father</option>
-                  <option>Guardian</option>
-                  <option>Grandparent</option>
-                  <option>Other</option>
+                  <option>Mother</option><option>Father</option><option>Guardian</option>
+                  <option>Grandparent</option><option>Other</option>
                 </Select>
               </div>
             </div>
@@ -975,7 +1473,6 @@ export default function StudentsPage() {
               </Select>
             </div>
 
-            {/* Health & Medical — collapsible */}
             <SectionToggle title="Health & Medical Info">
               <div>
                 <label className="block text-sm font-medium mb-1">Allergies</label>
@@ -995,7 +1492,6 @@ export default function StudentsPage() {
               </div>
             </SectionToggle>
 
-            {/* Emergency Contact — collapsible */}
             <SectionToggle title="Emergency Contact & Authorized Pickups">
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -1013,7 +1509,6 @@ export default function StudentsPage() {
               </div>
             </SectionToggle>
 
-            {/* Notes — collapsible */}
             <SectionToggle title="Notes">
               <div>
                 <label className="block text-sm font-medium mb-1">Notes for Teachers</label>
@@ -1025,7 +1520,6 @@ export default function StudentsPage() {
               </div>
             </SectionToggle>
 
-            {/* Progression — only shown in edit mode */}
             {isEdit && (
               <SectionToggle title="Next Year Progression">
                 <div>
@@ -1055,6 +1549,58 @@ export default function StudentsPage() {
           </div>
         </Modal>
       ))}
+
+      {/* Add Enrollment Modal */}
+      <Modal open={!!enrollmentModal} onClose={() => setEnrollmentModal(null)} title="Add Enrollment" className="max-w-md">
+        {enrollmentModal && (
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Adding enrollment for <strong>{enrollmentModal.firstName} {enrollmentModal.lastName}</strong>
+            </p>
+            {enrollmentFormError && <ErrorAlert message={enrollmentFormError} />}
+            <div>
+              <label className="block text-sm font-medium mb-1">Academic Period</label>
+              <Select value={enrollmentForm.periodId} onChange={(e) => setEnrollmentForm({ ...enrollmentForm, periodId: e.target.value })}>
+                <option value="">— No period —</option>
+                {academicPeriods.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </Select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Class *</label>
+              <Select value={enrollmentForm.classId} onChange={(e) => setEnrollmentForm({ ...enrollmentForm, classId: e.target.value })}>
+                <option value="">— Select class —</option>
+                {classOptions.map((c) => <option key={c.id} value={c.id}>{c.name} ({c.enrolled}/{c.capacity})</option>)}
+              </Select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Status</label>
+              <Select value={enrollmentForm.status} onChange={(e) => setEnrollmentForm({ ...enrollmentForm, status: e.target.value })}>
+                <option value="enrolled">Enrolled</option>
+                <option value="waitlisted">Waitlisted</option>
+                <option value="inquiry">Inquiry</option>
+                <option value="withdrawn">Withdrawn</option>
+                <option value="completed">Completed</option>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">Start Date</label>
+                <DatePicker value={enrollmentForm.startDate} onChange={(v) => setEnrollmentForm({ ...enrollmentForm, startDate: v })} placeholder="Optional" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">End Date</label>
+                <DatePicker value={enrollmentForm.endDate} onChange={(v) => setEnrollmentForm({ ...enrollmentForm, endDate: v })} placeholder="Optional" />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <ModalCancelButton />
+              <Button onClick={handleAddEnrollment} disabled={enrollmentSaving || !enrollmentForm.classId}>
+                {enrollmentSaving ? "Saving…" : "Add Enrollment"}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

@@ -14,7 +14,6 @@ import {
   Settings,
   Video,
   BookOpen,
-  Wallet,
   ShieldCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -36,7 +35,6 @@ const mainNavItems: NavItem[] = [
   { path: "/enrollment",     label: "Enrollment",     icon: UserPlus,     adminOnly: true },
   { path: "/updates",        label: "Parent Updates", icon: MessageSquare },
   { path: "/billing",        label: "Billing",        icon: CreditCard,   adminOnly: true },
-  { path: "/finance",        label: "Finance Setup",  icon: Wallet,       adminOnly: true },
   { path: "/events",         label: "Events",         icon: Calendar },
   { path: "/online-classes", label: "Online Classes", icon: Video },
   { path: "/progress",       label: "Progress",       icon: BookOpen },

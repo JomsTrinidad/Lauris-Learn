@@ -1,5 +1,5 @@
 "use client";
-import { Menu, X, ChevronDown, LogOut } from "lucide-react";
+import { Menu, ChevronDown, LogOut } from "lucide-react";
 import { useState } from "react";
 import { getInitials } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
@@ -11,6 +11,7 @@ interface HeaderProps {
   userName?: string;
   userRole?: string;
   schoolYear?: string;
+  schoolName?: string;
   userAvatar?: string | null;
 }
 
@@ -20,6 +21,7 @@ export function Header({
   userName = "Admin User",
   userRole = "School Admin",
   schoolYear = "SY 2025–2026",
+  schoolName,
   userAvatar,
 }: HeaderProps) {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -33,14 +35,19 @@ export function Header({
 
   return (
     <header className="bg-card border-b border-border px-4 py-3 flex items-center justify-between flex-shrink-0">
-      {/* Left: sidebar toggle */}
-      <button
-        onClick={onToggleSidebar}
-        className="p-2 rounded-lg hover:bg-accent transition-colors"
-        aria-label="Toggle sidebar"
-      >
-        {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-      </button>
+      {/* Left: hamburger toggle + school name when sidebar is collapsed */}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={onToggleSidebar}
+          className="p-2 rounded-lg hover:bg-accent transition-colors"
+          aria-label="Toggle sidebar"
+        >
+          <Menu className="w-5 h-5" />
+        </button>
+        {!sidebarOpen && schoolName && (
+          <span className="hidden sm:block text-sm font-semibold text-foreground">{schoolName}</span>
+        )}
+      </div>
 
       {/* Right: school year + user */}
       <div className="flex items-center gap-3">

@@ -70,6 +70,14 @@ interface ClassRecord {
   isActive: boolean;
   meetingLink: string;
   messengerLink: string;
+  nextClassId: string | null;
+}
+
+interface AllClassOption {
+  id: string;
+  name: string;
+  level: string;
+  schoolYearName: string;
 }
 
 interface TeacherOption {
@@ -87,11 +95,12 @@ interface ClassForm {
   isActive: boolean;
   meetingLink: string;
   messengerLink: string;
+  nextClassId: string;
 }
 
 const EMPTY_FORM: ClassForm = {
   name: "", level: "", startTime: "08:00", endTime: "10:00",
-  teacherId: "", capacity: "20", isActive: true, meetingLink: "", messengerLink: "",
+  teacherId: "", capacity: "20", isActive: true, meetingLink: "", messengerLink: "", nextClassId: "",
 };
 
 export default function ClassesPage() {
@@ -100,6 +109,7 @@ export default function ClassesPage() {
 
   const [classes, setClasses] = useState<ClassRecord[]>([]);
   const [teachers, setTeachers] = useState<TeacherOption[]>([]);
+  const [allClasses, setAllClasses] = useState<AllClassOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -117,8 +127,26 @@ export default function ClassesPage() {
   async function loadAll() {
     setLoading(true);
     setError(null);
-    await Promise.all([loadClasses(), loadTeachers()]);
+    await Promise.all([loadClasses(), loadTeachers(), loadAllClasses()]);
     setLoading(false);
+  }
+
+  async function loadAllClasses() {
+    if (!schoolId) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data } = await (supabase as any)
+      .from("classes")
+      .select("id, name, level, school_years(name)")
+      .eq("school_id", schoolId)
+      .eq("is_active", true)
+      .order("name");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    setAllClasses(((data ?? []) as any[]).map((c: any) => ({
+      id: c.id,
+      name: c.name,
+      level: c.level ?? "",
+      schoolYearName: c.school_years?.name ?? "",
+    })));
   }
 
   async function loadClasses() {
@@ -128,7 +156,7 @@ export default function ClassesPage() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: classRows, error: classErr } = await supabase
       .from("classes")
-      .select(`id, name, level, start_time, end_time, capacity, is_active, meeting_link, messenger_link,
+      .select(`id, name, level, start_time, end_time, capacity, is_active, meeting_link, messenger_link, next_class_id,
         class_teachers(teacher_id, teacher:profiles(full_name))`)
       .eq("school_id", schoolId!)
       .eq("school_year_id", yearId)
@@ -163,6 +191,7 @@ export default function ClassesPage() {
           isActive: c.is_active,
           meetingLink: c.meeting_link ?? "",
           messengerLink: c.messenger_link ?? "",
+          nextClassId: c.next_class_id ?? null,
           teacherId: ct?.teacher_id ?? null,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           teacherName: (ct?.teacher as any)?.full_name ?? "—",
@@ -203,6 +232,7 @@ export default function ClassesPage() {
       isActive: cls.isActive,
       meetingLink: cls.meetingLink,
       messengerLink: cls.messengerLink,
+      nextClassId: cls.nextClassId ?? "",
     });
     setFormError(null);
     setModalOpen(true);
@@ -229,6 +259,7 @@ export default function ClassesPage() {
       is_active: form.isActive,
       meeting_link: form.meetingLink.trim() || null,
       messenger_link: form.messengerLink.trim() || null,
+      next_class_id: form.nextClassId || null,
     };
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -481,6 +512,21 @@ export default function ClassesPage() {
               placeholder="https://m.me/g/..."
             />
             <p className="text-xs text-muted-foreground mt-1">Parents will see a "Join Class Chat" button linking here.</p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Promotion Path (Next Class)</label>
+            <Select value={form.nextClassId} onChange={(e) => setForm({ ...form, nextClassId: e.target.value })}>
+              <option value="">— None —</option>
+              {allClasses
+                .filter((c) => !editingClass || c.id !== editingClass.id)
+                .map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}{c.level ? ` (${c.level})` : ""}{c.schoolYearName ? ` — ${c.schoolYearName}` : ""}
+                  </option>
+                ))}
+            </Select>
+            <p className="text-xs text-muted-foreground mt-1">Students who complete this class will be suggested this next class during promotion.</p>
           </div>
 
           <div className="flex items-center gap-2">

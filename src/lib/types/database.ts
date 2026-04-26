@@ -77,11 +77,12 @@ export type Database = {
           end_time: string;
           capacity: number;
           is_active: boolean;
+          next_class_id: string | null;
           created_at: string;
           updated_at: string;
         };
-        Insert: { id?: string; school_id: string; school_year_id: string; name: string; level?: string | null; start_time: string; end_time: string; capacity?: number; is_active?: boolean; academic_period_id?: string | null; created_at?: string; updated_at?: string };
-        Update: { id?: string; school_id?: string; school_year_id?: string; name?: string; level?: string | null; start_time?: string; end_time?: string; capacity?: number; is_active?: boolean; academic_period_id?: string | null; updated_at?: string };
+        Insert: { id?: string; school_id: string; school_year_id: string; name: string; level?: string | null; start_time: string; end_time: string; capacity?: number; is_active?: boolean; academic_period_id?: string | null; next_class_id?: string | null; created_at?: string; updated_at?: string };
+        Update: { id?: string; school_id?: string; school_year_id?: string; name?: string; level?: string | null; start_time?: string; end_time?: string; capacity?: number; is_active?: boolean; academic_period_id?: string | null; next_class_id?: string | null; updated_at?: string };
         Relationships: [
           { foreignKeyName: "classes_school_id_fkey"; columns: ["school_id"]; isOneToOne: false; referencedRelation: "schools"; referencedColumns: ["id"] },
           { foreignKeyName: "classes_school_year_id_fkey"; columns: ["school_year_id"]; isOneToOne: false; referencedRelation: "school_years"; referencedColumns: ["id"] }
@@ -142,17 +143,21 @@ export type Database = {
           student_id: string;
           class_id: string;
           school_year_id: string;
+          academic_period_id: string | null;
           status: "inquiry" | "waitlisted" | "enrolled" | "withdrawn" | "completed";
           enrolled_at: string | null;
+          start_date: string | null;
+          end_date: string | null;
           created_at: string;
           updated_at: string;
         };
-        Insert: { id?: string; student_id: string; class_id: string; school_year_id: string; status?: "inquiry" | "waitlisted" | "enrolled" | "withdrawn" | "completed"; enrolled_at?: string | null; created_at?: string; updated_at?: string };
-        Update: { id?: string; student_id?: string; class_id?: string; school_year_id?: string; status?: "inquiry" | "waitlisted" | "enrolled" | "withdrawn" | "completed"; enrolled_at?: string | null; updated_at?: string };
+        Insert: { id?: string; student_id: string; class_id: string; school_year_id: string; academic_period_id?: string | null; status?: "inquiry" | "waitlisted" | "enrolled" | "withdrawn" | "completed"; enrolled_at?: string | null; start_date?: string | null; end_date?: string | null; created_at?: string; updated_at?: string };
+        Update: { id?: string; student_id?: string; class_id?: string; school_year_id?: string; academic_period_id?: string | null; status?: "inquiry" | "waitlisted" | "enrolled" | "withdrawn" | "completed"; enrolled_at?: string | null; start_date?: string | null; end_date?: string | null; updated_at?: string };
         Relationships: [
           { foreignKeyName: "enrollments_student_id_fkey"; columns: ["student_id"]; isOneToOne: false; referencedRelation: "students"; referencedColumns: ["id"] },
           { foreignKeyName: "enrollments_class_id_fkey"; columns: ["class_id"]; isOneToOne: false; referencedRelation: "classes"; referencedColumns: ["id"] },
-          { foreignKeyName: "enrollments_school_year_id_fkey"; columns: ["school_year_id"]; isOneToOne: false; referencedRelation: "school_years"; referencedColumns: ["id"] }
+          { foreignKeyName: "enrollments_school_year_id_fkey"; columns: ["school_year_id"]; isOneToOne: false; referencedRelation: "school_years"; referencedColumns: ["id"] },
+          { foreignKeyName: "enrollments_academic_period_id_fkey"; columns: ["academic_period_id"]; isOneToOne: false; referencedRelation: "academic_periods"; referencedColumns: ["id"] }
         ];
       };
       attendance_records: {

@@ -152,6 +152,7 @@ function Shell({ children }: { children: React.ReactNode }) {
             userName={userName || "User"}
             userRole={roleLabel}
             schoolYear={yearLabel}
+            schoolName={schoolName || "Lauris Learn"}
             userAvatar={userAvatar}
           />
           <main ref={mainRef} className={`flex-1 overflow-y-auto p-6 ${isTrialExpired ? "pointer-events-none opacity-60" : ""}`}>

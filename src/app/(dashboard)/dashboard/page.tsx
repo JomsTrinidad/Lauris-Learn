@@ -56,9 +56,17 @@ function timeAgo(dateStr: string) {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
+function useTodayLabel() {
+  const now = new Date();
+  const day = now.toLocaleDateString("en-US", { weekday: "long" });
+  const date = now.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+  return { day, date };
+}
+
 export default function DashboardPage() {
   const { schoolId, activeYear } = useSchoolContext();
   const supabase = createClient();
+  const { day, date } = useTodayLabel();
 
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [todayClasses, setTodayClasses] = useState<TodayClass[]>([]);
@@ -277,14 +285,20 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1>Dashboard</h1>
-        {!activeYear && (
-          <div className="mt-2 px-4 py-2 bg-yellow-50 border border-yellow-200 rounded-lg text-sm text-yellow-700">
-            No active school year. Go to <Link href="/settings" className="underline">Settings → School Years</Link> to set one.
-          </div>
-        )}
-        <p className="text-muted-foreground mt-1 text-sm">Welcome back! Here's what's happening today.</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1>Dashboard</h1>
+          {!activeYear && (
+            <div className="mt-2 px-4 py-2 bg-yellow-50 border border-yellow-200 rounded-lg text-sm text-yellow-700">
+              No active school year. Go to <Link href="/settings" className="underline">Settings → School Years</Link> to set one.
+            </div>
+          )}
+          <p className="text-muted-foreground mt-1 text-sm">Welcome back! Here's what's happening today.</p>
+        </div>
+        <div className="text-right flex-shrink-0 hidden sm:block">
+          <p className="text-base font-semibold text-foreground">{day}</p>
+          <p className="text-sm text-muted-foreground">{date}</p>
+        </div>
       </div>
 
       {/* Summary cards */}
