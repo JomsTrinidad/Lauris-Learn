@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState, useRef } from "react";
-import { Search, Plus, DollarSign, X, Pencil, CheckSquare, History, FileText, Printer, AlertTriangle, Wand2, Check, ImageIcon } from "lucide-react";
+import { Search, Plus, DollarSign, X, Pencil, CheckSquare, History, FileText, Printer, AlertTriangle, Wand2, Check, ImageIcon, HelpCircle, ChevronDown, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -379,6 +379,9 @@ export default function BillingPage() {
   const [genFlatAmount, setGenFlatAmount] = useState("");
   const [genFlatClassIds, setGenFlatClassIds] = useState<string[]>([]);
 
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [helpExpanded, setHelpExpanded] = useState<Record<string, boolean>>({});
+
   // Payment history
   const [historyModal, setHistoryModal] = useState<BillingRecord | null>(null);
   const [historyPayments, setHistoryPayments] = useState<PaymentRecord[]>([]);
@@ -642,13 +645,16 @@ export default function BillingPage() {
         let existingStudentIds = new Set<string>();
         if (genSkipExisting) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { data: existing } = await (supabase as any)
+          let existQ = (supabase as any)
             .from("billing_records")
             .select("student_id")
             .eq("school_id", schoolId)
             .eq("class_id", target.classId)
             .eq("billing_month", month + "-01")
             .in("student_id", studentIds);
+          // Scope duplicate check to same fee type — different fee types for the same month are allowed
+          if (genFeeTypeId) existQ = existQ.eq("fee_type_id", genFeeTypeId);
+          const { data: existing } = await existQ;
           existingStudentIds = new Set(((existing ?? []) as { student_id: string }[]).map((e) => e.student_id));
         }
 
@@ -784,21 +790,34 @@ export default function BillingPage() {
     await loadRecords();
   }
 
-  async function checkAddDuplicate(studentId: string, billingMonth: string) {
+  async function checkAddDuplicate(studentId: string, billingMonth: string, feeTypeId?: string) {
     setAddDuplicateWarning(null);
     if (!studentId || !billingMonth || !schoolId) return;
+
+    const effectiveFeeTypeId = feeTypeId !== undefined ? feeTypeId : addForm.feeTypeId;
+    // If fee types exist but none selected yet, skip until fee type is chosen
+    if (feeTypes.length > 0 && !effectiveFeeTypeId) return;
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data } = await (supabase as any).from("billing_records")
+    let q = (supabase as any).from("billing_records")
       .select("id, description, status")
       .eq("school_id", schoolId)
       .eq("student_id", studentId)
       .eq("billing_month", billingMonth);
+
+    if (feeTypes.length > 0 && effectiveFeeTypeId) {
+      q = q.eq("fee_type_id", effectiveFeeTypeId);
+    }
+
+    const { data } = await q;
     const rows = (data ?? []) as { id: string; description: string; status: string }[];
     const active = rows.filter((r) => r.status !== "cancelled" && r.status !== "waived");
     if (active.length > 0) {
+      const ft = feeTypes.find((f) => f.id === effectiveFeeTypeId);
+      const typeName = ft ? `"${ft.name}" ` : "";
       const existing = active[0];
       setAddDuplicateWarning(
-        `A billing record already exists for this month: "${existing.description || "(no description)"}" — status: ${existing.status}.`
+        `A ${typeName}billing record already exists for this month: "${existing.description || "(no description)"}" — status: ${existing.status}.`
       );
     }
   }
@@ -1061,6 +1080,13 @@ export default function BillingPage() {
           <p className="text-muted-foreground text-sm mt-1">Track tuition payments and balances</p>
         </div>
         <div className="flex gap-2">
+          <button
+            onClick={() => setHelpOpen(true)}
+            className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors px-2"
+            title="Billing help"
+          >
+            <HelpCircle className="w-4 h-4" /> Help
+          </button>
           <Button variant="outline" onClick={openGenModal}>
             <Wand2 className="w-4 h-4" /> Generate Billing
           </Button>
@@ -1337,6 +1363,8 @@ export default function BillingPage() {
               <Select value={addForm.feeTypeId} onChange={(e) => {
                 const ft = feeTypes.find((f) => f.id === e.target.value);
                 setAddForm({ ...addForm, feeTypeId: e.target.value, amountDue: ft?.defaultAmount ? String(ft.defaultAmount) : addForm.amountDue });
+                setAddOverrideReason("");
+                checkAddDuplicate(addForm.studentId, addForm.billingMonth, e.target.value);
               }}>
                 <option value="">— Select fee type —</option>
                 {feeTypes.map((f) => <option key={f.id} value={f.id}>{f.name}{f.defaultAmount ? ` — ${formatCurrency(f.defaultAmount)}` : ""}</option>)}
@@ -1712,8 +1740,8 @@ export default function BillingPage() {
             <label className="flex items-start gap-2.5 cursor-pointer text-sm select-none">
               <input type="checkbox" checked={genSkipExisting} onChange={(e) => setGenSkipExisting(e.target.checked)} className="w-4 h-4 rounded mt-0.5 flex-shrink-0" />
               <span>
-                <span className="font-medium">Do not create duplicate bills</span>
-                <span className="text-muted-foreground block text-xs mt-0.5">Students who already have a bill for the selected month will be skipped.</span>
+                <span className="font-medium">Skip existing bills for this fee type</span>
+                <span className="text-muted-foreground block text-xs mt-0.5">Students who already have a bill for this fee type and month are skipped. Other fee types (e.g. Tuition + Field Trip) can coexist for the same month.</span>
               </span>
             </label>
           </div>
@@ -2120,6 +2148,143 @@ export default function BillingPage() {
           )}
         </div>
       </Modal>
+
+      {/* Help Drawer */}
+      {helpOpen && (
+        <div className="fixed inset-0 z-50" onClick={() => setHelpOpen(false)}>
+          <div
+            className="absolute inset-y-0 right-0 w-[26rem] max-w-full bg-card border-l border-border shadow-2xl overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="sticky top-0 bg-card border-b border-border px-5 py-4 flex items-center justify-between z-10">
+              <div className="flex items-center gap-2">
+                <HelpCircle className="w-5 h-5 text-primary" />
+                <h2 className="font-semibold text-base">Billing Help</h2>
+              </div>
+              <button onClick={() => setHelpOpen(false)} className="text-muted-foreground hover:text-foreground p-1 rounded-md hover:bg-muted transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="px-5 py-5 space-y-1 text-sm">
+              {[
+                {
+                  key: "flow",
+                  title: "How Billing Works",
+                  content: (
+                    <div className="space-y-2 text-muted-foreground text-xs leading-relaxed">
+                      <p>Billing has two layers:</p>
+                      <ol className="list-decimal list-inside space-y-1 pl-1">
+                        <li><strong className="text-foreground">Billing records</strong> — the charges (what is owed)</li>
+                        <li><strong className="text-foreground">Payments</strong> — money received against those charges</li>
+                      </ol>
+                      <p>A bill&apos;s status updates automatically as payments come in. You never need to set it manually except for special cases (cancelled, waived).</p>
+                    </div>
+                  ),
+                },
+                {
+                  key: "generate",
+                  title: "Monthly Tuition — Generate Billing",
+                  content: (
+                    <div className="space-y-2 text-muted-foreground text-xs leading-relaxed">
+                      <p>Use <strong className="text-foreground">Generate Billing</strong> at the start of each month to bulk-create tuition bills for all classes.</p>
+                      <ul className="list-disc list-inside space-y-1 pl-1">
+                        <li><strong className="text-foreground">Use tuition configs</strong> — pulls the monthly rate from Finance Setup for each class. Fastest and least error-prone.</li>
+                        <li><strong className="text-foreground">Flat amount</strong> — lets you enter one amount applied to all selected classes. Useful for one-off fees.</li>
+                      </ul>
+                      <p>The <strong className="text-foreground">skip existing</strong> option (on by default) prevents double-billing the same fee type for the same month.</p>
+                    </div>
+                  ),
+                },
+                {
+                  key: "extrafees",
+                  title: "Adding Extra Fees (Field Trip, Books, Uniform…)",
+                  content: (
+                    <div className="space-y-2 text-muted-foreground text-xs leading-relaxed">
+                      <p>A student can have <strong className="text-foreground">multiple different fee types</strong> for the same month — Tuition and Field Trip can both exist in April.</p>
+                      <p>To add a one-off extra charge:</p>
+                      <ol className="list-decimal list-inside space-y-1 pl-1">
+                        <li>Click <strong className="text-foreground">Add Record</strong></li>
+                        <li>Select the student and billing month</li>
+                        <li>Choose the correct fee type (e.g. &quot;Field Trip&quot;)</li>
+                        <li>Enter the amount and save</li>
+                      </ol>
+                      <p>No override reason needed — it&apos;s only flagged as a duplicate if the <em>same</em> fee type already exists for that student and month.</p>
+                    </div>
+                  ),
+                },
+                {
+                  key: "payments",
+                  title: "Recording Payments",
+                  content: (
+                    <div className="space-y-2 text-muted-foreground text-xs leading-relaxed">
+                      <p>Click <strong className="text-foreground">Pay</strong> on any unpaid or partial bill to open the payment form.</p>
+                      <ul className="list-disc list-inside space-y-1 pl-1">
+                        <li>Enter the full balance → status becomes <strong className="text-foreground">Paid</strong></li>
+                        <li>Enter a partial amount → status becomes <strong className="text-foreground">Partial</strong>; you can record again later for the remainder</li>
+                        <li>OR# (Official Receipt number) is optional but recommended for BIR compliance</li>
+                        <li>You can also attach a receipt photo for digital record-keeping</li>
+                      </ul>
+                      <p>If a student has older unpaid months, the system will warn you to settle earlier months first. You can override with a reason.</p>
+                    </div>
+                  ),
+                },
+                {
+                  key: "statuses",
+                  title: "Bill Statuses Explained",
+                  content: (
+                    <div className="space-y-2 text-xs">
+                      {[
+                        { label: "Unpaid", color: "bg-muted text-foreground", desc: "Created, no payment yet." },
+                        { label: "Partial", color: "bg-yellow-100 text-yellow-800", desc: "Some payment received, balance remains." },
+                        { label: "Paid", color: "bg-green-100 text-green-800", desc: "Fully settled — no balance." },
+                        { label: "Overdue", color: "bg-red-100 text-red-800", desc: "Past the due date, still unpaid. Auto-set when due date passes." },
+                        { label: "Waived", color: "bg-sky-100 text-sky-800", desc: "Fee intentionally forgiven (e.g. scholarship). Excluded from outstanding balance and revenue totals." },
+                        { label: "Cancelled", color: "bg-muted text-muted-foreground", desc: "Void — the charge should not have been created. Excluded from totals." },
+                      ].map(({ label, color, desc }) => (
+                        <div key={label} className="flex items-start gap-2">
+                          <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${color}`}>{label}</span>
+                          <span className="text-muted-foreground leading-snug">{desc}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ),
+                },
+                {
+                  key: "waived",
+                  title: "Waived vs Cancelled",
+                  content: (
+                    <div className="space-y-2 text-muted-foreground text-xs leading-relaxed">
+                      <p><strong className="text-foreground">Waived</strong> — the student was legitimately charged but the school is forgiving the fee (scholarship, hardship, etc.). Keeps the record visible for audit purposes but removes it from outstanding balance calculations.</p>
+                      <p><strong className="text-foreground">Cancelled</strong> — the bill should never have existed (wrong student, wrong month, data entry error). Completely excluded from all totals.</p>
+                      <p>Both require a reason when you set them. When in doubt: use Waived for intentional forgiveness, Cancelled for mistakes.</p>
+                    </div>
+                  ),
+                },
+              ].map(({ key, title, content }) => {
+                const expanded = helpExpanded[key] ?? true;
+                return (
+                  <div key={key} className="border border-border rounded-xl overflow-hidden">
+                    <button
+                      type="button"
+                      className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium hover:bg-muted/50 transition-colors text-left"
+                      onClick={() => setHelpExpanded((prev) => ({ ...prev, [key]: !expanded }))}
+                    >
+                      <span>{title}</span>
+                      {expanded ? <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0" /> : <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />}
+                    </button>
+                    {expanded && (
+                      <div className="px-4 pb-4 pt-1 border-t border-border">
+                        {content}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
