@@ -49,9 +49,11 @@ export default function InvitePage() {
       router.push("/login?redirect=/parent/invite?token=" + encodeURIComponent(token ?? ""));
       return;
     }
-    // Mark invite as used
+    // Mark invite as used and set profile role to parent
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (supabase as any).from("guardian_invites").update({ used_at: new Date().toISOString() }).eq("token", token);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase as any).from("profiles").update({ role: "parent" }).eq("id", user.id);
     router.push("/parent/dashboard");
   }
 

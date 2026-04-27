@@ -24,7 +24,7 @@ import { useSchoolContext } from "@/contexts/SchoolContext";
 
 type EnrollmentStatus = "enrolled" | "waitlisted" | "inquiry" | "withdrawn" | "completed";
 type CommPref = "app" | "sms_phone" | "printed_note" | "in_person" | "assisted_by_school";
-type PromoteAction = "promote" | "repeat" | "skip";
+type PromoteAction = "promote" | "repeat" | "skip" | "graduate";
 
 const COMM_PREF_LABELS: Record<CommPref, string> = {
   app: "App",
@@ -87,15 +87,15 @@ interface StudentForm {
 }
 
 // Promote tab types
-interface PromotePeriod { id: string; name: string; schoolYearId: string; schoolYearName: string; }
+interface PromoteYear { id: string; name: string; }
 interface PromoteClassOption { id: string; name: string; level: string; schoolYearId: string; }
 interface PromoteRow {
   studentId: string; studentName: string;
-  currentEnrollmentId: string; currentClassId: string; currentClassName: string;
+  currentEnrollmentId: string; currentClassId: string; currentClassName: string; currentClassLevel: string;
   suggestedClassId: string | null; suggestedClassName: string | null;
   selectedClassId: string; action: PromoteAction;
 }
-interface PromoteResult { created: number; skipped: number; errors: string[]; }
+interface PromoteResult { created: number; graduated: number; skipped: number; errors: string[]; }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -204,10 +204,12 @@ export default function StudentsPage() {
   const [promoteInitialized, setPromoteInitialized] = useState(false);
   const [promoteLoading, setPromoteLoading] = useState(false);
   const [promoteError, setPromoteError] = useState<string | null>(null);
-  const [allPeriods, setAllPeriods] = useState<PromotePeriod[]>([]);
+  const [allSchoolYears, setAllSchoolYears] = useState<PromoteYear[]>([]);
   const [allPromoteClasses, setAllPromoteClasses] = useState<PromoteClassOption[]>([]);
-  const [sourcePeriodId, setSourcePeriodId] = useState("");
-  const [targetPeriodId, setTargetPeriodId] = useState("");
+  const [sourceYearId, setSourceYearId] = useState("");
+  const [targetYearId, setTargetYearId] = useState("");
+  const [promoteLevel, setPromoteLevel] = useState("all");
+  const [promoteSearch, setPromoteSearch] = useState("");
   const [promoteRows, setPromoteRows] = useState<PromoteRow[]>([]);
   const [promoteRowsLoading, setPromoteRowsLoading] = useState(false);
   const [promoteRowsError, setPromoteRowsError] = useState<string | null>(null);
@@ -631,13 +633,12 @@ export default function StudentsPage() {
   async function loadPromoteSetup() {
     setPromoteLoading(true);
     setPromoteError(null);
-    const [periodsRes, classesRes] = await Promise.all([
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (supabase as any)
-        .from("academic_periods")
-        .select("id, name, school_year_id, school_years(name)")
+    const [yearsRes, classesRes] = await Promise.all([
+      supabase
+        .from("school_years")
+        .select("id, name, start_date")
         .eq("school_id", schoolId!)
-        .order("start_date"),
+        .order("start_date", { ascending: false }),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (supabase as any)
         .from("classes")
@@ -646,28 +647,37 @@ export default function StudentsPage() {
         .eq("is_active", true)
         .order("name"),
     ]);
-    if (periodsRes.error) { setPromoteError(periodsRes.error.message); setPromoteLoading(false); return; }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    setAllPeriods(((periodsRes.data ?? []) as any[]).map((p: any) => ({
-      id: p.id, name: p.name, schoolYearId: p.school_year_id,
-      schoolYearName: p.school_years?.name ?? "",
-    })));
+    if (yearsRes.error) { setPromoteError(yearsRes.error.message); setPromoteLoading(false); return; }
+    const seen = new Set<string>();
+    const years = (yearsRes.data ?? [])
+      .filter((y) => { if (seen.has(y.id)) return false; seen.add(y.id); return true; })
+      .map((y) => ({ id: y.id, name: y.name }));
+    setAllSchoolYears(years);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     setAllPromoteClasses(((classesRes.data ?? []) as any[]).map((c: any) => ({
       id: c.id, name: c.name, level: c.level ?? "", schoolYearId: c.school_year_id,
     })));
+    // Auto-detect: years are sorted desc by start_date — index 0 = most recent (target), index 1 = second most recent (source)
+    const autoSrcId = years.length >= 2 ? years[1].id : "";
+    const autoTgtId = years.length >= 1 ? years[0].id : "";
+    setSourceYearId(autoSrcId);
+    setTargetYearId(autoTgtId);
     setPromoteInitialized(true);
     setPromoteLoading(false);
+    if (autoSrcId && autoTgtId) {
+      await loadStudentsForPromote(autoSrcId, autoTgtId);
+    }
   }
 
-  async function loadStudentsForPromote() {
-    if (!sourcePeriodId) { setPromoteRowsError("Select a source academic period."); return; }
-    if (!targetPeriodId) { setPromoteRowsError("Select a target academic period."); return; }
-    if (sourcePeriodId === targetPeriodId) { setPromoteRowsError("Source and target periods must be different."); return; }
+  async function loadStudentsForPromote(srcId?: string, tgtId?: string) {
+    const src = srcId ?? sourceYearId;
+    const tgt = tgtId ?? targetYearId;
+    if (!src || !tgt || src === tgt) return;
     setPromoteRowsLoading(true);
     setPromoteRowsError(null);
     setPromoteRows([]);
     setPromoteResult(null);
+    setPromoteSearch("");
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: enrollments, error: enrollErr } = await (supabase as any)
@@ -675,9 +685,9 @@ export default function StudentsPage() {
       .select(`
         id, student_id, class_id,
         students(first_name, last_name),
-        classes(id, name, next_class_id, next_class:classes!next_class_id(id, name))
+        classes(id, name, level, next_class_id, next_class:classes!next_class_id(id, name))
       `)
-      .eq("academic_period_id", sourcePeriodId)
+      .eq("school_year_id", src)
       .eq("status", "enrolled");
 
     if (enrollErr) { setPromoteRowsError(enrollErr.message); setPromoteRowsLoading(false); return; }
@@ -696,10 +706,11 @@ export default function StudentsPage() {
         currentEnrollmentId: e.id,
         currentClassId: e.class_id,
         currentClassName: cls?.name ?? "—",
+        currentClassLevel: cls?.level ?? "",
         suggestedClassId,
         suggestedClassName,
         selectedClassId: suggestedClassId ?? "",
-        action: suggestedClassId ? "promote" : "skip",
+        action: "promote" as PromoteAction,
       };
     });
 
@@ -715,7 +726,7 @@ export default function StudentsPage() {
         ...r, action,
         selectedClassId:
           action === "repeat" ? r.currentClassId :
-          action === "skip" ? "" :
+          action === "skip" || action === "graduate" ? "" :
           r.suggestedClassId ?? "",
       };
     }));
@@ -726,36 +737,54 @@ export default function StudentsPage() {
   }
 
   function setPromoteBulkAction(action: PromoteAction) {
-    setPromoteRows((prev) => prev.map((r) => ({
-      ...r, action,
-      selectedClassId:
-        action === "repeat" ? r.currentClassId :
-        action === "skip" ? "" :
-        r.suggestedClassId ?? r.selectedClassId,
-    })));
+    setPromoteRows((prev) => prev.map((r) => {
+      if (promoteLevel !== "all" && r.currentClassLevel !== promoteLevel) return r;
+      return {
+        ...r, action,
+        selectedClassId:
+          action === "repeat" ? r.currentClassId :
+          action === "skip" || action === "graduate" ? "" :
+          r.suggestedClassId ?? r.selectedClassId,
+      };
+    }));
+  }
+
+  function applyBulkNextClass(currentClassId: string, value: string) {
+    setPromoteRows((prev) => prev.map((r) => {
+      if (r.currentClassId !== currentClassId) return r;
+      if (value === "__graduate__") return { ...r, selectedClassId: "", action: "graduate" as PromoteAction };
+      return { ...r, selectedClassId: value, action: (value ? "promote" : "skip") as PromoteAction };
+    }));
   }
 
   async function handlePromoteConfirm() {
-    if (!schoolId || !targetPeriodId) return;
-    const toPromote = promoteRows.filter((r) => r.action !== "skip" && r.selectedClassId);
-    if (toPromote.length === 0) { setPromoteRowsError("No students selected for promotion."); return; }
+    if (!schoolId || !targetYearId) return;
+
+    const inScope = filteredPromoteRows;
+    const toEnroll = inScope.filter((r) => (r.action === "promote" || r.action === "repeat") && r.selectedClassId);
+    const toGraduate = inScope.filter((r) => r.action === "graduate");
+
+    if (toEnroll.length === 0 && toGraduate.length === 0) {
+      setPromoteRowsError("No students selected for promotion or graduation.");
+      return;
+    }
 
     setPromoteSaving(true);
     setPromoteRowsError(null);
 
-    const targetPeriod = allPeriods.find((p) => p.id === targetPeriodId);
-    const targetSchoolYearId = targetPeriod?.schoolYearId ?? "";
-    let created = 0, skipped = 0;
+    const targetSchoolYearId = targetYearId;
+    let created = 0, graduated = 0, skipped = 0;
     const errors: string[] = [];
 
-    for (const row of toPromote) {
+    // Enroll in new class
+    for (const row of toEnroll) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: existing } = await (supabase as any)
         .from("enrollments")
         .select("id")
         .eq("student_id", row.studentId)
         .eq("class_id", row.selectedClassId)
-        .eq("academic_period_id", targetPeriodId)
+        .eq("school_year_id", targetYearId)
         .maybeSingle();
 
       if (existing) { skipped++; continue; }
@@ -765,14 +794,24 @@ export default function StudentsPage() {
         student_id: row.studentId,
         class_id: row.selectedClassId,
         school_year_id: targetSchoolYearId,
-        academic_period_id: targetPeriodId,
-        status: "upcoming",
+        status: "enrolled",
       });
 
       if (insErr) { errors.push(`${row.studentName}: ${insErr.message}`); } else { created++; }
     }
 
-    setPromoteResult({ created, skipped, errors });
+    // Graduate — mark source enrollment as completed
+    for (const row of toGraduate) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error: updErr } = await (supabase as any)
+        .from("enrollments")
+        .update({ status: "completed" })
+        .eq("id", row.currentEnrollmentId);
+
+      if (updErr) { errors.push(`${row.studentName}: ${updErr.message}`); } else { graduated++; }
+    }
+
+    setPromoteResult({ created, graduated, skipped, errors });
     setPromoteSaving(false);
   }
 
@@ -787,16 +826,38 @@ export default function StudentsPage() {
     return matchSearch && matchClass && matchStatus;
   });
 
-  const periodsByYear = allPeriods.reduce<Record<string, PromotePeriod[]>>((acc, p) => {
-    const key = p.schoolYearName || p.schoolYearId;
-    if (!acc[key]) acc[key] = [];
-    acc[key].push(p);
-    return acc;
-  }, {});
+  const sourceYear = allSchoolYears.find((y) => y.id === sourceYearId);
+  const targetYear = allSchoolYears.find((y) => y.id === targetYearId);
 
-  const targetPeriod = allPeriods.find((p) => p.id === targetPeriodId);
-  const promoteCount = promoteRows.filter((r) => r.action !== "skip" && r.selectedClassId).length;
-  const skipCount = promoteRows.filter((r) => r.action === "skip").length;
+  const promoteLevels = [...new Set(promoteRows.map((r) => r.currentClassLevel).filter(Boolean))].sort();
+  const filteredPromoteRows = promoteRows.filter((r) => {
+    const matchLevel = promoteLevel === "all" || r.currentClassLevel === promoteLevel;
+    const matchSearch = !promoteSearch ||
+      r.studentName.toLowerCase().includes(promoteSearch.toLowerCase()) ||
+      r.currentClassName.toLowerCase().includes(promoteSearch.toLowerCase());
+    return matchLevel && matchSearch;
+  });
+
+  // One entry per unique current class — used for the bulk next-class assignment panel
+  const classBulkGroups = promoteRows.reduce<Array<{
+    currentClassId: string; currentClassName: string; currentClassLevel: string;
+    studentCount: number; bulkClassId: string;
+  }>>((acc, r) => {
+    const effectiveId = r.action === "graduate" ? "__graduate__" : r.selectedClassId;
+    const g = acc.find((x) => x.currentClassId === r.currentClassId);
+    if (g) {
+      g.studentCount++;
+      if (g.bulkClassId !== effectiveId) g.bulkClassId = ""; // varied — show placeholder
+    } else {
+      acc.push({ currentClassId: r.currentClassId, currentClassName: r.currentClassName,
+        currentClassLevel: r.currentClassLevel, studentCount: 1, bulkClassId: effectiveId });
+    }
+    return acc;
+  }, []).sort((a, b) => a.currentClassName.localeCompare(b.currentClassName));
+
+  const promoteCount = filteredPromoteRows.filter((r) => (r.action === "promote" || r.action === "repeat") && r.selectedClassId).length;
+  const graduateCount = filteredPromoteRows.filter((r) => r.action === "graduate").length;
+  const skipCount = filteredPromoteRows.filter((r) => r.action === "skip").length;
 
   if (loading) return <PageSpinner />;
 
@@ -947,77 +1008,130 @@ export default function StudentsPage() {
 
           {!promoteLoading && (
             <>
-              {/* Period selectors */}
+              {/* School year progression banner */}
               <Card>
-                <CardContent className="p-5 space-y-4">
-                  <p className="text-sm font-semibold">Step 1 — Select periods</p>
-                  <div className="flex flex-col sm:flex-row items-start sm:items-end gap-4">
-                    <div className="flex-1 space-y-1.5">
-                      <label className="text-sm font-medium">From (source period)</label>
-                      <Select
-                        value={sourcePeriodId}
-                        onChange={(e) => { setSourcePeriodId(e.target.value); setPromoteRows([]); setPromoteResult(null); }}
-                      >
-                        <option value="">— Select source period —</option>
-                        {Object.entries(periodsByYear).map(([yearName, periods]) => (
-                          <optgroup key={yearName} label={yearName}>
-                            {periods.map((p) => (
-                              <option key={p.id} value={p.id}>{p.name}</option>
-                            ))}
-                          </optgroup>
-                        ))}
-                      </Select>
+                <CardContent className="p-5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <GraduationCap className="w-4 h-4 text-primary" />
+                      <p className="text-sm font-semibold">School Year Progression</p>
                     </div>
-
-                    <ArrowRight className="w-5 h-5 text-muted-foreground flex-shrink-0 hidden sm:block mb-2" />
-
-                    <div className="flex-1 space-y-1.5">
-                      <label className="text-sm font-medium">To (target period)</label>
-                      <Select
-                        value={targetPeriodId}
-                        onChange={(e) => { setTargetPeriodId(e.target.value); setPromoteRows([]); setPromoteResult(null); }}
+                    {sourceYearId && targetYearId && (
+                      <button
+                        onClick={() => loadStudentsForPromote()}
+                        disabled={promoteRowsLoading}
+                        className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground disabled:opacity-50"
+                        title="Reload students"
                       >
-                        <option value="">— Select target period —</option>
-                        {Object.entries(periodsByYear).map(([yearName, periods]) => (
-                          <optgroup key={yearName} label={yearName}>
-                            {periods.filter((p) => p.id !== sourcePeriodId).map((p) => (
-                              <option key={p.id} value={p.id}>{p.name}</option>
-                            ))}
-                          </optgroup>
-                        ))}
-                      </Select>
-                    </div>
-
-                    <Button onClick={loadStudentsForPromote} disabled={!sourcePeriodId || !targetPeriodId || promoteRowsLoading}>
-                      <RefreshCw className={`w-4 h-4 ${promoteRowsLoading ? "animate-spin" : ""}`} />
-                      Load Students
-                    </Button>
+                        <RefreshCw className={`w-3.5 h-3.5 ${promoteRowsLoading ? "animate-spin" : ""}`} />
+                      </button>
+                    )}
                   </div>
 
-                  {allPeriods.length === 0 && (
+                  {allSchoolYears.length >= 2 ? (
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1 bg-muted/50 rounded-lg px-4 py-3">
+                        <p className="text-xs text-muted-foreground font-medium mb-0.5">Promoting from</p>
+                        <p className="text-sm font-semibold">{sourceYear?.name ?? "—"}</p>
+                      </div>
+                      <ArrowRight className="w-5 h-5 text-muted-foreground flex-shrink-0" />
+                      <div className="flex-1 bg-primary/5 border border-primary/20 rounded-lg px-4 py-3">
+                        <p className="text-xs text-muted-foreground font-medium mb-0.5">Into</p>
+                        <p className="text-sm font-semibold text-primary">{targetYear?.name ?? "—"}</p>
+                      </div>
+                    </div>
+                  ) : (
                     <p className="text-sm text-amber-600">
-                      No academic periods found. Set them up in Settings → Academic Periods first.
+                      At least two school years are needed. Add the next school year in Settings → School Year &amp; Terms.
                     </p>
                   )}
+
+                  <p className="text-xs text-muted-foreground">
+                    School years are managed in Settings → School Year &amp; Terms.
+                  </p>
                 </CardContent>
               </Card>
 
               {promoteRowsError && <ErrorAlert message={promoteRowsError} />}
 
+              {promoteRowsLoading && (
+                <div className="flex items-center justify-center py-10 text-sm text-muted-foreground gap-2">
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  Loading students…
+                </div>
+              )}
+
               {/* Student promotion table */}
               {promoteRows.length > 0 && !promoteResult && (
                 <>
+                  {/* Bulk next-class assignment per current class */}
+                  <Card>
+                    <CardContent className="p-4 space-y-3">
+                      <p className="text-sm font-semibold">Step 1 — Set next class per level</p>
+                      <p className="text-xs text-muted-foreground">Configured from Classes → Promotion Path. Override here to apply to all students in that class at once.</p>
+                      <div className="divide-y divide-border">
+                        {classBulkGroups.map((g) => {
+                          const targetClasses = allPromoteClasses.filter((c) => c.schoolYearId === targetYearId);
+                          return (
+                            <div key={g.currentClassId} className="flex items-center gap-3 py-2.5">
+                              <div className="flex-1 min-w-0">
+                                <span className="text-sm font-medium">{g.currentClassName}</span>
+                                {g.currentClassLevel && <span className="text-xs text-muted-foreground ml-1.5">({g.currentClassLevel})</span>}
+                                <span className="text-xs text-muted-foreground ml-1.5">· {g.studentCount} student{g.studentCount !== 1 ? "s" : ""}</span>
+                              </div>
+                              <span className="text-muted-foreground text-sm flex-shrink-0">→</span>
+                              <div className="w-56 flex-shrink-0">
+                                <Select
+                                  value={g.bulkClassId}
+                                  onChange={(e) => applyBulkNextClass(g.currentClassId, e.target.value)}
+                                  className="text-sm h-8"
+                                >
+                                  <option value="">{g.bulkClassId === "" && g.studentCount > 1 ? "— varied —" : "— Select next class —"}</option>
+                                  <option value="__graduate__">🎓 Graduate (no next class)</option>
+                                  {(targetClasses.length > 0 ? targetClasses : allPromoteClasses).map((c) => (
+                                    <option key={c.id} value={c.id}>{c.name}{c.level ? ` (${c.level})` : ""}</option>
+                                  ))}
+                                </Select>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </CardContent>
+                  </Card>
+
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-sm font-semibold">
-                        Step 2 — Review and confirm ({promoteRows.length} student{promoteRows.length !== 1 ? "s" : ""})
+                        Step 2 — Review and confirm
+                        {" "}({filteredPromoteRows.length} student{filteredPromoteRows.length !== 1 ? "s" : ""}{promoteLevel !== "all" ? ` · ${promoteLevel}` : ""})
                       </p>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        Promoting to <strong>{targetPeriod?.name}</strong>
-                        {targetPeriod?.schoolYearName ? ` · ${targetPeriod.schoolYearName}` : ""}
+                        Promoting to <strong>{targetYear?.name}</strong>
                       </p>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap justify-end">
+                      {/* Level filter */}
+                      {promoteLevels.length > 1 && (
+                        <div className="flex items-center gap-1 border-r border-border pr-3 mr-1">
+                          <span className="text-xs text-muted-foreground">Level:</span>
+                          <button
+                            onClick={() => setPromoteLevel("all")}
+                            className={`px-2.5 py-1 text-xs rounded-lg border transition-colors font-medium ${promoteLevel === "all" ? "border-primary bg-primary/5 text-primary" : "border-border text-muted-foreground hover:text-foreground hover:bg-muted"}`}
+                          >
+                            All
+                          </button>
+                          {promoteLevels.map((lvl) => (
+                            <button
+                              key={lvl}
+                              onClick={() => setPromoteLevel(lvl)}
+                              className={`px-2.5 py-1 text-xs rounded-lg border transition-colors font-medium ${promoteLevel === lvl ? "border-primary bg-primary/5 text-primary" : "border-border text-muted-foreground hover:text-foreground hover:bg-muted"}`}
+                            >
+                              {lvl}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                       <span className="text-xs text-muted-foreground">Set all:</span>
                       <button
                         onClick={() => setPromoteBulkAction("promote")}
@@ -1025,19 +1139,18 @@ export default function StudentsPage() {
                       >
                         Promote
                       </button>
-                      <button
-                        onClick={() => setPromoteBulkAction("repeat")}
-                        className="px-2.5 py-1 text-xs rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                      >
-                        Repeat
-                      </button>
-                      <button
-                        onClick={() => setPromoteBulkAction("skip")}
-                        className="px-2.5 py-1 text-xs rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                      >
-                        Skip
-                      </button>
                     </div>
+                  </div>
+
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <Input
+                      type="text"
+                      placeholder="Filter by student name or class…"
+                      value={promoteSearch}
+                      onChange={(e) => setPromoteSearch(e.target.value)}
+                      className="pl-9"
+                    />
                   </div>
 
                   <Card className="overflow-hidden">
@@ -1052,15 +1165,17 @@ export default function StudentsPage() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-border">
-                          {promoteRows.map((row) => {
-                            const targetClasses = allPromoteClasses.filter((c) => c.schoolYearId === targetPeriod?.schoolYearId);
+                          {filteredPromoteRows.map((row) => {
+                            const targetClasses = allPromoteClasses.filter((c) => c.schoolYearId === targetYearId);
                             return (
-                              <tr key={row.studentId} className={`transition-colors ${row.action === "skip" ? "opacity-50 bg-muted/30" : "hover:bg-muted/40"}`}>
+                              <tr key={row.studentId} className={`transition-colors ${row.action === "skip" ? "bg-muted/20" : "hover:bg-muted/40"}`}>
                                 <td className="px-4 py-3 font-medium">{row.studentName}</td>
                                 <td className="px-4 py-3 text-muted-foreground">{row.currentClassName}</td>
                                 <td className="px-4 py-3">
                                   {row.action === "skip" ? (
                                     <span className="text-xs text-muted-foreground">—</span>
+                                  ) : row.action === "graduate" ? (
+                                    <span className="text-xs font-medium text-green-700 flex items-center gap-1">🎓 Graduating</span>
                                   ) : row.action === "repeat" ? (
                                     <span className="text-muted-foreground italic text-xs">Same class ({row.currentClassName})</span>
                                   ) : (
@@ -1093,6 +1208,10 @@ export default function StudentsPage() {
                                       className="text-amber-600 border-amber-300 bg-amber-50">
                                       Repeat
                                     </ActionBtn>
+                                    <ActionBtn active={row.action === "graduate"} onClick={() => setPromoteRowAction(row.studentId, "graduate")}
+                                      className="text-green-700 border-green-300 bg-green-50">
+                                      Graduate
+                                    </ActionBtn>
                                     <ActionBtn active={row.action === "skip"} onClick={() => setPromoteRowAction(row.studentId, "skip")}
                                       className="text-muted-foreground border-border">
                                       Skip
@@ -1109,19 +1228,34 @@ export default function StudentsPage() {
 
                   <div className="flex items-center justify-between bg-muted rounded-xl px-5 py-4">
                     <div className="text-sm space-y-1">
-                      <p>
-                        <span className="font-semibold text-primary">{promoteCount} student{promoteCount !== 1 ? "s" : ""}</span>
-                        {" "}will be enrolled in the new period
-                      </p>
+                      {promoteCount > 0 && (
+                        <p>
+                          <span className="font-semibold text-primary">{promoteCount} student{promoteCount !== 1 ? "s" : ""}</span>
+                          {" "}will be enrolled in the new period
+                        </p>
+                      )}
+                      {graduateCount > 0 && (
+                        <p>
+                          <span className="font-semibold text-green-700">{graduateCount} student{graduateCount !== 1 ? "s" : ""}</span>
+                          {" "}will be marked as graduated
+                        </p>
+                      )}
                       {skipCount > 0 && (
                         <p className="text-muted-foreground text-xs">{skipCount} student{skipCount !== 1 ? "s" : ""} skipped</p>
                       )}
                     </div>
-                    <Button onClick={handlePromoteConfirm} disabled={promoteSaving || promoteCount === 0} className="min-w-[160px]">
+                    <Button onClick={handlePromoteConfirm} disabled={promoteSaving || (promoteCount === 0 && graduateCount === 0)} className="min-w-[160px]">
                       {promoteSaving ? (
-                        <><RefreshCw className="w-4 h-4 animate-spin" /> Promoting…</>
+                        <><RefreshCw className="w-4 h-4 animate-spin" /> Saving…</>
                       ) : (
-                        <><Check className="w-4 h-4" /> Promote {promoteCount} Student{promoteCount !== 1 ? "s" : ""}</>
+                        <><Check className="w-4 h-4" />
+                          {promoteCount > 0 && graduateCount > 0
+                            ? `Enroll ${promoteCount} · Graduate ${graduateCount}`
+                            : promoteCount > 0
+                            ? `Enroll ${promoteCount} Student${promoteCount !== 1 ? "s" : ""}`
+                            : `Graduate ${graduateCount} Student${graduateCount !== 1 ? "s" : ""}`
+                          }
+                        </>
                       )}
                     </Button>
                   </div>
@@ -1129,11 +1263,11 @@ export default function StudentsPage() {
               )}
 
               {/* Empty state */}
-              {promoteRows.length === 0 && !promoteRowsLoading && sourcePeriodId && targetPeriodId && !promoteResult && (
+              {promoteRows.length === 0 && !promoteRowsLoading && sourceYearId && targetYearId && !promoteResult && (
                 <Card>
                   <CardContent className="p-12 text-center text-sm text-muted-foreground">
                     <Users className="w-8 h-8 mx-auto mb-3 opacity-40" />
-                    No enrolled students found for the selected source period.
+                    No enrolled students found in {sourceYear?.name ?? "the source year"}.
                   </CardContent>
                 </Card>
               )}
@@ -1149,7 +1283,12 @@ export default function StudentsPage() {
                       <div>
                         <p className="font-semibold">Promotion complete</p>
                         <p className="text-sm text-muted-foreground mt-0.5">
-                          <strong className="text-foreground">{promoteResult.created}</strong> enrollment{promoteResult.created !== 1 ? "s" : ""} created
+                          {promoteResult.created > 0 && (
+                            <><strong className="text-foreground">{promoteResult.created}</strong> enrollment{promoteResult.created !== 1 ? "s" : ""} created</>
+                          )}
+                          {promoteResult.graduated > 0 && (
+                            <>{promoteResult.created > 0 ? ", " : ""}<strong className="text-green-700">{promoteResult.graduated}</strong> student{promoteResult.graduated !== 1 ? "s" : ""} graduated</>
+                          )}
                           {promoteResult.skipped > 0 && <>, <strong className="text-foreground">{promoteResult.skipped}</strong> already existed (skipped)</>}
                         </p>
                       </div>

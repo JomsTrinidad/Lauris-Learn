@@ -16,11 +16,17 @@ export type Database = {
           trial_start_date: string | null;
           trial_end_date: string | null;
           trial_status: "active" | "expired" | "converted";
+          logo_url: string | null;
+          primary_color: string | null;
+          accent_color: string | null;
+          report_footer_text: string | null;
+          text_size_scale: "default" | "large" | "extra_large";
+          spacing_scale: "compact" | "default" | "relaxed";
           created_at: string;
           updated_at: string;
         };
-        Insert: { id?: string; name: string; trial_start_date?: string | null; trial_end_date?: string | null; trial_status?: "active" | "expired" | "converted"; created_at?: string; updated_at?: string };
-        Update: { id?: string; name?: string; trial_start_date?: string | null; trial_end_date?: string | null; trial_status?: "active" | "expired" | "converted"; updated_at?: string };
+        Insert: { id?: string; name: string; trial_start_date?: string | null; trial_end_date?: string | null; trial_status?: "active" | "expired" | "converted"; logo_url?: string | null; primary_color?: string | null; accent_color?: string | null; report_footer_text?: string | null; text_size_scale?: "default" | "large" | "extra_large"; spacing_scale?: "compact" | "default" | "relaxed"; created_at?: string; updated_at?: string };
+        Update: { id?: string; name?: string; trial_start_date?: string | null; trial_end_date?: string | null; trial_status?: "active" | "expired" | "converted"; logo_url?: string | null; primary_color?: string | null; accent_color?: string | null; report_footer_text?: string | null; text_size_scale?: "default" | "large" | "extra_large"; spacing_scale?: "compact" | "default" | "relaxed"; updated_at?: string };
         Relationships: [];
       };
       branches: {
@@ -29,11 +35,12 @@ export type Database = {
           school_id: string;
           name: string;
           address: string | null;
+          phone: string | null;
           created_at: string;
           updated_at: string;
         };
-        Insert: { id?: string; school_id: string; name: string; address?: string | null; created_at?: string; updated_at?: string };
-        Update: { id?: string; school_id?: string; name?: string; address?: string | null; updated_at?: string };
+        Insert: { id?: string; school_id: string; name: string; address?: string | null; phone?: string | null; created_at?: string; updated_at?: string };
+        Update: { id?: string; school_id?: string; name?: string; address?: string | null; phone?: string | null; updated_at?: string };
         Relationships: [{ foreignKeyName: "branches_school_id_fkey"; columns: ["school_id"]; isOneToOne: false; referencedRelation: "schools"; referencedColumns: ["id"] }];
       };
       school_years: {

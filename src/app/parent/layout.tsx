@@ -4,7 +4,9 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Home, MessageSquare, User, CreditCard, LogOut, GraduationCap, TrendingUp, CalendarDays } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { BrandingApplier } from "@/components/BrandingApplier";
 import { Spinner } from "@/components/ui/spinner";
+import type { BrandingConfig } from "@/contexts/SchoolContext";
 
 interface ChildInfo {
   id: string;
@@ -35,6 +37,9 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
   const [selectedChildId, setSelectedChildId] = useState<string | null>(null);
   const [schoolName, setSchoolName] = useState("");
   const [schoolId, setSchoolId] = useState<string | null>(null);
+  const [branding, setBranding] = useState<Pick<BrandingConfig, "primaryColor" | "accentColor" | "textSizeScale" | "spacingScale">>({
+    primaryColor: null, accentColor: null, textSizeScale: "default", spacingScale: "default",
+  });
   const mainRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
@@ -99,8 +104,18 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
     const firstStudent = (guardianRows as any[])[0]?.students;
     if (firstStudent?.school_id) {
       setSchoolId(firstStudent.school_id);
-      const { data: school } = await supabase.from("schools").select("name").eq("id", firstStudent.school_id).single();
-      setSchoolName(school?.name ?? "");
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: school } = await (supabase as any).from("schools")
+        .select("name, primary_color, accent_color, text_size_scale, spacing_scale")
+        .eq("id", firstStudent.school_id)
+        .single();
+      setSchoolName((school as any)?.name ?? "");
+      setBranding({
+        primaryColor: (school as any)?.primary_color ?? null,
+        accentColor:  (school as any)?.accent_color  ?? null,
+        textSizeScale: ((school as any)?.text_size_scale ?? "default") as BrandingConfig["textSizeScale"],
+        spacingScale:  ((school as any)?.spacing_scale  ?? "default") as BrandingConfig["spacingScale"],
+      });
     }
 
     setLoading(false);
@@ -123,6 +138,7 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
+      <BrandingApplier branding={branding} />
       {/* Top header */}
       <header className="border-b border-border bg-card px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3">

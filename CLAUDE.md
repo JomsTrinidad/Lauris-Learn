@@ -329,6 +329,44 @@ All implemented in `supabase/migrations/002_super_admin_trial_periods_tuition.sq
 
 ## Session Log
 
+### 2026-04-27 — Settings Refinements + Parent Portal RLS + Promote Students UX
+
+**Settings — School Information:**
+- Added `phone TEXT` column to `branches` (migration 023)
+- Added `phone` field UI in Settings → School Information card (after Address, before Save)
+- TypeScript types updated for `branches` Row/Insert/Update
+
+**Settings — School Year & Terms:**
+- School years now sorted: active first, then descending by `start_date`
+- Delete button (Trash2) added to non-active school year rows; blocks deletion of active SY; handles FK constraint errors
+- `savePeriod` no longer sets `is_active` on terms (removed per-term active toggle)
+- Active badge removed from term rows in the list
+- "Mark as active term" checkbox removed from the term modal
+
+**Branding & Accessibility (completed in prior session):**
+- `patchBranding()` added to SchoolContext — patches branding slice in-place without `loading: true`, preventing page unmount/logo revert
+- `BrandingApplier` component applies CSS variables + html classes; no cleanup to prevent flash
+- Settings → Branding section: logo upload, color pickers, text size scale, spacing scale, live preview
+
+**Parent Portal — RLS (migrations 024–026):**
+- Root cause: all tables gated by school-member (requires `school_id` in profile); parents have no `school_id`
+- Migration 024: added `parents_select_own_guardian_record` on `guardians` (email match)
+- Migration 025: attempted `SETOF UUID` SECURITY DEFINER function — blocked by Postgres ("set-returning functions not allowed in policy expressions")
+- Migration 026 (current, correct): `parent_student_ids()` returns `UUID[]` (array), uses `= ANY(parent_student_ids())` in all policies. Covers: guardians, students, enrollments, classes, schools, school_years, attendance_records, parent_updates, events, billing_records, payments, progress_categories
+- Invite accept (`/invite/page.tsx`): now also sets `role = 'parent'` on profile after marking invite used
+- **To debug parent login**: run `SELECT * FROM guardians WHERE email = 'parent@bk.test'` — if 0 rows, admin must add the guardian email in Students section first
+
+**Promote Students UX (students/page.tsx) — COMPLETED 2026-04-27:**
+1. Period dropdowns now show `"SY 2026-2027 · Regular Term"` format (year name in option text, not just optgroup label)
+2. Default action changed from `"skip"` (when no next_class_id) to always `"promote"` — rows no longer start grayed out; skip rows use `bg-muted/20` instead of `opacity-50`
+3. Step 2 card: bulk next-class assignment per current class — shows each class group with a "→ next class" dropdown; changing it updates all students in that class at once; sourced from `classes.next_class_id` (configurable in Classes → Promotion Path)
+4. Level filter chips (All / Toddler / Pre-Kinder / Kinder / etc.) derived from loaded students' class levels; "Set all" bulk actions and Confirm only affect the selected level
+- New state: `promoteLevel: string`
+- New function: `applyBulkNextClass(currentClassId, nextClassId)`
+- New derived: `filteredPromoteRows`, `promoteLevels`, `classBulkGroups`
+- `PromoteRow` interface: added `currentClassLevel: string`
+- Classes query: added `level` field
+
 ### 2026-04-26 — UI Polish + Parent Features + Billing Generate Merge Plan
 
 **Custom date/month pickers:**

@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
-import { Plus, Pencil, Trash2 } from "lucide-react";
+import { Plus, Pencil, Trash2, Upload, RotateCcw } from "lucide-react";
 import { AvatarUpload } from "@/components/ui/avatar-upload";
 import { compressImage, PROFILE_PHOTO_MAX_W, PROFILE_PHOTO_MAX_BYTES } from "@/lib/image-compress";
 import { Button } from "@/components/ui/button";
@@ -55,7 +55,7 @@ interface TeacherProfile {
   avatarUrl: string | null;
 }
 
-const SECTIONS = ["School Information", "School Year & Terms", "Holidays", "Teachers", "Student IDs", "Grading"] as const;
+const SECTIONS = ["School Information", "School Year & Terms", "Holidays", "Teachers", "Student IDs", "Grading", "Branding & Accessibility"] as const;
 type Section = (typeof SECTIONS)[number];
 
 const SESSION_KEY = "settings_active_section";
@@ -96,8 +96,93 @@ interface StudentCodeConfig {
   includeYear: boolean;
 }
 
+// ── Branding helpers ──────────────────────────────────────────────────────────
+
+interface BrandingForm {
+  primaryColor: string;
+  accentColor: string;
+  reportFooterText: string;
+  textSizeScale: "default" | "large" | "extra_large";
+  spacingScale: "compact" | "default" | "relaxed";
+}
+
+const BRANDING_DEFAULTS: BrandingForm = {
+  primaryColor: "#4a90e2",
+  accentColor: "#81c784",
+  reportFooterText: "",
+  textSizeScale: "default",
+  spacingScale: "default",
+};
+
+function hexToRgb(hex: string): [number, number, number] | null {
+  if (!/^#[0-9A-Fa-f]{6}$/.test(hex)) return null;
+  return [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
+}
+
+function relativeLuminance([r, g, b]: [number, number, number]): number {
+  return [r, g, b].reduce((acc, c, i) => {
+    const s = c / 255;
+    return acc + (s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4)) * [0.2126, 0.7152, 0.0722][i];
+  }, 0);
+}
+
+function contrastRatio(hex1: string, hex2: string): number {
+  const rgb1 = hexToRgb(hex1);
+  const rgb2 = hexToRgb(hex2);
+  if (!rgb1 || !rgb2) return 21;
+  const l1 = relativeLuminance(rgb1);
+  const l2 = relativeLuminance(rgb2);
+  return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+}
+
+function BrandingPreview({ form }: { form: BrandingForm }) {
+  const scale = form.textSizeScale === "extra_large" ? 1.22 : form.textSizeScale === "large" ? 1.09 : 1;
+  const lh    = form.spacingScale  === "relaxed"     ? 1.85 : form.spacingScale  === "compact" ? 1.4 : 1.6;
+  return (
+    <div
+      className="border border-border rounded-xl p-5 bg-muted/20 space-y-4"
+      style={{ fontSize: `${scale}rem`, lineHeight: lh }}
+    >
+      <div className="flex items-center gap-3">
+        <span
+          className="px-4 py-2 rounded-lg text-white font-medium text-sm"
+          style={{ backgroundColor: form.primaryColor }}
+        >
+          Save Changes
+        </span>
+        <span
+          className="px-4 py-2 rounded-lg font-medium text-sm border"
+          style={{ borderColor: form.primaryColor, color: form.primaryColor }}
+        >
+          Cancel
+        </span>
+      </div>
+      <p className="text-foreground">
+        This is how body text will appear in the parent portal and on student-facing pages. Readable text makes a difference for parents checking updates daily.
+      </p>
+      <div className="border border-border rounded-lg p-3 bg-card space-y-1">
+        <p className="font-semibold text-sm" style={{ color: form.primaryColor }}>
+          Student Name · Class 1A
+        </p>
+        <p className="text-sm text-muted-foreground">Tuition — October 2025</p>
+        <span
+          className="inline-block text-xs font-medium px-2 py-0.5 rounded-full text-white"
+          style={{ backgroundColor: form.accentColor }}
+        >
+          Paid
+        </span>
+      </div>
+      <input
+        readOnly
+        value="Sample form field — parent contact number"
+        className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background text-foreground"
+      />
+    </div>
+  );
+}
+
 export default function SettingsPage() {
-  const { schoolId, schoolName: ctxSchoolName, refresh: refreshCtx, userId, userName } = useSchoolContext();
+  const { schoolId, schoolName: ctxSchoolName, refresh: refreshCtx, patchBranding, userId, userName, userAvatar } = useSchoolContext();
   const supabase = createClient();
 
   // Persist active section across context reloads (refreshCtx causes a loading spinner which remounts the page)
@@ -142,10 +227,10 @@ export default function SettingsPage() {
   const [teacherFormError, setTeacherFormError] = useState<string | null>(null);
   const [teacherPhotoFile, setTeacherPhotoFile] = useState<File | null>(null);
 
-  // Admin profile photo
-  const [adminAvatarUrl, setAdminAvatarUrl] = useState<string | null>(null);
+  // Admin profile photo (URL comes from SchoolContext so header stays in sync)
   const [adminPhotoFile, setAdminPhotoFile] = useState<File | null>(null);
   const [adminPhotoSaving, setAdminPhotoSaving] = useState(false);
+  const [adminPhotoError, setAdminPhotoError] = useState<string | null>(null);
 
   // Student ID config
   const [codeConfig, setCodeConfig] = useState<StudentCodeConfig>({ prefix: "LL", padding: 4, includeYear: false });
@@ -158,6 +243,13 @@ export default function SettingsPage() {
   const [gradingForm, setGradingForm] = useState({ label: "", description: "", color: "#6b7280", minScore: "", maxScore: "", sortOrder: "0" });
   const [gradingFormError, setGradingFormError] = useState<string | null>(null);
 
+  // Branding & Accessibility
+  const [brandingForm, setBrandingForm] = useState<BrandingForm>(BRANDING_DEFAULTS);
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [logoFile, setLogoFile] = useState<File | null>(null);
+  const [brandingSaving, setBrandingSaving] = useState(false);
+  const [brandingError, setBrandingError] = useState<string | null>(null);
+
   const load = useCallback(async () => {
     if (!schoolId) { setLoading(false); return; }
     setLoading(true);
@@ -168,27 +260,32 @@ export default function SettingsPage() {
     const [{ data: school }, { data: branches }, { data: years }, { data: hols }, { data: periods }, { data: teacherRows }, { data: codeRow }, { data: scaleRows }] =
       await Promise.all([
         supabase.from("schools").select("name").eq("id", schoolId).single(),
-        supabase.from("branches").select("name, address").eq("school_id", schoolId).limit(1).maybeSingle(),
+        supabase.from("branches").select("name, address, phone").eq("school_id", schoolId).limit(1).maybeSingle(),
         supabase.from("school_years").select("id, name, start_date, end_date, status").eq("school_id", schoolId).order("start_date", { ascending: false }),
         supabase.from("holidays").select("id, name, date, applies_to_all, is_no_class, notes").eq("school_id", schoolId).order("date"),
         supabase.from("academic_periods").select("id, school_year_id, name, start_date, end_date, is_active, school_years(name)").eq("school_id", schoolId).order("start_date"),
         sb.from("teacher_profiles").select("id, full_name, email, phone, start_date, end_date, is_active, notes, avatar_url").eq("school_id", schoolId).order("full_name"),
-        sb.from("schools").select("student_code_prefix, student_code_padding, student_code_include_year").eq("id", schoolId).single(),
+        sb.from("schools").select("student_code_prefix, student_code_padding, student_code_include_year, logo_url, primary_color, accent_color, report_footer_text, text_size_scale, spacing_scale").eq("id", schoolId).single(),
         sb.from("grading_scales").select("id, label, description, color, min_score, max_score, sort_order").eq("school_id", schoolId).order("sort_order"),
       ]);
 
     setSchoolInfo({
       schoolName: school?.name ?? "",
-      branchName: (branches as { name: string; address: string } | null)?.name ?? "",
-      address: (branches as { name: string; address: string } | null)?.address ?? "",
-      phone: "", email: "",
+      branchName: (branches as any)?.name ?? "",
+      address: (branches as any)?.address ?? "",
+      phone: (branches as any)?.phone ?? "",
+      email: "",
     });
 
-    setSchoolYears((years ?? []).map((y) => ({
-      id: y.id, name: y.name,
-      startDate: y.start_date, endDate: y.end_date,
-      status: y.status as SchoolYearStatus,
-    })));
+    setSchoolYears(
+      (years ?? [])
+        .map((y) => ({ id: y.id, name: y.name, startDate: y.start_date, endDate: y.end_date, status: y.status as SchoolYearStatus }))
+        .sort((a, b) => {
+          if (a.status === "active") return -1;
+          if (b.status === "active") return 1;
+          return new Date(b.startDate).getTime() - new Date(a.startDate).getTime();
+        })
+    );
 
     setHolidays((hols ?? []).map((h) => ({
       id: h.id, name: h.name, date: h.date,
@@ -228,6 +325,14 @@ export default function SettingsPage() {
         padding: cr.student_code_padding ?? 4,
         includeYear: cr.student_code_include_year ?? false,
       });
+      setLogoUrl(cr.logo_url ?? null);
+      setBrandingForm({
+        primaryColor:    cr.primary_color     ?? BRANDING_DEFAULTS.primaryColor,
+        accentColor:     cr.accent_color      ?? BRANDING_DEFAULTS.accentColor,
+        reportFooterText: cr.report_footer_text ?? "",
+        textSizeScale:   cr.text_size_scale   ?? "default",
+        spacingScale:    cr.spacing_scale     ?? "default",
+      });
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -246,13 +351,6 @@ export default function SettingsPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  useEffect(() => {
-    if (!userId) return;
-    supabase.from("profiles").select("avatar_url").eq("id", userId).single()
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .then(({ data }) => { if ((data as any)?.avatar_url) setAdminAvatarUrl((data as any).avatar_url); });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId]);
 
   async function uploadProfilePhoto(folder: string, id: string, file: File): Promise<string | null> {
     const compressed = await compressImage(file, PROFILE_PHOTO_MAX_W, PROFILE_PHOTO_MAX_BYTES);
@@ -266,12 +364,15 @@ export default function SettingsPage() {
   async function saveAdminPhoto() {
     if (!adminPhotoFile || !userId) return;
     setAdminPhotoSaving(true);
+    setAdminPhotoError(null);
     const url = await uploadProfilePhoto("admins", userId, adminPhotoFile);
     if (url) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await (supabase as any).from("profiles").update({ avatar_url: url }).eq("id", userId);
-      setAdminAvatarUrl(url);
       setAdminPhotoFile(null);
+      refreshCtx(); // updates userAvatar in SchoolContext → header re-renders
+    } else {
+      setAdminPhotoError("Photo upload failed. Make sure the 'profile-photos' storage bucket exists (run migration 022).");
     }
     setAdminPhotoSaving(false);
   }
@@ -283,9 +384,9 @@ export default function SettingsPage() {
     const { error: e1 } = await supabase.from("schools").update({ name: schoolInfo.schoolName }).eq("id", schoolId);
     const { data: existing } = await supabase.from("branches").select("id").eq("school_id", schoolId).limit(1).maybeSingle();
     if (existing?.id) {
-      await supabase.from("branches").update({ name: schoolInfo.branchName, address: schoolInfo.address }).eq("id", existing.id);
+      await supabase.from("branches").update({ name: schoolInfo.branchName, address: schoolInfo.address, phone: schoolInfo.phone || null }).eq("id", existing.id);
     } else if (schoolInfo.branchName) {
-      await supabase.from("branches").insert({ school_id: schoolId, name: schoolInfo.branchName, address: schoolInfo.address });
+      await supabase.from("branches").insert({ school_id: schoolId, name: schoolInfo.branchName, address: schoolInfo.address, phone: schoolInfo.phone || null });
     }
     if (e1) { setError(e1.message); } else { refreshCtx(); }
     setSaving(false);
@@ -339,6 +440,25 @@ export default function SettingsPage() {
     refreshCtx();
   }
 
+  async function deleteSy(id: string) {
+    const sy = schoolYears.find((s) => s.id === id);
+    if (!sy) return;
+    if (sy.status === "active") {
+      setError("Cannot delete the active school year. Set another year as active first.");
+      return;
+    }
+    if (!confirm(`Delete "${sy.name}"? This will also delete its terms. Classes, enrollments, and billing records for this year must be removed first.`)) return;
+    const { error: e, count } = await supabase.from("school_years").delete({ count: "exact" }).eq("id", id);
+    if (e) {
+      setError("Cannot delete — this school year still has associated classes, enrollments, or billing records.");
+    } else if (count === 0) {
+      setError(`Delete was blocked by the database. Run this in the Supabase SQL Editor to force-delete it:\nDELETE FROM school_years WHERE id = '${id}';`);
+    } else {
+      setSchoolYears((prev) => prev.filter((s) => s.id !== id));
+      setAcademicPeriods((prev) => prev.filter((p) => p.schoolYearId !== id));
+    }
+  }
+
   // ── Academic Periods (Terms) ──
   function openAddPeriod(schoolYearId: string) {
     setEditingPeriod(null);
@@ -363,7 +483,6 @@ export default function SettingsPage() {
         name: periodForm.name.trim(),
         start_date: periodForm.startDate,
         end_date: periodForm.endDate,
-        is_active: periodForm.isActive,
       }).eq("id", editingPeriod.id);
       if (e) { setError(e.message); setSaving(false); return; }
     } else {
@@ -373,7 +492,6 @@ export default function SettingsPage() {
         name: periodForm.name.trim(),
         start_date: periodForm.startDate,
         end_date: periodForm.endDate,
-        is_active: periodForm.isActive,
       });
       if (e) { setError(e.message); setSaving(false); return; }
     }
@@ -549,6 +667,79 @@ export default function SettingsPage() {
     setGradingScales((prev) => prev.filter((s) => s.id !== id));
   }
 
+  // ── Branding & Accessibility ──────────────────────────────────────────────
+
+  async function saveBranding() {
+    if (!schoolId) return;
+    setBrandingSaving(true);
+    setBrandingError(null);
+    try {
+      let newLogoUrl = logoUrl;
+
+      if (logoFile) {
+        const ext = logoFile.name.split(".").pop()?.toLowerCase() ?? "jpg";
+        const path = `school-logos/${schoolId}.${ext}`;
+        const { error: uploadErr } = await supabase.storage
+          .from("profile-photos")
+          .upload(path, logoFile, { upsert: true, contentType: logoFile.type });
+        if (uploadErr) {
+          setBrandingError("Logo upload failed: " + uploadErr.message);
+          return;
+        }
+        const { data: urlData } = supabase.storage.from("profile-photos").getPublicUrl(path);
+        newLogoUrl = `${urlData.publicUrl}?t=${Date.now()}`;
+        setLogoUrl(newLogoUrl);
+        setLogoFile(null);
+      }
+
+      const payload: Record<string, unknown> = {
+        logo_url:           newLogoUrl,
+        primary_color:      brandingForm.primaryColor !== BRANDING_DEFAULTS.primaryColor ? brandingForm.primaryColor : null,
+        accent_color:       brandingForm.accentColor  !== BRANDING_DEFAULTS.accentColor  ? brandingForm.accentColor  : null,
+        report_footer_text: brandingForm.reportFooterText || null,
+        text_size_scale:    brandingForm.textSizeScale,
+        spacing_scale:      brandingForm.spacingScale,
+      };
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error: e } = await (supabase as any).from("schools").update(payload).eq("id", schoolId);
+      if (e) {
+        setBrandingError(e.message);
+      } else {
+        // Patch context branding in-place so BrandingApplier picks up new values
+        // immediately, without triggering a full context reload (which would unmount
+        // this page and reset logoUrl back to null before the DB re-fetch completes).
+        patchBranding({
+          logoUrl:       newLogoUrl,
+          primaryColor:  payload.primary_color as string | null,
+          accentColor:   payload.accent_color  as string | null,
+          textSizeScale: brandingForm.textSizeScale,
+          spacingScale:  brandingForm.spacingScale,
+        });
+      }
+    } finally {
+      setBrandingSaving(false);
+    }
+  }
+
+  async function resetBrandingToDefaults() {
+    if (!schoolId || !confirm("Reset all branding to app defaults?")) return;
+    setBrandingForm((prev) => ({ ...prev, primaryColor: BRANDING_DEFAULTS.primaryColor, accentColor: BRANDING_DEFAULTS.accentColor, reportFooterText: "" }));
+    setLogoUrl(null);
+    setLogoFile(null);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase as any).from("schools").update({ logo_url: null, primary_color: null, accent_color: null, report_footer_text: null }).eq("id", schoolId);
+    patchBranding({ logoUrl: null, primaryColor: null, accentColor: null });
+  }
+
+  async function resetAccessibilityToDefaults() {
+    if (!schoolId) return;
+    setBrandingForm((prev) => ({ ...prev, textSizeScale: "default", spacingScale: "default" }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase as any).from("schools").update({ text_size_scale: "default", spacing_scale: "default" }).eq("id", schoolId);
+    patchBranding({ textSizeScale: "default", spacingScale: "default" });
+  }
+
   if (!schoolId) {
     return (
       <div className="space-y-4">
@@ -605,6 +796,10 @@ export default function SettingsPage() {
                   <label className="block text-sm font-medium mb-1">Address</label>
                   <Textarea value={schoolInfo.address} onChange={(e) => setSchoolInfo({ ...schoolInfo, address: e.target.value })} rows={2} />
                 </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Telephone Number</label>
+                  <Input value={schoolInfo.phone} onChange={(e) => setSchoolInfo({ ...schoolInfo, phone: e.target.value })} placeholder="+63 2 1234 5678" />
+                </div>
                 <div className="flex justify-end pt-2">
                   <Button onClick={saveSchoolInfo} disabled={saving}>{saving ? "Saving…" : "Save Changes"}</Button>
                 </div>
@@ -616,12 +811,13 @@ export default function SettingsPage() {
             <Card>
               <CardContent className="p-5 space-y-4">
                 <h3 className="font-semibold text-sm">My Profile Photo</h3>
+                {adminPhotoError && <ErrorAlert message={adminPhotoError} />}
                 <div className="flex items-center gap-4">
                   <AvatarUpload
-                    currentUrl={adminPhotoFile ? URL.createObjectURL(adminPhotoFile) : adminAvatarUrl}
+                    currentUrl={adminPhotoFile ? URL.createObjectURL(adminPhotoFile) : userAvatar}
                     name={userName || "Admin"}
                     size="lg"
-                    onFileSelect={(file) => setAdminPhotoFile(file)}
+                    onFileSelect={(file) => { setAdminPhotoFile(file); setAdminPhotoError(null); }}
                   />
                   <div className="text-sm text-muted-foreground">
                     <p className="font-medium text-foreground">{userName}</p>
@@ -680,6 +876,11 @@ export default function SettingsPage() {
                             <button onClick={() => openEditSy(sy)} className="p-1.5 hover:bg-accent rounded-lg transition-colors">
                               <Pencil className="w-4 h-4 text-muted-foreground" />
                             </button>
+                            {sy.status !== "active" && (
+                              <button onClick={() => deleteSy(sy.id)} className="p-1.5 hover:bg-red-50 rounded-lg transition-colors">
+                                <Trash2 className="w-4 h-4 text-red-500" />
+                              </button>
+                            )}
                           </div>
                         </div>
 
@@ -690,7 +891,6 @@ export default function SettingsPage() {
                               <div key={term.id} className="flex items-center justify-between py-1.5">
                                 <div className="flex items-center gap-2 flex-wrap">
                                   <span className="text-sm font-medium">{term.name}</span>
-                                  {term.isActive && <Badge variant="active">Active</Badge>}
                                   <span className="text-xs text-muted-foreground">
                                     {formatDateRange(term.startDate, term.endDate)}
                                   </span>
@@ -954,6 +1154,212 @@ export default function SettingsPage() {
             </>
           )}
 
+          {/* ── Branding & Accessibility ── */}
+          {activeSection === "Branding & Accessibility" && (
+            <div className="space-y-6">
+              <div>
+                <h2>Branding &amp; Accessibility</h2>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Customize your school&apos;s colors and logo, and adjust readability settings for parents and staff.
+                </p>
+              </div>
+              {brandingError && <ErrorAlert message={brandingError} />}
+
+              {/* A. Branding */}
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <h3>Branding</h3>
+                    <button
+                      onClick={resetBrandingToDefaults}
+                      className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-destructive transition-colors"
+                    >
+                      <RotateCcw className="w-3 h-3" /> Reset to defaults
+                    </button>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-6">
+
+                  {/* Logo */}
+                  <div>
+                    <label className="block text-sm font-medium mb-2">School Logo</label>
+                    <div className="flex items-start gap-4">
+                      <div className="w-20 h-20 rounded-xl border border-border flex items-center justify-center bg-muted overflow-hidden flex-shrink-0">
+                        {(logoFile || logoUrl) ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={logoFile ? URL.createObjectURL(logoFile) : logoUrl!}
+                            alt="School logo"
+                            className="w-full h-full object-contain p-1"
+                          />
+                        ) : (
+                          <span className="text-3xl select-none">🏫</span>
+                        )}
+                      </div>
+                      <div className="space-y-2">
+                        <label className="cursor-pointer">
+                          <input
+                            type="file"
+                            accept="image/png,image/jpeg,image/jpg,image/webp"
+                            className="hidden"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+                              if (file.size > 2 * 1024 * 1024) { setBrandingError("Logo must be under 2 MB."); return; }
+                              setBrandingError(null);
+                              setLogoFile(file);
+                            }}
+                          />
+                          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-border rounded-lg text-sm hover:bg-accent cursor-pointer transition-colors">
+                            <Upload className="w-3.5 h-3.5" />
+                            {logoFile ? "Change logo" : logoUrl ? "Replace logo" : "Upload logo"}
+                          </span>
+                        </label>
+                        {(logoUrl || logoFile) && (
+                          <button
+                            onClick={() => { setLogoUrl(null); setLogoFile(null); }}
+                            className="block text-xs text-muted-foreground hover:text-destructive transition-colors"
+                          >
+                            Remove logo
+                          </button>
+                        )}
+                        <p className="text-xs text-muted-foreground">PNG, JPG, or WEBP · Max 2 MB · Displayed in the sidebar and parent portal header.</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Colors */}
+                  <div className="grid grid-cols-2 gap-6">
+                    {(["primaryColor", "accentColor"] as const).map((field) => {
+                      const label = field === "primaryColor" ? "Primary Color" : "Accent Color";
+                      const hex = brandingForm[field];
+                      const lowContrast = field === "primaryColor" && hex.length === 7 && contrastRatio(hex, "#ffffff") < 3;
+                      return (
+                        <div key={field}>
+                          <label className="block text-sm font-medium mb-2">{label}</label>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="color"
+                              value={hex}
+                              onChange={(e) => setBrandingForm({ ...brandingForm, [field]: e.target.value })}
+                              className="w-10 h-9 rounded border border-border cursor-pointer flex-shrink-0 p-0.5"
+                            />
+                            <Input
+                              value={hex}
+                              maxLength={7}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                if (/^#[0-9A-Fa-f]{0,6}$/.test(v)) setBrandingForm({ ...brandingForm, [field]: v });
+                              }}
+                              className="font-mono text-xs"
+                            />
+                          </div>
+                          {lowContrast && (
+                            <p className="text-xs text-amber-600 mt-1">⚠ Low contrast — may be hard to read on white backgrounds.</p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Report footer */}
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Report Footer Text</label>
+                    <Input
+                      value={brandingForm.reportFooterText}
+                      onChange={(e) => setBrandingForm({ ...brandingForm, reportFooterText: e.target.value })}
+                      placeholder="e.g. Bright Kids Learning and Tutorial Center · Tel: 09XXXXXXXXX"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">Printed at the bottom of billing statements and progress reports.</p>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* B. Accessibility */}
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3>Readability Settings</h3>
+                      <p className="text-sm text-muted-foreground mt-0.5">Make the portal easier to read for parents and staff.</p>
+                    </div>
+                    <button
+                      onClick={resetAccessibilityToDefaults}
+                      className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-destructive transition-colors flex-shrink-0"
+                    >
+                      <RotateCcw className="w-3 h-3" /> Reset
+                    </button>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-6">
+
+                  {/* Text size */}
+                  <div>
+                    <label className="block text-sm font-medium mb-3">Text Size</label>
+                    <div className="grid grid-cols-3 gap-3">
+                      {([
+                        { value: "default",     label: "Default",     sample: "text-sm"  },
+                        { value: "large",       label: "Large",       sample: "text-base" },
+                        { value: "extra_large", label: "Extra Large", sample: "text-xl"  },
+                      ] as const).map((opt) => (
+                        <button
+                          key={opt.value}
+                          onClick={() => setBrandingForm({ ...brandingForm, textSizeScale: opt.value })}
+                          className={`p-3 rounded-xl border-2 text-center transition-colors ${
+                            brandingForm.textSizeScale === opt.value
+                              ? "border-primary bg-primary/5"
+                              : "border-border hover:border-muted-foreground/50"
+                          }`}
+                        >
+                          <span className={`block font-semibold ${opt.sample} ${brandingForm.textSizeScale === opt.value ? "text-primary" : "text-foreground"}`}>Aa</span>
+                          <span className="block text-xs mt-1 text-muted-foreground">{opt.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Spacing */}
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Line Spacing</label>
+                    <p className="text-xs text-muted-foreground mb-3">Controls how much breathing room there is between lines of text.</p>
+                    <div className="grid grid-cols-3 gap-3">
+                      {([
+                        { value: "compact",  label: "Compact",  desc: "Denser, more content visible" },
+                        { value: "default",  label: "Default",  desc: "Standard spacing"              },
+                        { value: "relaxed",  label: "Relaxed",  desc: "More breathing room"           },
+                      ] as const).map((opt) => (
+                        <button
+                          key={opt.value}
+                          onClick={() => setBrandingForm({ ...brandingForm, spacingScale: opt.value })}
+                          className={`p-3 rounded-xl border-2 text-center transition-colors ${
+                            brandingForm.spacingScale === opt.value
+                              ? "border-primary bg-primary/5"
+                              : "border-border hover:border-muted-foreground/50"
+                          }`}
+                        >
+                          <span className={`block text-sm font-medium ${brandingForm.spacingScale === opt.value ? "text-primary" : "text-foreground"}`}>{opt.label}</span>
+                          <span className="block text-xs mt-1 text-muted-foreground leading-snug">{opt.desc}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Live preview */}
+                  <div>
+                    <label className="block text-sm font-medium mb-3">Live Preview</label>
+                    <BrandingPreview form={brandingForm} />
+                  </div>
+                </CardContent>
+              </Card>
+
+              <div className="flex justify-end">
+                <Button onClick={saveBranding} disabled={brandingSaving}>
+                  {brandingSaving ? "Saving…" : "Save Changes"}
+                </Button>
+              </div>
+            </div>
+          )}
+
         </div>
       </div>
 
@@ -979,10 +1385,6 @@ export default function SettingsPage() {
               <Input type="date" value={periodForm.endDate} onChange={(e) => setPeriodForm({ ...periodForm, endDate: e.target.value })} />
             </div>
           </div>
-          <label className="flex items-center gap-2 cursor-pointer text-sm">
-            <input type="checkbox" checked={periodForm.isActive} onChange={(e) => setPeriodForm({ ...periodForm, isActive: e.target.checked })} className="w-4 h-4 rounded" />
-            Mark as active term
-          </label>
           <div className="flex justify-end gap-2 pt-2">
             <ModalCancelButton />
             <Button onClick={savePeriod} disabled={saving}>{saving ? "Saving…" : "Save"}</Button>

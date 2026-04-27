@@ -24,6 +24,14 @@ export interface ActiveYear {
   status: "draft" | "active" | "archived";
 }
 
+export interface BrandingConfig {
+  logoUrl: string | null;
+  primaryColor: string | null;
+  accentColor: string | null;
+  textSizeScale: "default" | "large" | "extra_large";
+  spacingScale: "compact" | "default" | "relaxed";
+}
+
 export interface SchoolContextValue {
   schoolId: string | null;
   schoolName: string;
@@ -31,16 +39,28 @@ export interface SchoolContextValue {
   userId: string | null;
   userRole: "super_admin" | "school_admin" | "teacher" | "parent" | null;
   userName: string;
+  userAvatar: string | null;
   trialStatus: "active" | "expired" | "converted" | null;
   trialDaysLeft: number | null;
   isTrialExpired: boolean;
   isReadOnly: boolean;
   isImpersonating: boolean;
+  branding: BrandingConfig;
   loading: boolean;
   refresh: () => void;
+  /** Update only the branding slice without triggering a full context reload. */
+  patchBranding: (patch: Partial<BrandingConfig>) => void;
   startImpersonation: (schoolId: string, schoolName: string) => void;
   stopImpersonation: () => void;
 }
+
+const DEFAULT_BRANDING: BrandingConfig = {
+  logoUrl: null,
+  primaryColor: null,
+  accentColor: null,
+  textSizeScale: "default",
+  spacingScale: "default",
+};
 
 const SchoolContext = createContext<SchoolContextValue>({
   schoolId: null,
@@ -49,13 +69,16 @@ const SchoolContext = createContext<SchoolContextValue>({
   userId: null,
   userRole: null,
   userName: "",
+  userAvatar: null,
   trialStatus: null,
   trialDaysLeft: null,
   isTrialExpired: false,
   isReadOnly: false,
   isImpersonating: false,
+  branding: DEFAULT_BRANDING,
   loading: true,
   refresh: () => {},
+  patchBranding: () => {},
   startImpersonation: () => {},
   stopImpersonation: () => {},
 });
@@ -68,18 +91,20 @@ function calcTrialDaysLeft(endDate: string | null): number | null {
 
 export function SchoolProvider({ children }: { children: ReactNode }) {
   const supabase = createClient();
-  const [value, setValue] = useState<Omit<SchoolContextValue, "refresh" | "startImpersonation" | "stopImpersonation">>({
+  const [value, setValue] = useState<Omit<SchoolContextValue, "refresh" | "patchBranding" | "startImpersonation" | "stopImpersonation">>({
     schoolId: null,
     schoolName: "",
     activeYear: null,
     userId: null,
     userRole: null,
     userName: "",
+    userAvatar: null,
     trialStatus: null,
     trialDaysLeft: null,
     isTrialExpired: false,
     isReadOnly: false,
     isImpersonating: false,
+    branding: DEFAULT_BRANDING,
     loading: true,
   });
 
@@ -95,7 +120,7 @@ export function SchoolProvider({ children }: { children: ReactNode }) {
 
     const { data: profile } = await supabase
       .from("profiles")
-      .select("school_id, role, full_name")
+      .select("school_id, role, full_name, avatar_url")
       .eq("id", user.id)
       .single();
 
@@ -115,6 +140,7 @@ export function SchoolProvider({ children }: { children: ReactNode }) {
         ...v,
         userId: user.id,
         userName: profile?.full_name ?? user.email ?? "",
+        userAvatar: (profile as any)?.avatar_url ?? null,
         userRole: profile?.role ?? null,
         isImpersonating: false,
         loading: false,
@@ -125,7 +151,7 @@ export function SchoolProvider({ children }: { children: ReactNode }) {
     const [{ data: school }, { data: activeYear }] = await Promise.all([
       supabase
         .from("schools")
-        .select("name, trial_start_date, trial_end_date, trial_status")
+        .select("name, trial_start_date, trial_end_date, trial_status, logo_url, primary_color, accent_color, text_size_scale, spacing_scale")
         .eq("id", effectiveSchoolId)
         .single(),
       supabase
@@ -156,16 +182,28 @@ export function SchoolProvider({ children }: { children: ReactNode }) {
       userId: user.id,
       userRole: profile?.role ?? null,
       userName: profile?.full_name ?? "",
+      userAvatar: (profile as any)?.avatar_url ?? null,
       trialStatus,
       trialDaysLeft,
       isTrialExpired,
       isReadOnly: isTrialExpired && !isImpersonating,
       isImpersonating,
+      branding: {
+        logoUrl: (school as any)?.logo_url ?? null,
+        primaryColor: (school as any)?.primary_color ?? null,
+        accentColor: (school as any)?.accent_color ?? null,
+        textSizeScale: ((school as any)?.text_size_scale ?? "default") as BrandingConfig["textSizeScale"],
+        spacingScale: ((school as any)?.spacing_scale ?? "default") as BrandingConfig["spacingScale"],
+      },
       loading: false,
     });
   }, [supabase]);
 
   useEffect(() => { load(); }, [load]);
+
+  function patchBranding(patch: Partial<BrandingConfig>) {
+    setValue((v) => ({ ...v, branding: { ...v.branding, ...patch } }));
+  }
 
   function startImpersonation(schoolId: string, schoolName: string) {
     if (typeof window !== "undefined") {
@@ -182,7 +220,7 @@ export function SchoolProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <SchoolContext.Provider value={{ ...value, refresh: load, startImpersonation, stopImpersonation }}>
+    <SchoolContext.Provider value={{ ...value, refresh: load, patchBranding, startImpersonation, stopImpersonation }}>
       {children}
     </SchoolContext.Provider>
   );

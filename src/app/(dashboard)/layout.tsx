@@ -5,9 +5,9 @@ import { useRouter, usePathname } from "next/navigation";
 import { AlertTriangle, XCircle, Eye, X } from "lucide-react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { Header } from "@/components/layout/Header";
+import { BrandingApplier } from "@/components/BrandingApplier";
 import { SchoolProvider, useSchoolContext } from "@/contexts/SchoolContext";
 import { Spinner } from "@/components/ui/spinner";
-import { createClient } from "@/lib/supabase/client";
 
 function TrialBanner() {
   const { trialStatus, trialDaysLeft, isTrialExpired } = useSchoolContext();
@@ -92,8 +92,7 @@ function ImpersonationBanner() {
 
 function Shell({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [userAvatar, setUserAvatar] = useState<string | null>(null);
-  const { schoolName, activeYear, userName, userRole, userId, loading, isTrialExpired } = useSchoolContext();
+  const { schoolName, activeYear, userName, userRole, userId, userAvatar, loading, isTrialExpired, branding } = useSchoolContext();
   const router = useRouter();
   const pathname = usePathname();
   const mainRef = useRef<HTMLElement>(null);
@@ -101,14 +100,6 @@ function Shell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     mainRef.current?.scrollTo({ top: 0 });
   }, [pathname]);
-
-  useEffect(() => {
-    if (!userId) return;
-    const supabase = createClient();
-    supabase.from("profiles").select("avatar_url").eq("id", userId).single()
-      .then(({ data }) => { if ((data as any)?.avatar_url) setUserAvatar((data as any).avatar_url); });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId]);
 
   useEffect(() => {
     if (!loading && userRole === "parent") {
@@ -133,6 +124,7 @@ function Shell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex flex-col h-screen bg-background overflow-hidden">
+      <BrandingApplier branding={branding} />
       {/* System banners */}
       <ImpersonationBanner />
       <TrialBanner />
@@ -143,6 +135,7 @@ function Shell({ children }: { children: React.ReactNode }) {
           schoolName={schoolName || "Lauris Learn"}
           schoolYear={yearLabel}
           userRole={userRole}
+          logoUrl={branding.logoUrl}
         />
 
         <div className="flex-1 flex flex-col overflow-hidden min-w-0">

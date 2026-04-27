@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Plus, ArrowRight, Search, TrendingUp } from "lucide-react";
+import { Plus, ArrowRight, Search, TrendingUp, Pencil } from "lucide-react";
+import { DatePicker } from "@/components/ui/datepicker";
+import { formatTime } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -28,6 +30,7 @@ interface Inquiry {
   email: string;
   desiredClass: string;
   desiredClassId: string | null;
+  desiredClassLevel: string | null;
   schoolYear: string;
   inquirySource: string;
   status: InquiryStatus;
@@ -39,6 +42,8 @@ interface Inquiry {
 interface ClassOption {
   id: string;
   name: string;
+  level: string;
+  startTime: string | null;
   enrolled: number;
   capacity: number;
 }
@@ -90,11 +95,16 @@ export default function EnrollmentPage() {
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<InquiryStatus | "">("");
+  const [levelFilter, setLevelFilter] = useState("");
   const [view, setView] = useState<"pipeline" | "table" | "funnel">("pipeline");
 
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState<InquiryForm>(EMPTY_FORM);
   const [selectedInquiry, setSelectedInquiry] = useState<Inquiry | null>(null);
+  // Edit form state
+  const [editForm, setEditForm] = useState<InquiryForm>(EMPTY_FORM);
+  const [editFormError, setEditFormError] = useState<string | null>(null);
+  const [editSaving, setEditSaving] = useState(false);
   // Convert-to-enrolled confirmation modal
   const [convertInquiry, setConvertInquiry] = useState<Inquiry | null>(null);
   const [convertClassId, setConvertClassId] = useState("");
@@ -119,7 +129,7 @@ export default function EnrollmentPage() {
       .from("enrollment_inquiries")
       .select(`id, child_name, parent_name, contact, email, desired_class_id, inquiry_source,
         status, notes, next_follow_up, created_at, school_year_id,
-        classes(name), school_years(name)`)
+        classes(name, level), school_years(name)`)
       .eq("school_id", schoolId!)
       .order("created_at", { ascending: false });
 
@@ -139,6 +149,7 @@ export default function EnrollmentPage() {
           email: i.email ?? "",
           desiredClass: cls?.name ?? "—",
           desiredClassId: i.desired_class_id ?? null,
+          desiredClassLevel: cls?.level ?? null,
           schoolYear: yr?.name ?? "—",
           inquirySource: i.inquiry_source ?? "",
           status: i.status as InquiryStatus,
@@ -154,7 +165,7 @@ export default function EnrollmentPage() {
     if (!activeYear?.id) { setClassOptions([]); return; }
     const { data } = await supabase
       .from("classes")
-      .select("id, name, capacity")
+      .select("id, name, level, start_time, capacity")
       .eq("school_id", schoolId!)
       .eq("school_year_id", activeYear.id)
       .eq("is_active", true)
@@ -167,7 +178,8 @@ export default function EnrollmentPage() {
       (eRows ?? []).forEach((e) => { enrolledByClass[e.class_id] = (enrolledByClass[e.class_id] ?? 0) + 1; });
     }
 
-    setClassOptions((data ?? []).map((c) => ({ id: c.id, name: c.name, capacity: c.capacity ?? 0, enrolled: enrolledByClass[c.id] ?? 0 })));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    setClassOptions((data ?? []).map((c: any) => ({ id: c.id, name: c.name, level: c.level ?? "", startTime: c.start_time ?? null, capacity: c.capacity ?? 0, enrolled: enrolledByClass[c.id] ?? 0 })));
   }
 
   async function handleSave() {
@@ -275,10 +287,55 @@ export default function EnrollmentPage() {
     await loadInquiries();
   }
 
+  function openDetail(inquiry: Inquiry) {
+    setSelectedInquiry(inquiry);
+    setEditForm({
+      childName: inquiry.childName,
+      parentName: inquiry.parentName,
+      contact: inquiry.contact,
+      email: inquiry.email,
+      desiredClassId: inquiry.desiredClassId ?? "",
+      inquirySource: inquiry.inquirySource,
+      notes: inquiry.notes,
+      nextFollowUp: inquiry.nextFollowUp ?? "",
+    });
+    setEditFormError(null);
+  }
+
+  async function handleEditSave() {
+    if (!selectedInquiry) return;
+    if (!editForm.childName.trim() || !editForm.parentName.trim()) {
+      setEditFormError("Child name and parent name are required.");
+      return;
+    }
+    setEditSaving(true);
+    setEditFormError(null);
+    const { error } = await supabase
+      .from("enrollment_inquiries")
+      .update({
+        child_name: editForm.childName.trim(),
+        parent_name: editForm.parentName.trim(),
+        contact: editForm.contact.trim() || null,
+        email: editForm.email.trim() || null,
+        desired_class_id: editForm.desiredClassId || null,
+        inquiry_source: editForm.inquirySource || null,
+        notes: editForm.notes.trim() || null,
+        next_follow_up: editForm.nextFollowUp || null,
+      })
+      .eq("id", selectedInquiry.id);
+    if (error) { setEditFormError(error.message); setEditSaving(false); return; }
+    setEditSaving(false);
+    setSelectedInquiry(null);
+    await loadInquiries();
+  }
+
+  const uniqueLevels = [...new Set(classOptions.map((c) => c.level).filter(Boolean))].sort();
+
   const filtered = inquiries.filter((i) => {
     const matchSearch = !search || i.childName.toLowerCase().includes(search.toLowerCase()) || i.parentName.toLowerCase().includes(search.toLowerCase());
     const matchStatus = !statusFilter || i.status === statusFilter;
-    return matchSearch && matchStatus;
+    const matchLevel = !levelFilter || i.desiredClassLevel === levelFilter;
+    return matchSearch && matchStatus && matchLevel;
   });
 
   const getStatusLabel = (s: InquiryStatus) => PIPELINE.find((p) => p.status === s)?.label ?? s;
@@ -318,23 +375,45 @@ export default function EnrollmentPage() {
         })}
       </div>
 
-      {/* Search + view toggle */}
-      <div className="flex gap-3">
-        <div className="flex-1 relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input placeholder="Search child or parent name..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
+      {/* Search + filters + view toggle */}
+      <div className="space-y-2">
+        <div className="flex gap-3">
+          <div className="flex-1 relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input placeholder="Search child or parent name..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
+          </div>
+          <div className="flex gap-1 bg-muted p-1 rounded-lg">
+            {(["pipeline", "table", "funnel"] as const).map((v) => (
+              <button
+                key={v}
+                onClick={() => setView(v)}
+                className={`px-3 py-1 rounded-md text-sm font-medium transition-colors capitalize ${view === v ? "bg-card shadow-sm" : "text-muted-foreground"}`}
+              >
+                {v === "funnel" ? <span className="flex items-center gap-1"><TrendingUp className="w-3.5 h-3.5" />Analytics</span> : v}
+              </button>
+            ))}
+          </div>
         </div>
-        <div className="flex gap-1 bg-muted p-1 rounded-lg">
-          {(["pipeline", "table", "funnel"] as const).map((v) => (
+        {uniqueLevels.length > 0 && (
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-xs text-muted-foreground">Level:</span>
             <button
-              key={v}
-              onClick={() => setView(v)}
-              className={`px-3 py-1 rounded-md text-sm font-medium transition-colors capitalize ${view === v ? "bg-card shadow-sm" : "text-muted-foreground"}`}
+              onClick={() => setLevelFilter("")}
+              className={`px-2.5 py-1 text-xs rounded-lg border transition-colors font-medium ${!levelFilter ? "border-primary bg-primary/5 text-primary" : "border-border text-muted-foreground hover:bg-muted"}`}
             >
-              {v === "funnel" ? <span className="flex items-center gap-1"><TrendingUp className="w-3.5 h-3.5" />Analytics</span> : v}
+              All
             </button>
-          ))}
-        </div>
+            {uniqueLevels.map((lvl) => (
+              <button
+                key={lvl}
+                onClick={() => setLevelFilter(levelFilter === lvl ? "" : lvl)}
+                className={`px-2.5 py-1 text-xs rounded-lg border transition-colors font-medium ${levelFilter === lvl ? "border-primary bg-primary/5 text-primary" : "border-border text-muted-foreground hover:bg-muted"}`}
+              >
+                {lvl}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Pipeline View */}
@@ -374,7 +453,7 @@ export default function EnrollmentPage() {
                               <ArrowRight className="w-3 h-3" />
                             </button>
                           )}
-                          <button onClick={() => setSelectedInquiry(inquiry)} className="text-xs text-muted-foreground hover:text-foreground ml-auto">
+                          <button onClick={() => openDetail(inquiry)} className="text-xs text-muted-foreground hover:text-foreground ml-auto">
                             Details
                           </button>
                         </div>
@@ -434,6 +513,9 @@ export default function EnrollmentPage() {
                             Not Proceeding
                           </button>
                         )}
+                        <button onClick={() => openDetail(i)} className="text-xs text-muted-foreground hover:text-foreground">
+                          Edit
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -616,31 +698,95 @@ export default function EnrollmentPage() {
         );
       })()}
 
-      {/* Inquiry Detail Modal */}
-      <Modal open={!!selectedInquiry} onClose={() => setSelectedInquiry(null)} title="Inquiry Details">
+      {/* Inquiry Edit Modal */}
+      <Modal open={!!selectedInquiry} onClose={() => setSelectedInquiry(null)} title="Edit Inquiry">
         {selectedInquiry && (
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4 text-sm">
-              <div><p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Child Name</p><p className="font-medium">{selectedInquiry.childName}</p></div>
-              <div><p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Parent Name</p><p>{selectedInquiry.parentName}</p></div>
-              <div><p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Contact</p><p>{selectedInquiry.contact || "—"}</p></div>
-              <div><p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Desired Class</p><p>{selectedInquiry.desiredClass}</p></div>
-              <div><p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">School Year</p><p>{selectedInquiry.schoolYear}</p></div>
-              <div><p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Inquiry Source</p><p>{selectedInquiry.inquirySource || "—"}</p></div>
-              <div><p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Status</p><Badge variant={PIPELINE.find((p) => p.status === selectedInquiry.status)?.badge ?? "default"}>{getStatusLabel(selectedInquiry.status)}</Badge></div>
-              <div><p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Follow Up Date</p><p>{selectedInquiry.nextFollowUp ?? "—"}</p></div>
+            {editFormError && <ErrorAlert message={editFormError} />}
+            <div className="flex items-center gap-2 text-sm">
+              <span className="text-muted-foreground">Status:</span>
+              <Badge variant={PIPELINE.find((p) => p.status === selectedInquiry.status)?.badge ?? "default"}>
+                {getStatusLabel(selectedInquiry.status)}
+              </Badge>
+              <span className="text-xs text-muted-foreground ml-1">· {selectedInquiry.schoolYear}</span>
             </div>
-            {selectedInquiry.notes && (
-              <div><p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Notes</p><p className="text-sm bg-muted p-3 rounded-lg">{selectedInquiry.notes}</p></div>
-            )}
-            <div className="flex justify-end gap-2 pt-2">
-              <Button variant="outline" onClick={() => setSelectedInquiry(null)}>Close</Button>
-              {STATUS_FLOW[selectedInquiry.status] && (
-                <Button onClick={() => { advanceStatus(selectedInquiry); setSelectedInquiry(null); }}>
-                  {STATUS_FLOW[selectedInquiry.status] === "enrolled" ? "Enroll Student" : `Move to ${getStatusLabel(STATUS_FLOW[selectedInquiry.status]!)}`}
-                  <ArrowRight className="w-4 h-4" />
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">Child Name *</label>
+                <Input value={editForm.childName} onChange={(e) => setEditForm({ ...editForm, childName: e.target.value })} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Parent / Guardian *</label>
+                <Input value={editForm.parentName} onChange={(e) => setEditForm({ ...editForm, parentName: e.target.value })} />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">Contact Number</label>
+                <Input value={editForm.contact} onChange={(e) => setEditForm({ ...editForm, contact: e.target.value })} placeholder="09XXXXXXXXX" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Email</label>
+                <Input type="email" value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} placeholder="parent@email.com" />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">Desired Class</label>
+                <Select value={editForm.desiredClassId} onChange={(e) => setEditForm({ ...editForm, desiredClassId: e.target.value })}>
+                  <option value="">— Not specified —</option>
+                  {classOptions.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}{c.startTime ? ` · ${formatTime(c.startTime)}` : ""}{c.level ? ` (${c.level})` : ""}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Inquiry Source</label>
+                <Select value={editForm.inquirySource} onChange={(e) => setEditForm({ ...editForm, inquirySource: e.target.value })}>
+                  <option value="">Select...</option>
+                  <option>Facebook</option>
+                  <option>Instagram</option>
+                  <option>Referral</option>
+                  <option>Walk-in</option>
+                  <option>Flyer</option>
+                  <option>Other</option>
+                </Select>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Next Follow Up</label>
+              <DatePicker value={editForm.nextFollowUp} onChange={(v) => setEditForm({ ...editForm, nextFollowUp: v })} placeholder="Pick a date" />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Notes</label>
+              <Textarea value={editForm.notes} onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })} rows={2} />
+            </div>
+
+            <div className="flex items-center justify-between pt-2 border-t border-border">
+              <div>
+                {STATUS_FLOW[selectedInquiry.status] && (
+                  <button
+                    onClick={() => { advanceStatus(selectedInquiry); setSelectedInquiry(null); }}
+                    className="flex items-center gap-1 text-sm text-primary hover:underline"
+                  >
+                    {STATUS_FLOW[selectedInquiry.status] === "enrolled" ? "Enroll Student" : `Move to ${getStatusLabel(STATUS_FLOW[selectedInquiry.status]!)}`}
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => setSelectedInquiry(null)}>Cancel</Button>
+                <Button onClick={handleEditSave} disabled={editSaving}>
+                  {editSaving ? "Saving…" : "Save Changes"}
                 </Button>
-              )}
+              </div>
             </div>
           </div>
         )}
@@ -678,7 +824,7 @@ export default function EnrollmentPage() {
                 <option value="">— No class yet —</option>
                 {classOptions.map((c) => (
                   <option key={c.id} value={c.id}>
-                    {c.name} ({c.enrolled}/{c.capacity} enrolled)
+                    {c.name}{c.startTime ? ` · ${formatTime(c.startTime)}` : ""}{c.level ? ` (${c.level})` : ""} — {c.enrolled}/{c.capacity} enrolled
                   </option>
                 ))}
               </Select>
@@ -725,7 +871,11 @@ export default function EnrollmentPage() {
               <label className="block text-sm font-medium mb-1">Desired Class</label>
               <Select value={form.desiredClassId} onChange={(e) => setForm({ ...form, desiredClassId: e.target.value })}>
                 <option value="">— Not specified —</option>
-                {classOptions.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                {classOptions.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}{c.startTime ? ` · ${formatTime(c.startTime)}` : ""}{c.level ? ` (${c.level})` : ""}
+                  </option>
+                ))}
               </Select>
             </div>
             <div>
@@ -744,7 +894,7 @@ export default function EnrollmentPage() {
 
           <div>
             <label className="block text-sm font-medium mb-1">Next Follow Up</label>
-            <Input type="date" value={form.nextFollowUp} onChange={(e) => setForm({ ...form, nextFollowUp: e.target.value })} />
+            <DatePicker value={form.nextFollowUp} onChange={(v) => setForm({ ...form, nextFollowUp: v })} placeholder="Pick a date" />
           </div>
 
           <div>

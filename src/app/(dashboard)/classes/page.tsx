@@ -248,6 +248,20 @@ export default function ClassesPage() {
     setSaving(true);
     setFormError(null);
 
+    // Enforce unique class name per school year
+    const { data: dupes } = await supabase
+      .from("classes")
+      .select("id")
+      .eq("school_id", schoolId!)
+      .eq("school_year_id", activeYear.id)
+      .eq("name", form.name.trim());
+    const conflicts = (dupes ?? []).filter((c) => !editingClass || c.id !== editingClass.id);
+    if (conflicts.length > 0) {
+      setFormError(`"${form.name.trim()}" already exists this school year. Use a unique name (e.g. "Kinder AM" or "Kinder Afternoon").`);
+      setSaving(false);
+      return;
+    }
+
     const payload = {
       school_id: schoolId!,
       school_year_id: activeYear.id,

@@ -82,6 +82,28 @@
   h4 { font-size: 0.875rem; font-weight: 600; line-height: 1.4; }
 }
 
+/* ── Accessibility: Text Size Scales ──────────────────────────────────────── */
+/* Adjusts the root font-size so all rem-based Tailwind text utilities scale  */
+/* uniformly. Default (16px) is unchanged by globals.css; only overrides are  */
+/* injected at runtime by BrandingApplier when a school selects a larger size. */
+html.text-scale-large       { font-size: 17.5px; }
+html.text-scale-extra-large { font-size: 19.5px; }
+
+/* ── Accessibility: Spacing / Line-height Scales ──────────────────────────── */
+/* Line-height is the most impactful readability lever that doesn't break       */
+/* fixed layout dimensions (sidebar widths, icon sizes, etc.).                 */
+html.spacing-compact body,
+html.spacing-compact p,
+html.spacing-compact li   { line-height: 1.4; }
+
+html.spacing-relaxed body { line-height: 1.75; }
+html.spacing-relaxed p,
+html.spacing-relaxed li   { line-height: 1.9;  }
+html.spacing-relaxed h1,
+html.spacing-relaxed h2,
+html.spacing-relaxed h3   { line-height: 1.55; }
+
+/* ── Status badge helpers ──────────────────────────────────────────────────── */
 /* Status badge helpers */
 .status-enrolled   { @apply bg-green-100 text-green-700; }
 .status-waitlisted { @apply bg-yellow-100 text-yellow-700; }
