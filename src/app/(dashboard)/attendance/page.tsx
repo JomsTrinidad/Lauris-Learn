@@ -8,7 +8,7 @@ import { Select } from "@/components/ui/select";
 import { DatePicker } from "@/components/ui/datepicker";
 import { Card } from "@/components/ui/card";
 import { PageSpinner, ErrorAlert } from "@/components/ui/spinner";
-import { getInitials } from "@/lib/utils";
+import { getInitials, formatTime } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { useSchoolContext } from "@/contexts/SchoolContext";
 
@@ -26,6 +26,7 @@ interface StudentRow {
 interface ClassOption {
   id: string;
   name: string;
+  startTime: string | null;
 }
 
 interface AbsenceNotif {
@@ -77,14 +78,15 @@ export default function AttendancePage() {
 
     const { data, error: err } = await supabase
       .from("classes")
-      .select("id, name")
+      .select("id, name, start_time")
       .eq("school_id", schoolId!)
       .eq("school_year_id", activeYear.id)
       .eq("is_active", true)
       .order("start_time");
 
     if (err) { setError(err.message); setLoading(false); return; }
-    const opts = (data ?? []) as Array<{ id: string; name: string }>;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const opts: ClassOption[] = (data ?? []).map((c: any) => ({ id: c.id, name: c.name, startTime: c.start_time ?? null }));
     setClassOptions(opts);
 
     // Pre-select from URL param or first class
@@ -251,7 +253,7 @@ export default function AttendancePage() {
           >
             {classOptions.length === 0
               ? <option value="">No classes available</option>
-              : classOptions.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)
+              : classOptions.map((c) => <option key={c.id} value={c.id}>{c.name}{c.startTime ? ` · ${formatTime(c.startTime)}` : ""}</option>)
             }
           </Select>
         </div>

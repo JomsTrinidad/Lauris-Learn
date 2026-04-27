@@ -112,7 +112,6 @@ export default function ProgressPage() {
     })).sort((a: StudentOption, b: StudentOption) => a.name.localeCompare(b.name));
 
     setStudents(opts);
-    if (opts.length > 0 && !selectedStudent) setSelectedStudent(opts[0].id);
   }
 
   async function loadObservations(studentId: string) {
@@ -239,9 +238,8 @@ export default function ProgressPage() {
               </div>
               <div>
                 <Select value={selectedStudent} onChange={(e) => setSelectedStudent(e.target.value)}>
-                  {filteredStudents.length === 0 ? (
-                    <option value="">No students match</option>
-                  ) : filteredStudents.map((s) => (
+                  <option value="">— Select a student —</option>
+                  {filteredStudents.map((s) => (
                     <option key={s.id} value={s.id}>{s.name}{s.className ? ` · ${s.className}` : ""}</option>
                   ))}
                 </Select>
@@ -250,6 +248,12 @@ export default function ProgressPage() {
             </CardContent>
           </Card>
 
+          {!selectedStudent ? (
+            <div className="text-center py-16 text-muted-foreground">
+              <BookOpen className="w-8 h-8 mx-auto mb-3 opacity-40" />
+              <p className="text-sm">Select a student above to view their progress.</p>
+            </div>
+          ) : <>
           {/* Progress grid by category */}
           <div>
             <h2 className="mb-4">{studentName} – Progress Overview</h2>
@@ -325,6 +329,7 @@ export default function ProgressPage() {
               </CardContent>
             </Card>
           )}
+          </>}
         </>
       )}
 

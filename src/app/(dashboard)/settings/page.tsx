@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
-import { Plus, Pencil, Trash2, Upload, RotateCcw } from "lucide-react";
+import { Plus, Pencil, Trash2, Upload, RotateCcw, Library } from "lucide-react";
+import { GradingTemplate, GRADING_TEMPLATES } from "@/lib/grading-templates";
 import { AvatarUpload } from "@/components/ui/avatar-upload";
 import { compressImage, PROFILE_PHOTO_MAX_W, PROFILE_PHOTO_MAX_BYTES } from "@/lib/image-compress";
 import { Button } from "@/components/ui/button";
@@ -80,8 +81,19 @@ const EMPTY_TEACHER: Omit<TeacherProfile, "id"> = {
   startDate: "", endDate: "", isActive: true, notes: "", avatarUrl: null,
 };
 
+type ScaleMode = "label_only" | "range_based";
+
+interface GradingScaleSet {
+  id: string;
+  name: string;
+  description: string;
+  scaleMode: ScaleMode;
+  isDefault: boolean;
+}
+
 interface GradingScale {
   id: string;
+  scaleSetId: string | null;
   label: string;
   description: string;
   color: string;
@@ -242,11 +254,21 @@ export default function SettingsPage() {
   const [editingScale, setEditingScale] = useState<GradingScale | null>(null);
   const [gradingForm, setGradingForm] = useState({ label: "", description: "", color: "#6b7280", minScore: "", maxScore: "", sortOrder: "0" });
   const [gradingFormError, setGradingFormError] = useState<string | null>(null);
+  const [gradingScaleSets, setGradingScaleSets] = useState<GradingScaleSet[]>([]);
+  const [selectedSetId, setSelectedSetId] = useState<string>("");
+  const [setModal, setSetModal] = useState(false);
+  const [editingSet, setEditingSet] = useState<GradingScaleSet | null>(null);
+  const [setForm, setSetForm] = useState({ name: "", description: "", scaleMode: "label_only" as ScaleMode });
+  const [setFormError, setSetFormError] = useState<string | null>(null);
+  const [templateModal, setTemplateModal] = useState(false);
+  const [pendingTemplate, setPendingTemplate] = useState<GradingTemplate | null>(null);
+  const [templateApplying, setTemplateApplying] = useState(false);
 
   // Branding & Accessibility
   const [brandingForm, setBrandingForm] = useState<BrandingForm>(BRANDING_DEFAULTS);
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [logoFile, setLogoFile] = useState<File | null>(null);
+  const [logoRemoved, setLogoRemoved] = useState(false);
   const [brandingSaving, setBrandingSaving] = useState(false);
   const [brandingError, setBrandingError] = useState<string | null>(null);
 
@@ -257,7 +279,7 @@ export default function SettingsPage() {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const sb = supabase as any;
-    const [{ data: school }, { data: branches }, { data: years }, { data: hols }, { data: periods }, { data: teacherRows }, { data: codeRow }, { data: scaleRows }] =
+    const [{ data: school }, { data: branches }, { data: years }, { data: hols }, { data: periods }, { data: teacherRows }, { data: codeRow }, { data: scaleRows }, { data: scaleSetRows }] =
       await Promise.all([
         supabase.from("schools").select("name").eq("id", schoolId).single(),
         supabase.from("branches").select("name, address, phone").eq("school_id", schoolId).limit(1).maybeSingle(),
@@ -266,7 +288,8 @@ export default function SettingsPage() {
         supabase.from("academic_periods").select("id, school_year_id, name, start_date, end_date, is_active, school_years(name)").eq("school_id", schoolId).order("start_date"),
         sb.from("teacher_profiles").select("id, full_name, email, phone, start_date, end_date, is_active, notes, avatar_url").eq("school_id", schoolId).order("full_name"),
         sb.from("schools").select("student_code_prefix, student_code_padding, student_code_include_year, logo_url, primary_color, accent_color, report_footer_text, text_size_scale, spacing_scale").eq("id", schoolId).single(),
-        sb.from("grading_scales").select("id, label, description, color, min_score, max_score, sort_order").eq("school_id", schoolId).order("sort_order"),
+        sb.from("grading_scales").select("id, scale_set_id, label, description, color, min_score, max_score, sort_order").eq("school_id", schoolId).order("sort_order"),
+        sb.from("grading_scale_sets").select("id, name, description, scale_mode, is_default").eq("school_id", schoolId).order("name"),
       ]);
 
     setSchoolInfo({
@@ -336,8 +359,18 @@ export default function SettingsPage() {
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    setGradingScales((scaleRows ?? []).map((s: any) => ({
+    const mappedSets: GradingScaleSet[] = ((scaleSetRows ?? []) as any[]).map((s: any) => ({
       id: s.id,
+      name: s.name,
+      description: s.description ?? "",
+      scaleMode: s.scale_mode as ScaleMode,
+      isDefault: s.is_default,
+    }));
+    setGradingScaleSets(mappedSets);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    setGradingScales(((scaleRows ?? []) as any[]).map((s: any) => ({
+      id: s.id,
+      scaleSetId: s.scale_set_id ?? null,
       label: s.label,
       description: s.description ?? "",
       color: s.color ?? "#6b7280",
@@ -345,6 +378,11 @@ export default function SettingsPage() {
       maxScore: s.max_score != null ? String(s.max_score) : "",
       sortOrder: s.sort_order ?? 0,
     })));
+    setSelectedSetId((prev) => {
+      if (prev && mappedSets.some((s) => s.id === prev)) return prev;
+      const def = mappedSets.find((s) => s.isDefault);
+      return def?.id ?? mappedSets[0]?.id ?? "";
+    });
 
     setLoading(false);
   }, [schoolId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -622,8 +660,10 @@ export default function SettingsPage() {
 
   // ── Grading Scales ──
   function openAddScale() {
+    if (!selectedSetId) return;
     setEditingScale(null);
-    setGradingForm({ label: "", description: "", color: "#6b7280", minScore: "", maxScore: "", sortOrder: String(gradingScales.length + 1) });
+    const setScalesCount = gradingScales.filter((s) => s.scaleSetId === selectedSetId).length;
+    setGradingForm({ label: "", description: "", color: "#6b7280", minScore: "", maxScore: "", sortOrder: String(setScalesCount + 1) });
     setGradingFormError(null);
     setGradingModal(true);
   }
@@ -634,7 +674,27 @@ export default function SettingsPage() {
     setGradingModal(true);
   }
   async function saveScale() {
+    const activeSet = gradingScaleSets.find((s) => s.id === selectedSetId) ?? null;
     if (!gradingForm.label.trim()) { setGradingFormError("Label is required."); return; }
+    if (activeSet?.scaleMode === "range_based") {
+      if (!gradingForm.minScore || !gradingForm.maxScore) {
+        setGradingFormError("Min score and max score are required for score-based scales.");
+        return;
+      }
+      const min = parseFloat(gradingForm.minScore);
+      const max = parseFloat(gradingForm.maxScore);
+      if (min > max) { setGradingFormError("Min score cannot be greater than max score."); return; }
+      const siblings = gradingScales.filter((s) => s.scaleSetId === selectedSetId && s.id !== editingScale?.id);
+      for (const sib of siblings) {
+        if (sib.minScore === "" || sib.maxScore === "") continue;
+        const sibMin = parseFloat(sib.minScore);
+        const sibMax = parseFloat(sib.maxScore);
+        if (!(max < sibMin || min > sibMax)) {
+          setGradingFormError(`Score range ${min}–${max} overlaps with "${sib.label}" (${sibMin}–${sibMax}).`);
+          return;
+        }
+      }
+    }
     if (!schoolId) return;
     setSaving(true);
     setGradingFormError(null);
@@ -642,6 +702,7 @@ export default function SettingsPage() {
     const sb = supabase as any;
     const payload = {
       school_id: schoolId,
+      scale_set_id: selectedSetId || null,
       label: gradingForm.label.trim(),
       description: gradingForm.description.trim() || null,
       color: gradingForm.color,
@@ -661,10 +722,112 @@ export default function SettingsPage() {
     await load();
   }
   async function deleteScale(id: string) {
-    if (!confirm("Delete this grading scale?")) return;
+    if (!confirm("Delete this grading level? This cannot be undone.")) return;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (supabase as any).from("grading_scales").delete().eq("id", id);
     setGradingScales((prev) => prev.filter((s) => s.id !== id));
+  }
+
+  // ── Grading Scale Sets ──
+  function openAddSet() {
+    setEditingSet(null);
+    setSetForm({ name: "", description: "", scaleMode: "label_only" });
+    setSetFormError(null);
+    setSetModal(true);
+  }
+  function openEditSet(set: GradingScaleSet) {
+    setEditingSet(set);
+    setSetForm({ name: set.name, description: set.description, scaleMode: set.scaleMode });
+    setSetFormError(null);
+    setSetModal(true);
+  }
+  async function saveScaleSet() {
+    if (!setForm.name.trim()) { setSetFormError("Group name is required."); return; }
+    if (!schoolId) return;
+    setSaving(true);
+    setSetFormError(null);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sb = supabase as any;
+    const isFirst = gradingScaleSets.length === 0 && !editingSet;
+    const payload = {
+      school_id: schoolId,
+      name: setForm.name.trim(),
+      description: setForm.description.trim() || null,
+      scale_mode: setForm.scaleMode,
+      is_default: isFirst,
+    };
+    if (editingSet) {
+      const { error: e } = await sb.from("grading_scale_sets").update({ name: payload.name, description: payload.description, scale_mode: payload.scale_mode }).eq("id", editingSet.id);
+      if (e) { setSetFormError(e.message); setSaving(false); return; }
+    } else {
+      const { data: ins, error: e } = await sb.from("grading_scale_sets").insert(payload).select("id").single();
+      if (e) { setSetFormError(e.message); setSaving(false); return; }
+      if (ins?.id) setSelectedSetId(ins.id);
+    }
+    setSetModal(false);
+    setSaving(false);
+    await load();
+  }
+  async function deleteScaleSet(id: string) {
+    const set = gradingScaleSets.find((s) => s.id === id);
+    if (!set) return;
+    const count = gradingScales.filter((s) => s.scaleSetId === id).length;
+    const msg = count > 0
+      ? `Delete "${set.name}" and its ${count} grading level${count !== 1 ? "s" : ""}? This cannot be undone.`
+      : `Delete "${set.name}"?`;
+    if (!confirm(msg)) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase as any).from("grading_scale_sets").delete().eq("id", id);
+    const remaining = gradingScaleSets.filter((s) => s.id !== id);
+    setGradingScaleSets(remaining);
+    setGradingScales((prev) => prev.filter((s) => s.scaleSetId !== id));
+    if (selectedSetId === id) setSelectedSetId(remaining[0]?.id ?? "");
+  }
+
+  // ── Templates ──
+  async function applyTemplate(action: "replace" | "add") {
+    if (!pendingTemplate || !schoolId) return;
+    setTemplateApplying(true);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sb = supabase as any;
+    let targetSetId = selectedSetId;
+
+    if (action === "add" || !targetSetId) {
+      const { data: ins, error: e } = await sb.from("grading_scale_sets").insert({
+        school_id: schoolId,
+        name: pendingTemplate.name,
+        description: pendingTemplate.description,
+        scale_mode: pendingTemplate.scaleMode,
+        is_default: gradingScaleSets.length === 0,
+      }).select("id").single();
+      if (e) { setTemplateApplying(false); return; }
+      targetSetId = ins.id;
+    } else {
+      await sb.from("grading_scale_sets").update({
+        name: pendingTemplate.name,
+        description: pendingTemplate.description,
+        scale_mode: pendingTemplate.scaleMode,
+      }).eq("id", targetSetId);
+      await sb.from("grading_scales").delete().eq("scale_set_id", targetSetId);
+    }
+
+    const items = pendingTemplate.items.map((item) => ({
+      school_id: schoolId,
+      scale_set_id: targetSetId,
+      label: item.label,
+      description: item.description,
+      color: item.color,
+      sort_order: item.sortOrder,
+      min_score: item.minScore,
+      max_score: item.maxScore,
+    }));
+    await sb.from("grading_scales").insert(items);
+
+    setTemplateApplying(false);
+    setTemplateModal(false);
+    setPendingTemplate(null);
+    setSelectedSetId(targetSetId);
+    await load();
   }
 
   // ── Branding & Accessibility ──────────────────────────────────────────────
@@ -675,6 +838,7 @@ export default function SettingsPage() {
     setBrandingError(null);
     try {
       let newLogoUrl = logoUrl;
+      let logoChanged = logoRemoved;
 
       if (logoFile) {
         const ext = logoFile.name.split(".").pop()?.toLowerCase() ?? "jpg";
@@ -690,10 +854,14 @@ export default function SettingsPage() {
         newLogoUrl = `${urlData.publicUrl}?t=${Date.now()}`;
         setLogoUrl(newLogoUrl);
         setLogoFile(null);
+        logoChanged = true;
       }
 
       const payload: Record<string, unknown> = {
-        logo_url:           newLogoUrl,
+        // Only write logo_url when the user explicitly uploaded or removed it.
+        // Skipping it on color/accessibility saves prevents accidentally wiping a
+        // previously saved logo when logoUrl state happens to be null on remount.
+        ...(logoChanged ? { logo_url: newLogoUrl } : {}),
         primary_color:      brandingForm.primaryColor !== BRANDING_DEFAULTS.primaryColor ? brandingForm.primaryColor : null,
         accent_color:       brandingForm.accentColor  !== BRANDING_DEFAULTS.accentColor  ? brandingForm.accentColor  : null,
         report_footer_text: brandingForm.reportFooterText || null,
@@ -706,11 +874,9 @@ export default function SettingsPage() {
       if (e) {
         setBrandingError(e.message);
       } else {
-        // Patch context branding in-place so BrandingApplier picks up new values
-        // immediately, without triggering a full context reload (which would unmount
-        // this page and reset logoUrl back to null before the DB re-fetch completes).
+        if (logoChanged) setLogoRemoved(false);
         patchBranding({
-          logoUrl:       newLogoUrl,
+          ...(logoChanged ? { logoUrl: newLogoUrl } : {}),
           primaryColor:  payload.primary_color as string | null,
           accentColor:   payload.accent_color  as string | null,
           textSizeScale: brandingForm.textSizeScale,
@@ -727,6 +893,7 @@ export default function SettingsPage() {
     setBrandingForm((prev) => ({ ...prev, primaryColor: BRANDING_DEFAULTS.primaryColor, accentColor: BRANDING_DEFAULTS.accentColor, reportFooterText: "" }));
     setLogoUrl(null);
     setLogoFile(null);
+    setLogoRemoved(false);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (supabase as any).from("schools").update({ logo_url: null, primary_color: null, accent_color: null, report_footer_text: null }).eq("id", schoolId);
     patchBranding({ logoUrl: null, primaryColor: null, accentColor: null });
@@ -739,6 +906,9 @@ export default function SettingsPage() {
     await (supabase as any).from("schools").update({ text_size_scale: "default", spacing_scale: "default" }).eq("id", schoolId);
     patchBranding({ textSizeScale: "default", spacingScale: "default" });
   }
+
+  const selectedSet = gradingScaleSets.find((s) => s.id === selectedSetId) ?? null;
+  const setScales = gradingScales.filter((s) => s.scaleSetId === selectedSetId).sort((a, b) => a.sortOrder - b.sortOrder);
 
   if (!schoolId) {
     return (
@@ -1109,48 +1279,121 @@ export default function SettingsPage() {
                 <div>
                   <h2>Grading Scales</h2>
                   <p className="text-sm text-muted-foreground mt-1">
-                    Define the labels used for student progress and observations.
-                    These replace the hardcoded ratings in the Progress page.
+                    Organize grading levels into named groups. Each group has a mode: descriptive labels or score-based ranges.
                   </p>
                 </div>
-                <Button size="sm" onClick={openAddScale}><Plus className="w-4 h-4" /> Add Scale</Button>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="outline" onClick={() => { setPendingTemplate(null); setTemplateModal(true); }}>
+                    <Library className="w-4 h-4" /> Use Template
+                  </Button>
+                  <Button size="sm" onClick={openAddSet}><Plus className="w-4 h-4" /> New Group</Button>
+                </div>
               </div>
 
-              {gradingScales.length === 0 && (
-                <p className="text-sm text-muted-foreground">No grading scales yet. Add one to get started.</p>
-              )}
+              {gradingScaleSets.length === 0 ? (
+                <Card>
+                  <CardContent className="py-12 text-center space-y-3">
+                    <Library className="w-8 h-8 mx-auto text-muted-foreground opacity-40" />
+                    <p className="text-sm text-muted-foreground">No grading groups yet.</p>
+                    <div className="flex items-center justify-center gap-2">
+                      <Button size="sm" onClick={openAddSet}><Plus className="w-4 h-4" /> New Group</Button>
+                      <Button size="sm" variant="outline" onClick={() => { setPendingTemplate(null); setTemplateModal(true); }}>
+                        <Library className="w-4 h-4" /> Use Template
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : (
+                <>
+                  {/* Group tabs */}
+                  <div className="flex gap-2 flex-wrap">
+                    {gradingScaleSets.map((set) => (
+                      <button
+                        key={set.id}
+                        onClick={() => setSelectedSetId(set.id)}
+                        className={`px-4 py-2 rounded-lg text-sm font-medium transition-all border ${
+                          selectedSetId === set.id
+                            ? "bg-primary text-primary-foreground border-primary shadow-sm"
+                            : "bg-card text-foreground border-border hover:bg-muted"
+                        }`}
+                      >
+                        {set.name}
+                        {set.isDefault && <span className="ml-1.5 text-xs opacity-70">(default)</span>}
+                      </button>
+                    ))}
+                  </div>
 
-              <div className="space-y-3">
-                {gradingScales.sort((a, b) => a.sortOrder - b.sortOrder).map((s) => (
-                  <Card key={s.id}>
-                    <CardContent className="p-4 flex items-center justify-between gap-4">
-                      <div className="flex items-center gap-3 flex-1">
-                        <span
-                          className="w-4 h-4 rounded-full flex-shrink-0"
-                          style={{ backgroundColor: s.color }}
-                        />
-                        <div>
-                          <p className="font-semibold">{s.label}</p>
-                          {s.description && <p className="text-sm text-muted-foreground">{s.description}</p>}
-                          {(s.minScore || s.maxScore) && (
-                            <p className="text-xs text-muted-foreground">
-                              Score: {s.minScore || "—"} – {s.maxScore || "—"}
-                            </p>
-                          )}
+                  {selectedSet && (
+                    <Card>
+                      <CardHeader>
+                        <div className="flex items-start justify-between gap-4">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h3 className="font-semibold">{selectedSet.name}</h3>
+                              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                                selectedSet.scaleMode === "range_based"
+                                  ? "bg-blue-100 text-blue-700"
+                                  : "bg-muted text-muted-foreground"
+                              }`}>
+                                {selectedSet.scaleMode === "range_based" ? "Score-based" : "Descriptive"}
+                              </span>
+                            </div>
+                            {selectedSet.description && <p className="text-sm text-muted-foreground mt-0.5">{selectedSet.description}</p>}
+                          </div>
+                          <div className="flex items-center gap-1 flex-shrink-0">
+                            <button onClick={() => openEditSet(selectedSet)} className="p-1.5 hover:bg-accent rounded-lg">
+                              <Pencil className="w-4 h-4 text-muted-foreground" />
+                            </button>
+                            <button onClick={() => deleteScaleSet(selectedSet.id)} className="p-1.5 hover:bg-red-50 rounded-lg">
+                              <Trash2 className="w-4 h-4 text-red-500" />
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button onClick={() => openEditScale(s)} className="p-1.5 hover:bg-accent rounded-lg">
-                          <Pencil className="w-4 h-4 text-muted-foreground" />
-                        </button>
-                        <button onClick={() => deleteScale(s.id)} className="p-1.5 hover:bg-red-50 rounded-lg">
-                          <Trash2 className="w-4 h-4 text-red-500" />
-                        </button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
+                      </CardHeader>
+                      <CardContent className="p-0">
+                        {setScales.length === 0 ? (
+                          <div className="px-5 py-8 text-center">
+                            <p className="text-sm text-muted-foreground mb-3">No levels in this group yet.</p>
+                            <Button size="sm" onClick={openAddScale}><Plus className="w-4 h-4" /> Add Level</Button>
+                          </div>
+                        ) : (
+                          <div className="divide-y divide-border">
+                            {setScales.map((s) => (
+                              <div key={s.id} className="px-5 py-3.5 flex items-center justify-between gap-4">
+                                <div className="flex items-center gap-3 flex-1">
+                                  <span className="w-4 h-4 rounded-full flex-shrink-0" style={{ backgroundColor: s.color }} />
+                                  <div>
+                                    <p className="font-semibold text-sm">{s.label}</p>
+                                    {s.description && <p className="text-xs text-muted-foreground">{s.description}</p>}
+                                    {selectedSet.scaleMode === "range_based" && (s.minScore || s.maxScore) && (
+                                      <p className="text-xs text-blue-600 font-medium">Score {s.minScore}–{s.maxScore}</p>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  <button onClick={() => openEditScale(s)} className="p-1.5 hover:bg-accent rounded-lg">
+                                    <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
+                                  </button>
+                                  <button onClick={() => deleteScale(s.id)} className="p-1.5 hover:bg-red-50 rounded-lg">
+                                    <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {setScales.length > 0 && (
+                          <div className="px-5 py-3 border-t border-border">
+                            <button onClick={openAddScale} className="flex items-center gap-1.5 text-sm text-primary hover:underline">
+                              <Plus className="w-4 h-4" /> Add Level
+                            </button>
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  )}
+                </>
+              )}
             </>
           )}
 
@@ -1217,7 +1460,7 @@ export default function SettingsPage() {
                         </label>
                         {(logoUrl || logoFile) && (
                           <button
-                            onClick={() => { setLogoUrl(null); setLogoFile(null); }}
+                            onClick={() => { setLogoUrl(null); setLogoFile(null); setLogoRemoved(true); }}
                             className="block text-xs text-muted-foreground hover:text-destructive transition-colors"
                           >
                             Remove logo
@@ -1461,10 +1704,17 @@ export default function SettingsPage() {
         </div>
       </Modal>
 
-      {/* Grading Scale Modal */}
-      <Modal open={gradingModal} onClose={() => setGradingModal(false)} title={editingScale ? "Edit Grading Scale" : "Add Grading Scale"}>
+      {/* Grading Level Modal */}
+      <Modal open={gradingModal} onClose={() => setGradingModal(false)} title={editingScale ? "Edit Grading Level" : "Add Grading Level"}>
         <div className="space-y-4">
           {gradingFormError && <ErrorAlert message={gradingFormError} />}
+          {selectedSet && (
+            <div className={`text-xs px-3 py-2 rounded-lg ${selectedSet.scaleMode === "range_based" ? "bg-blue-50 text-blue-700" : "bg-muted text-muted-foreground"}`}>
+              {selectedSet.scaleMode === "range_based"
+                ? "Score-based mode — min and max score are required."
+                : "Descriptive mode — no score ranges needed."}
+            </div>
+          )}
           <div>
             <label className="block text-sm font-medium mb-1">Label *</label>
             <Input value={gradingForm.label} onChange={(e) => setGradingForm({ ...gradingForm, label: e.target.value })} placeholder="e.g. Emerging, Developing, Achieved" />
@@ -1473,28 +1723,30 @@ export default function SettingsPage() {
             <label className="block text-sm font-medium mb-1">Description</label>
             <Input value={gradingForm.description} onChange={(e) => setGradingForm({ ...gradingForm, description: e.target.value })} placeholder="What this level means..." />
           </div>
-          <div className="grid grid-cols-3 gap-4">
-            <div>
-              <label className="block text-sm font-medium mb-1">Color</label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="color"
-                  value={gradingForm.color}
-                  onChange={(e) => setGradingForm({ ...gradingForm, color: e.target.value })}
-                  className="w-10 h-9 rounded border border-border cursor-pointer"
-                />
-                <Input value={gradingForm.color} onChange={(e) => setGradingForm({ ...gradingForm, color: e.target.value })} className="font-mono text-xs" />
-              </div>
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">Min Score</label>
-              <Input type="number" value={gradingForm.minScore} onChange={(e) => setGradingForm({ ...gradingForm, minScore: e.target.value })} placeholder="Optional" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">Max Score</label>
-              <Input type="number" value={gradingForm.maxScore} onChange={(e) => setGradingForm({ ...gradingForm, maxScore: e.target.value })} placeholder="Optional" />
+          <div>
+            <label className="block text-sm font-medium mb-1">Color</label>
+            <div className="flex items-center gap-2">
+              <input
+                type="color"
+                value={gradingForm.color}
+                onChange={(e) => setGradingForm({ ...gradingForm, color: e.target.value })}
+                className="w-10 h-9 rounded border border-border cursor-pointer flex-shrink-0"
+              />
+              <Input value={gradingForm.color} onChange={(e) => setGradingForm({ ...gradingForm, color: e.target.value })} className="font-mono text-xs w-32" />
             </div>
           </div>
+          {selectedSet?.scaleMode === "range_based" && (
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">Min Score *</label>
+                <Input type="number" value={gradingForm.minScore} onChange={(e) => setGradingForm({ ...gradingForm, minScore: e.target.value })} placeholder="e.g. 90" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Max Score *</label>
+                <Input type="number" value={gradingForm.maxScore} onChange={(e) => setGradingForm({ ...gradingForm, maxScore: e.target.value })} placeholder="e.g. 100" />
+              </div>
+            </div>
+          )}
           <div>
             <label className="block text-sm font-medium mb-1">Sort Order</label>
             <Input type="number" min={1} value={gradingForm.sortOrder} onChange={(e) => setGradingForm({ ...gradingForm, sortOrder: e.target.value })} />
@@ -1503,6 +1755,146 @@ export default function SettingsPage() {
             <ModalCancelButton />
             <Button onClick={saveScale} disabled={saving || !gradingForm.label}>{saving ? "Saving…" : "Save"}</Button>
           </div>
+        </div>
+      </Modal>
+
+      {/* Scale Group Modal */}
+      <Modal open={setModal} onClose={() => setSetModal(false)} title={editingSet ? "Edit Grading Group" : "New Grading Group"}>
+        <div className="space-y-4">
+          {setFormError && <ErrorAlert message={setFormError} />}
+          <div>
+            <label className="block text-sm font-medium mb-1">Group Name *</label>
+            <Input value={setForm.name} onChange={(e) => setSetForm({ ...setForm, name: e.target.value })} placeholder="e.g. Preschool Development Scale" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Description</label>
+            <Input value={setForm.description} onChange={(e) => setSetForm({ ...setForm, description: e.target.value })} placeholder="What this group is used for..." />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-2">Scale Mode</label>
+            <div className="grid grid-cols-2 gap-3">
+              {([
+                { value: "label_only" as ScaleMode, label: "Descriptive", desc: "Labels only — no numeric scores (e.g. Emerging, Developing)" },
+                { value: "range_based" as ScaleMode, label: "Score-based", desc: "Each level maps to a numeric score range (e.g. A = 90–100)" },
+              ]).map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setSetForm({ ...setForm, scaleMode: opt.value })}
+                  className={`p-3 rounded-xl border-2 text-left transition-colors ${
+                    setForm.scaleMode === opt.value
+                      ? "border-primary bg-primary/5"
+                      : "border-border hover:border-muted-foreground/50"
+                  }`}
+                >
+                  <p className={`text-sm font-semibold ${setForm.scaleMode === opt.value ? "text-primary" : "text-foreground"}`}>{opt.label}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5 leading-snug">{opt.desc}</p>
+                </button>
+              ))}
+            </div>
+            {editingSet && setForm.scaleMode !== editingSet.scaleMode && (
+              <p className="text-xs text-amber-600 mt-2">Changing the mode won&apos;t update existing levels — you may need to edit their score ranges manually.</p>
+            )}
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <ModalCancelButton />
+            <Button onClick={saveScaleSet} disabled={saving || !setForm.name}>{saving ? "Saving…" : "Save"}</Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Template Picker Modal */}
+      <Modal open={templateModal} onClose={() => { setTemplateModal(false); setPendingTemplate(null); }} title="Grading Templates">
+        <div className="space-y-4">
+          {pendingTemplate === null ? (
+            <>
+              <p className="text-sm text-muted-foreground">Choose a pre-built grading scale to apply to your school.</p>
+              <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
+                {GRADING_TEMPLATES.map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => setPendingTemplate(t)}
+                    className="w-full text-left p-4 rounded-xl border border-border hover:border-primary hover:bg-primary/5 transition-colors"
+                  >
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <p className="font-semibold text-sm">{t.name}</p>
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0 ${
+                        t.scaleMode === "range_based" ? "bg-blue-100 text-blue-700" : "bg-muted text-muted-foreground"
+                      }`}>
+                        {t.scaleMode === "range_based" ? "Score-based" : "Descriptive"}
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mb-2">{t.description}</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {t.items.map((item) => (
+                        <span key={item.label} className="inline-flex items-center text-xs px-2 py-0.5 rounded-full text-white font-medium" style={{ backgroundColor: item.color }}>
+                          {item.label}
+                        </span>
+                      ))}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : (
+            <>
+              <button onClick={() => setPendingTemplate(null)} className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors">
+                ← Back to templates
+              </button>
+              <div className="p-4 rounded-xl border border-border bg-muted/30">
+                <div className="flex items-center gap-2 mb-1">
+                  <p className="font-semibold">{pendingTemplate.name}</p>
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                    pendingTemplate.scaleMode === "range_based" ? "bg-blue-100 text-blue-700" : "bg-muted text-muted-foreground"
+                  }`}>
+                    {pendingTemplate.scaleMode === "range_based" ? "Score-based" : "Descriptive"}
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground mb-3">{pendingTemplate.description}</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {pendingTemplate.items.map((item) => (
+                    <span key={item.label} className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full text-white font-medium" style={{ backgroundColor: item.color }}>
+                      {item.label}
+                      {pendingTemplate.scaleMode === "range_based" && item.minScore != null && (
+                        <span className="opacity-80">({item.minScore}–{item.maxScore})</span>
+                      )}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              {gradingScaleSets.length > 0 ? (
+                <div className="space-y-3">
+                  <p className="text-sm font-medium">How would you like to apply this template?</p>
+                  <div className="space-y-2">
+                    <button
+                      onClick={() => applyTemplate("replace")}
+                      disabled={templateApplying}
+                      className="w-full text-left p-3 rounded-xl border-2 border-border hover:border-primary transition-colors disabled:opacity-50"
+                    >
+                      <p className="text-sm font-semibold">Replace current group</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">Replaces &quot;{gradingScaleSets.find((s) => s.id === selectedSetId)?.name ?? "selected group"}&quot; with this template. Existing levels will be removed.</p>
+                    </button>
+                    <button
+                      onClick={() => applyTemplate("add")}
+                      disabled={templateApplying}
+                      className="w-full text-left p-3 rounded-xl border-2 border-border hover:border-primary transition-colors disabled:opacity-50"
+                    >
+                      <p className="text-sm font-semibold">Add as new group</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">Creates a new grading group with this template&apos;s levels alongside your existing groups.</p>
+                    </button>
+                  </div>
+                  {templateApplying && <p className="text-sm text-muted-foreground text-center">Applying template…</p>}
+                </div>
+              ) : (
+                <div className="flex justify-end gap-2 pt-2">
+                  <ModalCancelButton />
+                  <Button onClick={() => applyTemplate("add")} disabled={templateApplying}>
+                    {templateApplying ? "Applying…" : "Apply Template"}
+                  </Button>
+                </div>
+              )}
+            </>
+          )}
         </div>
       </Modal>
 

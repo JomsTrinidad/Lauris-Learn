@@ -340,6 +340,13 @@ export default function EnrollmentPage() {
 
   const getStatusLabel = (s: InquiryStatus) => PIPELINE.find((p) => p.status === s)?.label ?? s;
 
+  // Analytics uses level+search filter only (not status filter — that's for pipeline navigation)
+  const analyticsData = inquiries.filter((i) => {
+    const matchSearch = !search || i.childName.toLowerCase().includes(search.toLowerCase()) || i.parentName.toLowerCase().includes(search.toLowerCase());
+    const matchLevel = !levelFilter || i.desiredClassLevel === levelFilter;
+    return matchSearch && matchLevel;
+  });
+
   if (loading) return <PageSpinner />;
 
   return (
@@ -382,14 +389,23 @@ export default function EnrollmentPage() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input placeholder="Search child or parent name..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
           </div>
-          <div className="flex gap-1 bg-muted p-1 rounded-lg">
-            {(["pipeline", "table", "funnel"] as const).map((v) => (
+          <div className="flex gap-1 bg-muted p-1 rounded-lg border border-border">
+            {([
+              { v: "pipeline" as const, label: "Pipeline" },
+              { v: "table" as const, label: "Table" },
+              { v: "funnel" as const, label: "Analytics" },
+            ]).map(({ v, label }) => (
               <button
                 key={v}
                 onClick={() => setView(v)}
-                className={`px-3 py-1 rounded-md text-sm font-medium transition-colors capitalize ${view === v ? "bg-card shadow-sm" : "text-muted-foreground"}`}
+                className={`flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-semibold transition-all ${
+                  view === v
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                }`}
               >
-                {v === "funnel" ? <span className="flex items-center gap-1"><TrendingUp className="w-3.5 h-3.5" />Analytics</span> : v}
+                {v === "funnel" && <TrendingUp className="w-3.5 h-3.5" />}
+                {label}
               </button>
             ))}
           </div>
@@ -528,9 +544,9 @@ export default function EnrollmentPage() {
 
       {/* Analytics / Funnel View */}
       {view === "funnel" && (() => {
-        const total = inquiries.length;
-        const notProceeding = inquiries.filter((i) => i.status === "not_proceeding").length;
-        const enrolled = inquiries.filter((i) => i.status === "enrolled").length;
+        const total = analyticsData.length;
+        const notProceeding = analyticsData.filter((i) => i.status === "not_proceeding").length;
+        const enrolled = analyticsData.filter((i) => i.status === "enrolled").length;
         const active = total - notProceeding;
         const conversionRate = total > 0 ? Math.round((enrolled / total) * 100) : 0;
         const dropOffRate = total > 0 ? Math.round((notProceeding / total) * 100) : 0;
@@ -539,13 +555,13 @@ export default function EnrollmentPage() {
         const activePipeline = PIPELINE.filter((s) => s.status !== "not_proceeding");
         const stageCounts = activePipeline.map((s) => ({
           ...s,
-          count: inquiries.filter((i) => i.status === s.status).length,
+          count: analyticsData.filter((i) => i.status === s.status).length,
         }));
         const maxCount = Math.max(...stageCounts.map((s) => s.count), 1);
 
         // Source breakdown
         const sourceCounts: Record<string, number> = {};
-        inquiries.forEach((i) => {
+        analyticsData.forEach((i) => {
           const src = i.inquirySource || "Unknown";
           sourceCounts[src] = (sourceCounts[src] ?? 0) + 1;
         });
@@ -672,7 +688,7 @@ export default function EnrollmentPage() {
                       </thead>
                       <tbody>
                         {classOptions.map((cls) => {
-                          const classInquiries = inquiries.filter(
+                          const classInquiries = analyticsData.filter(
                             (i) => i.desiredClassId === cls.id && i.status !== "not_proceeding"
                           ).length;
                           const seatsLeft = cls.capacity - cls.enrolled;

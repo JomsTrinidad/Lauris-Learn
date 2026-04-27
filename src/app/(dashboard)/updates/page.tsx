@@ -123,6 +123,10 @@ export default function ParentUpdatesPage() {
   const [broadcastSending, setBroadcastSending] = useState(false);
   const [broadcastError, setBroadcastError] = useState<string | null>(null);
   const [broadcastSent, setBroadcastSent] = useState(false);
+  const [broadcastPhotos, setBroadcastPhotos] = useState<PhotoItem[]>([]);
+  const [broadcastStep, setBroadcastStep] = useState<"compose" | "preview">("compose");
+  const [broadcastPhotoLoading, setBroadcastPhotoLoading] = useState(false);
+  const broadcastFileRef = useRef<HTMLInputElement>(null);
 
   // Action modal state
   const [actionUpdate, setActionUpdate] = useState<Update | null>(null);
@@ -151,12 +155,37 @@ export default function ParentUpdatesPage() {
     setLoading(false);
   }
 
+  async function handleBroadcastPhoto(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    if (!files.length) return;
+    const remaining = 2 - broadcastPhotos.length;
+    if (remaining <= 0) return;
+    setBroadcastPhotoLoading(true);
+    const newItems: PhotoItem[] = [];
+    for (const file of files.slice(0, remaining)) {
+      const compressed = await compressImage(file, UPDATE_PHOTO_MAX_W, UPDATE_PHOTO_MAX_BYTES);
+      newItems.push({ file: compressed, previewUrl: URL.createObjectURL(compressed), uploadedPath: null });
+    }
+    setBroadcastPhotos((prev) => [...prev, ...newItems]);
+    setBroadcastPhotoLoading(false);
+  }
+
+  function removeBroadcastPhoto(index: number) {
+    setBroadcastPhotos((prev) => {
+      const item = prev[index];
+      if (item.file) URL.revokeObjectURL(item.previewUrl);
+      return prev.filter((_, i) => i !== index);
+    });
+  }
+
   async function sendBroadcast() {
     if (!broadcastMessage.trim() || !schoolId || !userId) return;
     setBroadcastSending(true);
     setBroadcastError(null);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error: err } = await (supabase as any)
+    const sb = supabase as any;
+    const { data: inserted, error: err } = await sb
       .from("parent_updates")
       .insert({
         school_id: schoolId,
@@ -164,20 +193,33 @@ export default function ParentUpdatesPage() {
         author_id: userId,
         content: broadcastMessage.trim(),
         status: "posted",
-      });
-    setBroadcastSending(false);
-    if (err) {
-      setBroadcastError(err.message);
-    } else {
-      setBroadcastSent(true);
-      setBroadcastMessage("");
-      setTimeout(() => {
-        setBroadcastOpen(false);
-        setBroadcastSent(false);
-        setBroadcastTarget("all");
-      }, 1500);
-      await loadUpdates();
+        image_urls: [],
+      })
+      .select("id")
+      .single();
+    if (err || !inserted) {
+      setBroadcastError(err?.message ?? "Failed to send broadcast.");
+      setBroadcastSending(false);
+      return;
     }
+    if (broadcastPhotos.length > 0) {
+      const imagePaths = await uploadPhotos(inserted.id, broadcastPhotos);
+      if (imagePaths.length > 0) {
+        await sb.from("parent_updates").update({ image_urls: imagePaths }).eq("id", inserted.id);
+      }
+    }
+    setBroadcastSending(false);
+    setBroadcastSent(true);
+    setBroadcastMessage("");
+    broadcastPhotos.forEach((p) => { if (p.file) URL.revokeObjectURL(p.previewUrl); });
+    setBroadcastPhotos([]);
+    setTimeout(() => {
+      setBroadcastOpen(false);
+      setBroadcastSent(false);
+      setBroadcastTarget("all");
+      setBroadcastStep("compose");
+    }, 1500);
+    await loadUpdates();
   }
 
   async function loadClasses() {
@@ -741,69 +783,159 @@ export default function ParentUpdatesPage() {
       </div>
 
       {/* ── Broadcast Modal ──────────────────────────────────────────────── */}
-      <Modal open={broadcastOpen} onClose={() => { setBroadcastOpen(false); setBroadcastMessage(""); setBroadcastError(null); }} title="Send Broadcast" className="max-w-lg">
+      <Modal
+        open={broadcastOpen}
+        onClose={() => {
+          setBroadcastOpen(false);
+          setBroadcastMessage("");
+          setBroadcastError(null);
+          broadcastPhotos.forEach((p) => { if (p.file) URL.revokeObjectURL(p.previewUrl); });
+          setBroadcastPhotos([]);
+          setBroadcastStep("compose");
+        }}
+        title={broadcastStep === "preview" ? "Preview Broadcast" : "Send Broadcast"}
+        className="max-w-lg"
+      >
         <div className="space-y-4">
-          <p className="text-sm text-muted-foreground">
-            Broadcasts go straight to the parent feed — no photos, no drafts. Use this for quick announcements, reminders, or school-wide notices.
-          </p>
 
-          <div>
-            <label className="block text-sm font-medium mb-1">Send to</label>
-            <Select value={broadcastTarget} onChange={(e) => setBroadcastTarget(e.target.value)}>
-              <option value="all">All Parents (School-wide)</option>
-              {classOptions.map((c) => (
-                <option key={c.id} value={c.id}>{c.name} parents only</option>
-              ))}
-            </Select>
-          </div>
+          {/* ── Compose step ── */}
+          {broadcastStep === "compose" && (<>
+            <p className="text-sm text-muted-foreground">
+              Broadcasts go straight to the parent feed — no drafts. Use this for quick announcements, reminders, or school-wide notices.
+            </p>
 
-          <div>
-            <label className="block text-sm font-medium mb-1">Message</label>
-            <Textarea
-              value={broadcastMessage}
-              onChange={(e) => setBroadcastMessage(e.target.value)}
-              placeholder="Type your announcement or reminder here…"
-              rows={5}
-            />
-            <p className="text-xs text-muted-foreground mt-1">{broadcastMessage.length} characters</p>
-          </div>
-
-          {/* Quick templates */}
-          <div>
-            <p className="text-xs text-muted-foreground mb-1.5">Quick templates:</p>
-            <div className="flex flex-wrap gap-2">
-              {[
-                { label: "No class", text: "Hi parents! Please be informed that there will be NO CLASS on [date] due to [reason]. Classes will resume on [next date]. Thank you!" },
-                { label: "Reminder", text: "Friendly reminder: [what parents need to do or bring] by [date/deadline]. Thank you for your cooperation! 😊" },
-                { label: "Event", text: "We have an upcoming event! 📅\n\nEvent: [name]\nDate: [date]\nTime: [time]\nVenue: [location]\n\nKindly take note. See you there!" },
-              ].map((t) => (
-                <button
-                  key={t.label}
-                  onClick={() => setBroadcastMessage(t.text)}
-                  className="text-xs px-2.5 py-1 border border-border rounded-lg hover:bg-muted transition-colors"
-                >
-                  {t.label}
-                </button>
-              ))}
+            <div>
+              <label className="block text-sm font-medium mb-1">Send to</label>
+              <Select value={broadcastTarget} onChange={(e) => setBroadcastTarget(e.target.value)}>
+                <option value="all">All Parents (School-wide)</option>
+                {classOptions.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name} parents only</option>
+                ))}
+              </Select>
             </div>
-          </div>
 
-          {broadcastError && <ErrorAlert message={broadcastError} />}
-          {broadcastSent && (
-            <div className="flex items-center gap-2 text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2 text-sm">
-              <Send className="w-4 h-4" /> Broadcast sent! Parents can see it now.
+            <div>
+              <label className="block text-sm font-medium mb-1">Message</label>
+              <Textarea
+                value={broadcastMessage}
+                onChange={(e) => setBroadcastMessage(e.target.value)}
+                placeholder="Type your announcement or reminder here…"
+                rows={5}
+              />
+              <p className="text-xs text-muted-foreground mt-1">{broadcastMessage.length} characters</p>
             </div>
-          )}
 
-          <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={() => { setBroadcastOpen(false); setBroadcastMessage(""); }}>Cancel</Button>
-            <Button
-              onClick={sendBroadcast}
-              disabled={broadcastSending || !broadcastMessage.trim() || broadcastSent}
-            >
-              {broadcastSending ? "Sending…" : <><Megaphone className="w-4 h-4" /> Send Broadcast</>}
-            </Button>
-          </div>
+            {/* Photos */}
+            {broadcastPhotos.length > 0 && (
+              <div className="flex gap-2 flex-wrap">
+                {broadcastPhotos.map((p, i) => (
+                  <div key={i} className="relative">
+                    <img src={p.previewUrl} alt="" className="w-20 h-20 object-cover rounded-lg border border-border" />
+                    <button onClick={() => removeBroadcastPhoto(i)}
+                      className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-black/70 text-white rounded-full flex items-center justify-center hover:bg-black">
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+                {broadcastPhotos.length < 2 && (
+                  <button onClick={() => broadcastFileRef.current?.click()} disabled={broadcastPhotoLoading}
+                    className="w-20 h-20 rounded-lg border-2 border-dashed border-border flex items-center justify-center text-muted-foreground hover:border-primary hover:text-primary transition-colors">
+                    <ImagePlus className="w-5 h-5" />
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Quick templates */}
+            <div>
+              <p className="text-xs text-muted-foreground mb-1.5">Quick templates:</p>
+              <div className="flex flex-wrap gap-2">
+                {[
+                  { label: "No class", text: "Hi parents! Please be informed that there will be NO CLASS on [date] due to [reason]. Classes will resume on [next date]. Thank you!" },
+                  { label: "Reminder", text: "Friendly reminder: [what parents need to do or bring] by [date/deadline]. Thank you for your cooperation! 😊" },
+                  { label: "Event", text: "We have an upcoming event! 📅\n\nEvent: [name]\nDate: [date]\nTime: [time]\nVenue: [location]\n\nKindly take note. See you there!" },
+                ].map((t) => (
+                  <button
+                    key={t.label}
+                    onClick={() => setBroadcastMessage(t.text)}
+                    className="text-xs px-2.5 py-1 border border-border rounded-lg hover:bg-muted transition-colors"
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <input ref={broadcastFileRef} type="file" accept="image/*" multiple className="hidden" onChange={handleBroadcastPhoto} />
+
+            <div className="flex items-center justify-between pt-2 border-t border-border">
+              <button
+                onClick={() => broadcastFileRef.current?.click()}
+                disabled={broadcastPhotoLoading || broadcastPhotos.length >= 2}
+                className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors px-2 py-1.5 rounded-lg hover:bg-accent disabled:opacity-40"
+              >
+                <ImagePlus className="w-4 h-4" />
+                {broadcastPhotoLoading ? "Compressing…" : `Add Photos (${broadcastPhotos.length}/2)`}
+              </button>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => { setBroadcastOpen(false); setBroadcastMessage(""); }}>Cancel</Button>
+                <Button onClick={() => setBroadcastStep("preview")} disabled={!broadcastMessage.trim()}>
+                  <Eye className="w-4 h-4" /> Preview Broadcast
+                </Button>
+              </div>
+            </div>
+          </>)}
+
+          {/* ── Preview step ── */}
+          {broadcastStep === "preview" && (<>
+            <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+              <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <span>
+                Once sent, this will be <strong>immediately visible</strong> to{" "}
+                <strong>{broadcastTarget === "all" ? "all parents" : `parents of ${classOptions.find((c) => c.id === broadcastTarget)?.name ?? broadcastTarget}`}</strong>.
+              </span>
+            </div>
+
+            <div>
+              <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium mb-1">Sending to</p>
+              <p className="text-sm font-medium">
+                {broadcastTarget === "all" ? "All Parents (School-wide)" : `${classOptions.find((c) => c.id === broadcastTarget)?.name ?? broadcastTarget} parents only`}
+              </p>
+            </div>
+
+            <div>
+              <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium mb-1">Message</p>
+              <div className="bg-muted/40 rounded-lg p-3 text-sm leading-relaxed whitespace-pre-line max-h-48 overflow-y-auto">
+                {broadcastMessage}
+              </div>
+            </div>
+
+            {broadcastPhotos.length > 0 && (
+              <div>
+                <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium mb-2">Photos ({broadcastPhotos.length})</p>
+                <div className={`grid gap-1 rounded-xl overflow-hidden ${broadcastPhotos.length === 1 ? "grid-cols-1" : "grid-cols-2"}`}>
+                  {broadcastPhotos.map((p, i) => (
+                    <img key={i} src={p.previewUrl} alt="" className={`w-full object-cover ${broadcastPhotos.length === 1 ? "max-h-48" : "h-32"}`} />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {broadcastError && <ErrorAlert message={broadcastError} />}
+            {broadcastSent && (
+              <div className="flex items-center gap-2 text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2 text-sm">
+                <Send className="w-4 h-4" /> Broadcast sent! Parents can see it now.
+              </div>
+            )}
+
+            <div className="flex items-center justify-between gap-2 pt-2 border-t border-border">
+              <Button variant="outline" onClick={() => setBroadcastStep("compose")}>← Back to Edit</Button>
+              <Button onClick={sendBroadcast} disabled={broadcastSending || broadcastSent}>
+                {broadcastSending ? "Sending…" : <><Megaphone className="w-4 h-4" /> Send Broadcast</>}
+              </Button>
+            </div>
+          </>)}
+
         </div>
       </Modal>
 
