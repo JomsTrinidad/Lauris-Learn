@@ -46,10 +46,14 @@ export interface SchoolContextValue {
   isReadOnly: boolean;
   isImpersonating: boolean;
   branding: BrandingConfig;
+  allSchoolYears: ActiveYear[];
+  viewingYear: ActiveYear | null;
+  isHistoricalView: boolean;
   loading: boolean;
   refresh: () => void;
   /** Update only the branding slice without triggering a full context reload. */
   patchBranding: (patch: Partial<BrandingConfig>) => void;
+  setViewingYear: (year: ActiveYear) => void;
   startImpersonation: (schoolId: string, schoolName: string) => void;
   stopImpersonation: () => void;
 }
@@ -66,6 +70,9 @@ const SchoolContext = createContext<SchoolContextValue>({
   schoolId: null,
   schoolName: "",
   activeYear: null,
+  allSchoolYears: [],
+  viewingYear: null,
+  isHistoricalView: false,
   userId: null,
   userRole: null,
   userName: "",
@@ -79,6 +86,7 @@ const SchoolContext = createContext<SchoolContextValue>({
   loading: true,
   refresh: () => {},
   patchBranding: () => {},
+  setViewingYear: () => {},
   startImpersonation: () => {},
   stopImpersonation: () => {},
 });
@@ -91,10 +99,12 @@ function calcTrialDaysLeft(endDate: string | null): number | null {
 
 export function SchoolProvider({ children }: { children: ReactNode }) {
   const supabase = createClient();
-  const [value, setValue] = useState<Omit<SchoolContextValue, "refresh" | "patchBranding" | "startImpersonation" | "stopImpersonation">>({
+  const [value, setValue] = useState<Omit<SchoolContextValue, "refresh" | "patchBranding" | "startImpersonation" | "stopImpersonation" | "setViewingYear" | "isHistoricalView">>({
     schoolId: null,
     schoolName: "",
     activeYear: null,
+    allSchoolYears: [],
+    viewingYear: null,
     userId: null,
     userRole: null,
     userName: "",
@@ -148,7 +158,7 @@ export function SchoolProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    const [{ data: school }, { data: activeYear }] = await Promise.all([
+    const [{ data: school }, { data: schoolYears }] = await Promise.all([
       supabase
         .from("schools")
         .select("name, trial_start_date, trial_end_date, trial_status, logo_url, primary_color, accent_color, text_size_scale, spacing_scale")
@@ -158,9 +168,17 @@ export function SchoolProvider({ children }: { children: ReactNode }) {
         .from("school_years")
         .select("id, name, start_date, end_date, status")
         .eq("school_id", effectiveSchoolId)
-        .eq("status", "active")
-        .maybeSingle(),
+        .order("start_date", { ascending: false }),
     ]);
+
+    const allSchoolYears: ActiveYear[] = (schoolYears ?? []).map((y) => ({
+      id: y.id,
+      name: y.name,
+      startDate: y.start_date,
+      endDate: y.end_date,
+      status: y.status as ActiveYear["status"],
+    }));
+    const activeYear = allSchoolYears.find((y) => y.status === "active") ?? null;
 
     const trialStatus = (school?.trial_status as "active" | "expired" | "converted") ?? null;
     const trialDaysLeft = calcTrialDaysLeft(school?.trial_end_date ?? null);
@@ -170,15 +188,9 @@ export function SchoolProvider({ children }: { children: ReactNode }) {
     setValue({
       schoolId: effectiveSchoolId,
       schoolName: impersonating?.schoolName ?? school?.name ?? "Lauris Learn",
-      activeYear: activeYear
-        ? {
-            id: activeYear.id,
-            name: activeYear.name,
-            startDate: activeYear.start_date,
-            endDate: activeYear.end_date,
-            status: activeYear.status,
-          }
-        : null,
+      activeYear,
+      allSchoolYears,
+      viewingYear: activeYear,
       userId: user.id,
       userRole: profile?.role ?? null,
       userName: profile?.full_name ?? "",
@@ -241,8 +253,14 @@ export function SchoolProvider({ children }: { children: ReactNode }) {
     load();
   }
 
+  function setViewingYear(year: ActiveYear) {
+    setValue((v) => ({ ...v, viewingYear: year }));
+  }
+
+  const isHistoricalView = value.activeYear !== null && value.viewingYear?.id !== value.activeYear?.id;
+
   return (
-    <SchoolContext.Provider value={{ ...value, refresh: load, patchBranding, startImpersonation, stopImpersonation }}>
+    <SchoolContext.Provider value={{ ...value, isHistoricalView, refresh: load, patchBranding, setViewingYear, startImpersonation, stopImpersonation }}>
       {children}
     </SchoolContext.Provider>
   );

@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { CheckCircle, XCircle, Clock, Bell, CalendarDays, CreditCard, ChevronRight, AlertCircle, AlertTriangle, Megaphone } from "lucide-react";
+import { CheckCircle, XCircle, Clock, Bell, CalendarDays, CreditCard, ChevronRight, AlertCircle, AlertTriangle, Megaphone, Star } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { PageSpinner } from "@/components/ui/spinner";
 import { createClient } from "@/lib/supabase/client";
@@ -38,6 +38,47 @@ interface Announcement {
   createdAt: string;
 }
 
+interface LatestMoment {
+  id: string;
+  category: string;
+  note: string | null;
+  createdAt: string;
+  myReaction: string | null;
+}
+
+const CATEGORY_COLORS: Record<string, string> = {
+  "Effort":         "bg-blue-100 text-blue-700",
+  "Kindness":       "bg-pink-100 text-pink-700",
+  "Focus":          "bg-purple-100 text-purple-700",
+  "Participation":  "bg-amber-100 text-amber-700",
+  "Independence":   "bg-green-100 text-green-700",
+  "Creativity":     "bg-orange-100 text-orange-700",
+  "Improvement":    "bg-teal-100 text-teal-700",
+  "Helping Others": "bg-rose-100 text-rose-700",
+};
+
+const REACTIONS = [
+  { type: "proud",     emoji: "❤️", label: "Proud" },
+  { type: "great_job", emoji: "👏", label: "Great Job" },
+  { type: "keep_going",emoji: "🌟", label: "Keep Going" },
+];
+
+const MOMENT_HEADINGS: Partial<Record<string, (name: string) => string>> = {
+  "Kindness":       (n) => `${n} showed kindness today.`,
+  "Effort":         (n) => `${n} gave it their all today.`,
+  "Focus":          (n) => `${n} stayed focused during class.`,
+  "Participation":  (n) => `${n} was active and engaged today.`,
+  "Independence":   (n) => `${n} worked independently today.`,
+  "Creativity":     (n) => `${n} showed wonderful creativity today.`,
+  "Improvement":    (n) => `${n} made great progress today.`,
+  "Helping Others": (n) => `${n} helped a classmate today.`,
+};
+
+function getMomentHeading(firstName: string, category: string): string {
+  const fn = MOMENT_HEADINGS[category];
+  return fn ? fn(firstName) : `${firstName} earned a proud moment.`;
+}
+
 function timeAgo(dateStr: string) {
   const diff = Date.now() - new Date(dateStr).getTime();
   const minutes = Math.floor(diff / 60000);
@@ -62,6 +103,10 @@ export default function ParentDashboard() {
   const [events, setEvents] = useState<UpcomingEvent[]>([]);
   const [billing, setBilling] = useState<BillingSummary>({ unpaidCount: 0, totalBalance: 0 });
 
+  const [latestMoment, setLatestMoment] = useState<LatestMoment | null>(null);
+  const [parentUserId, setParentUserId] = useState<string | null>(null);
+  const [reactSaving, setReactSaving] = useState(false);
+
   // Absence reporting
   const [absenceReported, setAbsenceReported] = useState(false);
   const [showAbsenceForm, setShowAbsenceForm] = useState(false);
@@ -77,8 +122,53 @@ export default function ParentDashboard() {
 
   async function loadAll() {
     setLoading(true);
-    await Promise.all([loadAttendance(), loadAnnouncements(), loadUpdates(), loadEvents(), loadBilling(), loadAbsenceStatus()]);
+    const { data: { user } } = await supabase.auth.getUser();
+    const userId = user?.id ?? null;
+    setParentUserId(userId);
+    await Promise.all([
+      loadAttendance(),
+      loadAnnouncements(),
+      loadUpdates(),
+      loadEvents(),
+      loadBilling(),
+      loadAbsenceStatus(),
+      loadLatestMoment(userId),
+    ]);
     setLoading(false);
+  }
+
+  async function loadLatestMoment(userId: string | null) {
+    if (!childId) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data } = await (supabase as any)
+      .from("proud_moments")
+      .select("id, category, note, created_at, proud_moment_reactions(reaction_type, parent_id)")
+      .eq("student_id", childId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (!data) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const reactions = (data.proud_moment_reactions ?? []) as any[];
+    const myReaction = userId
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ? reactions.find((r: any) => r.parent_id === userId)?.reaction_type ?? null
+      : null;
+    setLatestMoment({ id: data.id, category: data.category, note: data.note ?? null, createdAt: data.created_at, myReaction });
+  }
+
+  async function handleMomentReaction(momentId: string, reactionType: string) {
+    if (!parentUserId) return;
+    setReactSaving(true);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase as any)
+      .from("proud_moment_reactions")
+      .upsert(
+        { proud_moment_id: momentId, parent_id: parentUserId, reaction_type: reactionType },
+        { onConflict: "proud_moment_id,parent_id" }
+      );
+    setLatestMoment((prev) => prev ? { ...prev, myReaction: reactionType } : null);
+    setReactSaving(false);
   }
 
   async function loadAbsenceStatus() {
@@ -311,6 +401,50 @@ export default function ParentDashboard() {
             </p>
             <p className="text-red-600">Total due: {formatCurrency(billing.totalBalance)}</p>
           </div>
+        </div>
+      )}
+
+      {/* Proud Moments */}
+      {latestMoment && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Star className="w-4 h-4 text-amber-500" />
+            <h2 className="font-semibold text-amber-900 text-sm">Proud Moment</h2>
+          </div>
+          <p className="font-medium text-sm text-amber-900 leading-snug">
+            {getMomentHeading(firstName, latestMoment.category)}
+          </p>
+          <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${CATEGORY_COLORS[latestMoment.category] ?? "bg-gray-100 text-gray-700"}`}>
+              {latestMoment.category}
+            </span>
+            <span className="text-xs text-muted-foreground">{timeAgo(latestMoment.createdAt)}</span>
+          </div>
+          {latestMoment.note && (
+            <p className="text-sm text-amber-800 mt-1.5 leading-relaxed italic">&ldquo;{latestMoment.note}&rdquo;</p>
+          )}
+          <div className="flex items-center gap-2 mt-3 flex-wrap">
+            {REACTIONS.map((r) => (
+              <button
+                key={r.type}
+                onClick={() => handleMomentReaction(latestMoment.id, r.type)}
+                disabled={reactSaving}
+                className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${
+                  latestMoment.myReaction === r.type
+                    ? "bg-amber-400 border-amber-400 text-white"
+                    : "border-amber-300 text-amber-700 hover:bg-amber-100"
+                } disabled:opacity-50`}
+              >
+                {r.emoji} {r.label}
+              </button>
+            ))}
+          </div>
+          {latestMoment.myReaction && (
+            <p className="text-xs text-green-700 mt-2">✓ Your reaction has been shared with the school.</p>
+          )}
+          <Link href="/parent/proud-moments" className="mt-3 text-xs text-amber-700 hover:text-amber-900 font-medium flex items-center gap-1 transition-colors">
+            View all moments <ChevronRight className="w-3 h-3" />
+          </Link>
         </div>
       )}
 

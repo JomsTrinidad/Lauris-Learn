@@ -1,9 +1,10 @@
 "use client";
-import { Menu, ChevronDown, LogOut } from "lucide-react";
-import { useState } from "react";
+import { Menu, ChevronDown, LogOut, Check } from "lucide-react";
+import { useState, useRef, useEffect } from "react";
 import { getInitials } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
+import type { ActiveYear } from "@/contexts/SchoolContext";
 
 interface HeaderProps {
   sidebarOpen: boolean;
@@ -13,6 +14,9 @@ interface HeaderProps {
   schoolYear?: string;
   schoolName?: string;
   userAvatar?: string | null;
+  allSchoolYears?: ActiveYear[];
+  viewingYear?: ActiveYear | null;
+  onSelectYear?: (year: ActiveYear) => void;
 }
 
 export function Header({
@@ -23,15 +27,34 @@ export function Header({
   schoolYear = "SY 2025–2026",
   schoolName,
   userAvatar,
+  allSchoolYears = [],
+  viewingYear,
+  onSelectYear,
 }: HeaderProps) {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [yearMenuOpen, setYearMenuOpen] = useState(false);
   const router = useRouter();
+  const yearMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (yearMenuRef.current && !yearMenuRef.current.contains(e.target as Node)) {
+        setYearMenuOpen(false);
+      }
+    }
+    if (yearMenuOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [yearMenuOpen]);
 
   async function handleSignOut() {
     const supabase = createClient();
     await supabase.auth.signOut();
     router.push("/login");
   }
+
+  const displayYear = viewingYear?.name ?? schoolYear;
 
   return (
     <header className="bg-card border-b border-border px-4 py-3 flex items-center justify-between flex-shrink-0">
@@ -51,10 +74,55 @@ export function Header({
 
       {/* Right: school year + user */}
       <div className="flex items-center gap-3">
-        {/* Active school year pill */}
-        <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-muted rounded-lg text-sm cursor-pointer hover:bg-accent transition-colors">
-          <span className="text-muted-foreground">{schoolYear}</span>
-          <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
+        {/* School year pill with dropdown */}
+        <div ref={yearMenuRef} className="relative hidden sm:block">
+          <button
+            onClick={() => setYearMenuOpen((v) => !v)}
+            className="flex items-center gap-2 px-3 py-1.5 bg-muted rounded-lg text-sm hover:bg-accent transition-colors"
+          >
+            <span className="text-muted-foreground">{displayYear}</span>
+            <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
+          </button>
+
+          {yearMenuOpen && allSchoolYears.length > 0 && (
+            <div className="absolute right-0 top-full mt-1 w-56 bg-card border border-border rounded-lg shadow-lg z-10">
+              <div className="p-1">
+                {allSchoolYears.map((year) => {
+                  const isActive = year.status === "active";
+                  const isSelected = viewingYear?.id === year.id;
+                  return (
+                    <button
+                      key={year.id}
+                      disabled={!isActive}
+                      onClick={() => {
+                        if (!isActive) return;
+                        onSelectYear?.(year);
+                        setYearMenuOpen(false);
+                      }}
+                      className={`w-full flex items-center justify-between px-3 py-2 text-sm rounded-md text-left transition-colors ${
+                        isActive
+                          ? "hover:bg-accent cursor-pointer"
+                          : "opacity-50 cursor-not-allowed"
+                      }`}
+                    >
+                      <span>{year.name}</span>
+                      <div className="flex items-center gap-1.5">
+                        {isActive && (
+                          <span className="text-xs text-emerald-600 font-medium">Active</span>
+                        )}
+                        {!isActive && (
+                          <span className="text-xs text-muted-foreground">Coming soon</span>
+                        )}
+                        {isSelected && (
+                          <Check className="w-3.5 h-3.5 text-primary" />
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* User menu */}

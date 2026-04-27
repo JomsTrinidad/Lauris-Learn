@@ -61,6 +61,11 @@ function TrialBanner() {
   return null;
 }
 
+function HistoricalViewBanner() {
+  // Suppressed until historical filtering is fully wired to page queries.
+  return null;
+}
+
 function ImpersonationBanner() {
   const { isImpersonating, schoolName, stopImpersonation } = useSchoolContext();
   const router = useRouter();
@@ -92,7 +97,7 @@ function ImpersonationBanner() {
 
 function Shell({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const { schoolName, activeYear, userName, userRole, userId, userAvatar, loading, isTrialExpired, branding } = useSchoolContext();
+  const { schoolName, activeYear, userName, userRole, userId, userAvatar, loading, isTrialExpired, branding, allSchoolYears, viewingYear, setViewingYear } = useSchoolContext();
   const router = useRouter();
   const pathname = usePathname();
   const mainRef = useRef<HTMLElement>(null);
@@ -115,7 +120,7 @@ function Shell({ children }: { children: React.ReactNode }) {
     );
   }
 
-  const yearLabel = activeYear?.name ?? "No Active Year";
+  const yearLabel = viewingYear?.name ?? activeYear?.name ?? "No Active Year";
   const roleLabel =
     userRole === "school_admin" ? "School Admin"
     : userRole === "teacher"   ? "Teacher"
@@ -128,6 +133,7 @@ function Shell({ children }: { children: React.ReactNode }) {
       {/* System banners */}
       <ImpersonationBanner />
       <TrialBanner />
+      <HistoricalViewBanner />
 
       <div className="flex flex-1 overflow-hidden">
         <Sidebar
@@ -147,6 +153,9 @@ function Shell({ children }: { children: React.ReactNode }) {
             schoolYear={yearLabel}
             schoolName={schoolName || "Lauris Learn"}
             userAvatar={userAvatar}
+            allSchoolYears={allSchoolYears}
+            viewingYear={viewingYear}
+            onSelectYear={setViewingYear}
           />
           <main ref={mainRef} className={`flex-1 overflow-y-auto p-6 ${isTrialExpired ? "pointer-events-none opacity-60" : ""}`}>
             {isTrialExpired && (

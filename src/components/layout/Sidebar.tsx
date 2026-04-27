@@ -14,6 +14,7 @@ import {
   Settings,
   Video,
   BookOpen,
+  Star,
   ShieldCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -59,8 +60,9 @@ const navSections: NavSection[] = [
   {
     label: "Learning",
     items: [
-      { path: "/progress",       label: "Progress",       icon: BookOpen },
-      { path: "/online-classes", label: "Online Classes", icon: Video },
+      { path: "/progress",        label: "Progress",        icon: BookOpen },
+      { path: "/proud-moments",   label: "Proud Moments",   icon: Star },
+      { path: "/online-classes",  label: "Online Classes",  icon: Video },
     ],
   },
   {

@@ -270,12 +270,15 @@ export type Database = {
           applies_to: "all" | "class" | "selected";
           class_id: string | null;
           fee: number | null;
+          requires_rsvp: boolean;
+          all_day: boolean;
+          max_companions: number | null;
           created_by: string | null;
           created_at: string;
           updated_at: string;
         };
-        Insert: { id?: string; school_id: string; title: string; description?: string | null; event_date: string; start_time?: string | null; end_time?: string | null; applies_to?: "all" | "class" | "selected"; class_id?: string | null; fee?: number | null; created_by?: string | null; created_at?: string; updated_at?: string };
-        Update: { id?: string; school_id?: string; title?: string; description?: string | null; event_date?: string; start_time?: string | null; end_time?: string | null; applies_to?: "all" | "class" | "selected"; class_id?: string | null; fee?: number | null; updated_at?: string };
+        Insert: { id?: string; school_id: string; title: string; description?: string | null; event_date: string; start_time?: string | null; end_time?: string | null; applies_to?: "all" | "class" | "selected"; class_id?: string | null; fee?: number | null; requires_rsvp?: boolean; all_day?: boolean; max_companions?: number | null; created_by?: string | null; created_at?: string; updated_at?: string };
+        Update: { id?: string; school_id?: string; title?: string; description?: string | null; event_date?: string; start_time?: string | null; end_time?: string | null; applies_to?: "all" | "class" | "selected"; class_id?: string | null; fee?: number | null; requires_rsvp?: boolean; all_day?: boolean; max_companions?: number | null; updated_at?: string };
         Relationships: [{ foreignKeyName: "events_school_id_fkey"; columns: ["school_id"]; isOneToOne: false; referencedRelation: "schools"; referencedColumns: ["id"] }];
       };
       event_rsvps: {
@@ -284,11 +287,14 @@ export type Database = {
           event_id: string;
           student_id: string | null;
           parent_id: string | null;
-          response: "going" | "not_going" | "maybe";
+          status: "going" | "not_going" | "maybe";
+          companions: number;
+          notes: string | null;
           created_at: string;
+          updated_at: string;
         };
-        Insert: { id?: string; event_id: string; student_id?: string | null; parent_id?: string | null; response: "going" | "not_going" | "maybe"; created_at?: string };
-        Update: { id?: string; event_id?: string; student_id?: string | null; parent_id?: string | null; response?: "going" | "not_going" | "maybe" };
+        Insert: { id?: string; event_id: string; student_id?: string | null; parent_id?: string | null; status: "going" | "not_going" | "maybe"; companions?: number; notes?: string | null; created_at?: string };
+        Update: { id?: string; event_id?: string; student_id?: string | null; parent_id?: string | null; status?: "going" | "not_going" | "maybe"; companions?: number; notes?: string | null };
         Relationships: [{ foreignKeyName: "event_rsvps_event_id_fkey"; columns: ["event_id"]; isOneToOne: false; referencedRelation: "events"; referencedColumns: ["id"] }];
       };
       enrollment_inquiries: {
@@ -465,6 +471,40 @@ export type Database = {
         Insert: { id?: string; billing_record_id: string; discount_id?: string | null; name: string; type: "fixed" | "percentage" | "credit"; value: number; created_at?: string };
         Update: { id?: string; billing_record_id?: string; discount_id?: string | null; name?: string; type?: "fixed" | "percentage" | "credit"; value?: number };
         Relationships: [{ foreignKeyName: "billing_discounts_billing_record_id_fkey"; columns: ["billing_record_id"]; isOneToOne: false; referencedRelation: "billing_records"; referencedColumns: ["id"] }];
+      };
+      proud_moments: {
+        Row: {
+          id: string;
+          school_id: string;
+          student_id: string;
+          created_by: string | null;
+          category: string;
+          note: string | null;
+          photo_path: string | null;
+          created_at: string;
+        };
+        Insert: { id?: string; school_id: string; student_id: string; created_by?: string | null; category: string; note?: string | null; photo_path?: string | null; created_at?: string };
+        Update: { id?: string; school_id?: string; student_id?: string; created_by?: string | null; category?: string; note?: string | null; photo_path?: string | null };
+        Relationships: [
+          { foreignKeyName: "proud_moments_school_id_fkey"; columns: ["school_id"]; isOneToOne: false; referencedRelation: "schools"; referencedColumns: ["id"] },
+          { foreignKeyName: "proud_moments_student_id_fkey"; columns: ["student_id"]; isOneToOne: false; referencedRelation: "students"; referencedColumns: ["id"] },
+          { foreignKeyName: "proud_moments_created_by_fkey"; columns: ["created_by"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] }
+        ];
+      };
+      proud_moment_reactions: {
+        Row: {
+          id: string;
+          proud_moment_id: string;
+          parent_id: string;
+          reaction_type: "proud" | "great_job" | "keep_going";
+          created_at: string;
+        };
+        Insert: { id?: string; proud_moment_id: string; parent_id: string; reaction_type: "proud" | "great_job" | "keep_going"; created_at?: string };
+        Update: { id?: string; proud_moment_id?: string; parent_id?: string; reaction_type?: "proud" | "great_job" | "keep_going" };
+        Relationships: [
+          { foreignKeyName: "proud_moment_reactions_proud_moment_id_fkey"; columns: ["proud_moment_id"]; isOneToOne: false; referencedRelation: "proud_moments"; referencedColumns: ["id"] },
+          { foreignKeyName: "proud_moment_reactions_parent_id_fkey"; columns: ["parent_id"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] }
+        ];
       };
     };
     Views: Record<string, never>;

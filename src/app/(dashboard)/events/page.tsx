@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Plus, Calendar, Clock } from "lucide-react";
+import { Plus, Calendar, Clock, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -21,13 +21,18 @@ interface Event {
   eventDate: string;
   startTime: string | null;
   endTime: string | null;
+  allDay: boolean;
   appliesTo: AppliesTo;
   classId: string | null;
   className: string;
   fee: number | null;
+  requiresRsvp: boolean;
+  maxCompanions: number | null;
   rsvpGoing: number;
-  rsvpNotGoing: number;
   rsvpMaybe: number;
+  rsvpNotGoing: number;
+  rsvpNoResponse: number;
+  totalCompanions: number;
 }
 
 interface ClassOption {
@@ -39,17 +44,21 @@ interface EventForm {
   title: string;
   description: string;
   eventDate: string;
+  allDay: boolean;
   startTime: string;
   endTime: string;
   appliesTo: AppliesTo;
   classId: string;
   fee: string;
+  requiresRsvp: boolean;
+  maxCompanions: string;
 }
 
 const EMPTY_FORM: EventForm = {
   title: "", description: "", eventDate: "",
-  startTime: "", endTime: "",
+  allDay: false, startTime: "", endTime: "",
   appliesTo: "all", classId: "", fee: "",
+  requiresRsvp: true, maxCompanions: "",
 };
 
 function formatEventDate(dateStr: string) {
@@ -88,20 +97,50 @@ export default function EventsPage() {
   }
 
   async function loadEvents() {
-    const { data, error: err } = await supabase
-      .from("events")
-      .select(`id, title, description, event_date, start_time, end_time,
-        applies_to, class_id, fee, classes(name),
-        event_rsvps(status)`)
-      .eq("school_id", schoolId!)
-      .order("event_date");
+    // Fetch events and enrollment counts in parallel
+    const [evResult, enrollResult] = await Promise.all([
+      supabase
+        .from("events")
+        .select(`id, title, description, event_date, start_time, end_time, all_day,
+          applies_to, class_id, fee, requires_rsvp, max_companions, classes(name),
+          event_rsvps(status, companions)`)
+        .eq("school_id", schoolId!)
+        .order("event_date"),
+      supabase
+        .from("enrollments")
+        .select("class_id")
+        .eq("school_id", schoolId!)
+        .eq("school_year_id", activeYear?.id ?? "")
+        .eq("status", "enrolled"),
+    ]);
 
-    if (err) { setError(err.message); return; }
+    if (evResult.error) { setError(evResult.error.message); return; }
+
+    // Build per-class enrollment count for "no response" calculation
+    const classCount: Record<string, number> = {};
+    for (const e of (enrollResult.data ?? [])) {
+      classCount[e.class_id] = (classCount[e.class_id] ?? 0) + 1;
+    }
+    const totalEnrolled = Object.values(classCount).reduce((a, b) => a + b, 0);
 
     setEvents(
-      (data ?? []).map((e) => {
+      (evResult.data ?? []).map((e) => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const rsvps: any[] = (e as any).event_rsvps ?? [];
+        const rsvpGoing    = rsvps.filter((r) => r.status === "going").length;
+        const rsvpMaybe    = rsvps.filter((r) => r.status === "maybe").length;
+        const rsvpNotGoing = rsvps.filter((r) => r.status === "not_going").length;
+        const totalRsvps   = rsvpGoing + rsvpMaybe + rsvpNotGoing;
+        const totalCompanions = rsvps
+          .filter((r) => r.status === "going")
+          .reduce((sum, r) => sum + (r.companions ?? 0), 0);
+
+        let eligible = 0;
+        if (e.applies_to === "all") eligible = totalEnrolled;
+        else if (e.applies_to === "class" && e.class_id) eligible = classCount[e.class_id] ?? 0;
+
+        const requiresRsvp = (e as any).requires_rsvp ?? true;
+
         return {
           id: e.id,
           title: e.title,
@@ -109,14 +148,19 @@ export default function EventsPage() {
           eventDate: e.event_date,
           startTime: e.start_time ?? null,
           endTime: e.end_time ?? null,
+          allDay: (e as any).all_day ?? false,
           appliesTo: (e.applies_to as AppliesTo) ?? "all",
           classId: e.class_id ?? null,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           className: (e as any).classes?.name ?? "",
           fee: e.fee ? Number(e.fee) : null,
-          rsvpGoing: rsvps.filter((r) => r.status === "going").length,
-          rsvpMaybe: rsvps.filter((r) => r.status === "maybe").length,
-          rsvpNotGoing: rsvps.filter((r) => r.status === "not_going").length,
+          requiresRsvp,
+          maxCompanions: (e as any).max_companions ?? null,
+          rsvpGoing,
+          rsvpMaybe,
+          rsvpNotGoing,
+          rsvpNoResponse: requiresRsvp ? Math.max(0, eligible - totalRsvps) : 0,
+          totalCompanions,
         };
       })
     );
@@ -142,16 +186,21 @@ export default function EventsPage() {
     setSaving(true);
     setFormError(null);
 
+    const maxComp = form.maxCompanions.trim() !== "" ? parseInt(form.maxCompanions, 10) : null;
+
     const { error: iErr } = await supabase.from("events").insert({
       school_id: schoolId!,
       title: form.title.trim(),
       description: form.description.trim() || null,
       event_date: form.eventDate,
-      start_time: form.startTime || null,
-      end_time: form.endTime || null,
+      all_day: form.allDay,
+      start_time: form.allDay ? null : (form.startTime || null),
+      end_time: form.allDay ? null : (form.endTime || null),
       applies_to: form.appliesTo,
       class_id: form.appliesTo === "class" ? form.classId : null,
       fee: form.fee ? parseFloat(form.fee) : null,
+      requires_rsvp: form.requiresRsvp,
+      max_companions: form.requiresRsvp ? maxComp : null,
     });
 
     if (iErr) { setFormError(iErr.message); setSaving(false); return; }
@@ -224,12 +273,15 @@ export default function EventsPage() {
                   <div className="flex-1 min-w-0">
                     <div className="flex flex-wrap items-start justify-between gap-2 mb-2">
                       <h3 className="font-semibold">{event.title}</h3>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         {event.appliesTo === "class" && event.className && (
                           <Badge variant="default">{event.className}</Badge>
                         )}
                         {event.appliesTo === "all" && (
                           <Badge variant="default">All Students</Badge>
+                        )}
+                        {!event.requiresRsvp && (
+                          <Badge variant="default">Informational only</Badge>
                         )}
                         {!isUpcoming(event.eventDate) && (
                           <Badge variant="archived">Past</Badge>
@@ -245,8 +297,9 @@ export default function EventsPage() {
                       <div className="flex items-center gap-1.5">
                         <Calendar className="w-3.5 h-3.5" />
                         {formatEventDate(event.eventDate)}
+                        {event.allDay && <span className="text-xs">(All day)</span>}
                       </div>
-                      {event.startTime && (
+                      {!event.allDay && event.startTime && (
                         <div className="flex items-center gap-1.5">
                           <Clock className="w-3.5 h-3.5" />
                           {event.startTime}{event.endTime ? ` – ${event.endTime}` : ""}
@@ -257,20 +310,33 @@ export default function EventsPage() {
                       )}
                     </div>
 
-                    <div className="mt-3 flex gap-4 text-xs">
-                      <span className="flex items-center gap-1 text-green-600 font-medium">
-                        <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
-                        {event.rsvpGoing} Going
-                      </span>
-                      <span className="flex items-center gap-1 text-yellow-600 font-medium">
-                        <span className="w-2 h-2 rounded-full bg-yellow-400 inline-block" />
-                        {event.rsvpMaybe} Maybe
-                      </span>
-                      <span className="flex items-center gap-1 text-red-500 font-medium">
-                        <span className="w-2 h-2 rounded-full bg-red-400 inline-block" />
-                        {event.rsvpNotGoing} Not Going
-                      </span>
-                    </div>
+                    {event.requiresRsvp && (
+                      <div className="mt-3 flex flex-wrap gap-4 text-xs">
+                        <span className="flex items-center gap-1 text-green-600 font-medium">
+                          <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
+                          {event.rsvpGoing} Going
+                          {event.totalCompanions > 0 && (
+                            <span className="text-muted-foreground font-normal ml-0.5">
+                              (+{event.totalCompanions} companion{event.totalCompanions !== 1 ? "s" : ""})
+                            </span>
+                          )}
+                        </span>
+                        <span className="flex items-center gap-1 text-yellow-600 font-medium">
+                          <span className="w-2 h-2 rounded-full bg-yellow-400 inline-block" />
+                          {event.rsvpMaybe} Maybe
+                        </span>
+                        <span className="flex items-center gap-1 text-red-500 font-medium">
+                          <span className="w-2 h-2 rounded-full bg-red-400 inline-block" />
+                          {event.rsvpNotGoing} Can't go
+                        </span>
+                        {event.rsvpNoResponse > 0 && (
+                          <span className="flex items-center gap-1 text-muted-foreground font-medium">
+                            <span className="w-2 h-2 rounded-full bg-muted-foreground/40 inline-block" />
+                            {event.rsvpNoResponse} No response
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               </CardContent>
@@ -299,16 +365,29 @@ export default function EventsPage() {
             <Input type="date" value={form.eventDate} onChange={(e) => setForm({ ...form, eventDate: e.target.value })} />
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium mb-1">Start Time</label>
-              <Input type="time" value={form.startTime} onChange={(e) => setForm({ ...form, startTime: e.target.value })} />
+          {/* All-day toggle */}
+          <label className="flex items-center gap-2.5 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={form.allDay}
+              onChange={(e) => setForm({ ...form, allDay: e.target.checked, startTime: "", endTime: "" })}
+              className="w-4 h-4 rounded accent-primary"
+            />
+            <span className="text-sm font-medium">All-day event</span>
+          </label>
+
+          {!form.allDay && (
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">Start Time</label>
+                <Input type="time" value={form.startTime} onChange={(e) => setForm({ ...form, startTime: e.target.value })} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">End Time</label>
+                <Input type="time" value={form.endTime} onChange={(e) => setForm({ ...form, endTime: e.target.value })} />
+              </div>
             </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">End Time</label>
-              <Input type="time" value={form.endTime} onChange={(e) => setForm({ ...form, endTime: e.target.value })} />
-            </div>
-          </div>
+          )}
 
           <div>
             <label className="block text-sm font-medium mb-1">Applies to</label>
@@ -331,6 +410,44 @@ export default function EventsPage() {
           <div>
             <label className="block text-sm font-medium mb-1">Optional Fee (₱)</label>
             <Input type="number" min={0} step={50} placeholder="Leave blank if free" value={form.fee} onChange={(e) => setForm({ ...form, fee: e.target.value })} />
+          </div>
+
+          {/* RSVP / Informational toggle */}
+          <div className="border border-border rounded-lg p-3 space-y-3 bg-muted/30">
+            <label className="flex items-center gap-2.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={form.requiresRsvp}
+                onChange={(e) => setForm({ ...form, requiresRsvp: e.target.checked, maxCompanions: "" })}
+                className="w-4 h-4 rounded accent-primary"
+              />
+              <div>
+                <span className="text-sm font-medium">Require RSVP</span>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Uncheck for informational announcements — parents won't see a response prompt.
+                </p>
+              </div>
+            </label>
+
+            {form.requiresRsvp && (
+              <div>
+                <label className="block text-sm font-medium mb-1 flex items-center gap-1.5">
+                  <Users className="w-3.5 h-3.5" />
+                  Max companions per attendee
+                </label>
+                <Input
+                  type="number"
+                  min={0}
+                  step={1}
+                  placeholder="Leave blank — not tracking companions"
+                  value={form.maxCompanions}
+                  onChange={(e) => setForm({ ...form, maxCompanions: e.target.value })}
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  Set this when booking a venue outside school and you need headcount. 0 = no companions allowed.
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="flex justify-end gap-2 pt-2">
