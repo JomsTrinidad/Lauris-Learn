@@ -1,9 +1,9 @@
 "use client";
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState } from "react";
 import {
-  Search, Plus, Banknote, X, Pencil, Trash2, CheckSquare, History,
-  FileText, Printer, AlertTriangle, Wand2, Check, ImageIcon, HelpCircle,
-  ChevronDown, ChevronRight, BookOpen, Tag, Receipt, Settings2,
+  Search, Plus, Banknote, Pencil, CheckSquare, History,
+  Printer, AlertTriangle, Wand2, Check, ImageIcon, HelpCircle,
+  ChevronDown, ChevronRight, BookOpen, Tag, FileText, Settings2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,677 +13,23 @@ import { Badge } from "@/components/ui/badge";
 import { Modal, ModalCancelButton } from "@/components/ui/modal";
 import { DatePicker } from "@/components/ui/datepicker";
 import { MonthPicker } from "@/components/ui/monthpicker";
-import { Card, CardContent } from "@/components/ui/card";
 import { PageSpinner, ErrorAlert } from "@/components/ui/spinner";
-import { InfoTooltip } from "@/components/ui/tooltip";
 import { formatCurrency } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { useSchoolContext } from "@/contexts/SchoolContext";
+import { validateUpload, contentTypeFromExt, RECEIPT_MAX_BYTES } from "@/lib/upload-validate";
+import {
+  type MainTab, type SetupSubTab, type BillingStatus, type PaymentMethod,
+  type BillingRecord, type StudentOption, type PaymentRecord, type AllPayment,
+  type PaymentForm, type AddForm, type EditForm, type FeeType, type ClassOption, type StatementRow,
+} from "@/features/billing/types";
+import { EMPTY_PAYMENT, EMPTY_ADD, STATUS_OPTS, EDITABLE_STATUSES, currentYearMonth } from "@/features/billing/constants";
+import { formatMonth, computeStatus, getMonthRange, getAgingDays, agingLabel, agingClass, printContent, computeNthWeekday } from "@/features/billing/utils";
+import { StudentCombobox } from "@/features/billing/StudentCombobox";
+import { SetupFeeTypesTab } from "@/features/billing/SetupFeeTypesTab";
+import { SetupTuitionTab } from "@/features/billing/SetupTuitionTab";
+import { SetupAdjustmentsTab } from "@/features/billing/SetupAdjustmentsTab";
 
-// ─── Billing types ────────────────────────────────────────────────────────────
-
-type MainTab = "bills" | "payments" | "setup";
-type SetupSubTab = "tuition" | "adjustments" | "advanced";
-type BillingStatus = "unpaid" | "partial" | "paid" | "overdue" | "cancelled" | "refunded" | "waived";
-type PaymentMethod = "cash" | "bank_transfer" | "gcash" | "maya" | "other";
-
-interface BillingRecord {
-  id: string; studentId: string; studentName: string;
-  classId: string | null; className: string; description: string;
-  dueDate: string | null; billingMonth: string;
-  amountDue: number; amountPaid: number; status: BillingStatus; notes: string | null;
-}
-interface StudentOption {
-  id: string; name: string; studentCode: string | null;
-  classId: string | null; className: string; level: string;
-}
-interface PaymentRecord {
-  id: string; amount: number; method: PaymentMethod; date: string;
-  reference: string | null; orNumber: string | null; notes: string | null; receiptPhotoPath: string | null;
-}
-interface AllPayment {
-  id: string; billingRecordId: string; studentName: string; className: string;
-  description: string; billingMonth: string; amount: number; method: PaymentMethod;
-  date: string; reference: string | null; orNumber: string | null;
-  notes: string | null; receiptPhotoPath: string | null;
-}
-interface PaymentForm {
-  amount: string; method: PaymentMethod; reference: string; notes: string;
-  date: string; orNumber: string; receiptFile: File | null;
-}
-interface AddForm {
-  studentId: string; studentSearch: string; description: string; amountDue: string;
-  dueDate: string; billingMonth: string; feeTypeId: string;
-  markAsPaid: boolean; paymentMethod: PaymentMethod; paymentDate: string; paymentRef: string;
-}
-interface EditForm {
-  description: string; amountDue: string; dueDate: string; billingMonth: string;
-  status: BillingStatus; notes: string; changeReason: string;
-}
-interface FeeType { id: string; name: string; defaultAmount: number | null; }
-interface ClassOption { id: string; name: string; level: string; enrolled: number; }
-interface StatementRow { billingRecord: BillingRecord; payments: PaymentRecord[]; }
-
-// ─── Setup types (mirrored from Finance page) ─────────────────────────────────
-
-interface AcademicPeriod {
-  id: string; name: string; schoolYearId: string; schoolYearName: string;
-  startDate: string; endDate: string;
-}
-interface SetupFeeType { id: string; name: string; description: string; isActive: boolean; }
-interface TuitionConfig {
-  id: string; academicPeriodId: string; periodName: string; level: string;
-  totalAmount: number; months: number; classId: string | null; className: string | null; monthlyAmount: number;
-}
-interface SetupClassOption { id: string; name: string; level: string; schoolYearId: string; }
-type DiscountType = "fixed" | "percentage" | "credit";
-type DiscountScope = "summer_to_sy" | "full_payment" | "early_enrollment" | "sibling" | "custom";
-interface Discount { id: string; name: string; type: DiscountType; scope: DiscountScope; value: number; isActive: boolean; }
-interface StudentCredit {
-  id: string; studentId: string; studentName: string; amount: number;
-  reason: string; appliedTo: string | null; createdAt: string;
-}
-interface SimpleStudent { id: string; name: string; }
-
-const SCOPE_LABELS: Record<DiscountScope, string> = {
-  summer_to_sy: "Summer → School Year", full_payment: "Full Payment",
-  early_enrollment: "Early Enrollment", sibling: "Sibling", custom: "Custom",
-};
-const TYPE_LABELS: Record<DiscountType, string> = {
-  fixed: "Fixed Amount", percentage: "Percentage", credit: "Credit",
-};
-
-// ─── Constants ────────────────────────────────────────────────────────────────
-
-function currentYearMonth() { return new Date().toISOString().substring(0, 7); }
-
-const EMPTY_PAYMENT: PaymentForm = {
-  amount: "", method: "cash", reference: "", notes: "",
-  date: new Date().toISOString().split("T")[0], orNumber: "", receiptFile: null,
-};
-const EMPTY_ADD: AddForm = {
-  studentId: "", studentSearch: "", description: "", amountDue: "",
-  dueDate: new Date().toISOString().split("T")[0],
-  billingMonth: currentYearMonth(), feeTypeId: "",
-  markAsPaid: false, paymentMethod: "cash",
-  paymentDate: new Date().toISOString().split("T")[0], paymentRef: "",
-};
-const STATUS_OPTS = [
-  { value: "", label: "All Statuses" }, { value: "unpaid", label: "Unpaid" },
-  { value: "partial", label: "Partial" }, { value: "paid", label: "Paid" },
-  { value: "overdue", label: "Overdue" }, { value: "waived", label: "Waived" },
-  { value: "cancelled", label: "Cancelled" }, { value: "refunded", label: "Refunded" },
-];
-const EDITABLE_STATUSES: { value: BillingStatus; label: string }[] = [
-  { value: "unpaid", label: "Unpaid" }, { value: "partial", label: "Partial" },
-  { value: "paid", label: "Paid" }, { value: "overdue", label: "Overdue" },
-  { value: "waived", label: "Waived" }, { value: "cancelled", label: "Cancelled" },
-  { value: "refunded", label: "Refunded" },
-];
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function formatMonth(dateStr: string | null) {
-  if (!dateStr) return "—";
-  const d = new Date(dateStr + "T00:00:00");
-  return d.toLocaleDateString("en-PH", { month: "long", year: "numeric" });
-}
-function computeStatus(dbStatus: BillingStatus, amountDue: number, amountPaid: number, dueDate: string | null): BillingStatus {
-  if (dbStatus === "cancelled" || dbStatus === "refunded" || dbStatus === "waived") return dbStatus;
-  const balance = amountDue - amountPaid;
-  if (balance <= 0) return "paid";
-  if (amountPaid > 0) return "partial";
-  if (dbStatus === "paid") return "paid";
-  if (dueDate && new Date(dueDate) < new Date()) return "overdue";
-  return "unpaid";
-}
-function getMonthRange(from: string, to: string): string[] {
-  if (!from) return [];
-  const result: string[] = [];
-  const [fy, fm] = from.split("-").map(Number);
-  const end = to || from;
-  const [ey, em] = end.split("-").map(Number);
-  let y = fy, m = fm;
-  while (y < ey || (y === ey && m <= em)) {
-    result.push(`${y}-${String(m).padStart(2, "0")}`);
-    m++; if (m > 12) { m = 1; y++; }
-    if (result.length > 24) break;
-  }
-  return result;
-}
-function getAgingDays(dueDate: string | null): number | null {
-  if (!dueDate) return null;
-  const days = Math.floor((Date.now() - new Date(dueDate + "T00:00:00").getTime()) / (1000 * 60 * 60 * 24));
-  return days > 0 ? days : null;
-}
-function agingLabel(days: number) {
-  if (days < 30) return `${days}d`; if (days < 60) return "30d+";
-  if (days < 90) return "60d+"; return "90d+";
-}
-function agingClass(days: number) {
-  if (days < 30) return "text-orange-500 text-xs"; if (days < 60) return "text-orange-600 text-xs font-medium";
-  if (days < 90) return "text-red-600 text-xs font-medium"; return "text-red-700 text-xs font-bold";
-}
-function printContent(elementId: string, title: string) {
-  const el = document.getElementById(elementId);
-  if (!el) return;
-  const win = window.open("", "_blank", "width=820,height=700");
-  if (!win) return;
-  win.document.write(`<!DOCTYPE html><html><head><title>${title}</title><style>
-    *{box-sizing:border-box;margin:0;padding:0}
-    body{font-family:Arial,sans-serif;padding:40px;color:#111;font-size:13px}
-    h1{font-size:20px;margin-bottom:2px} h2{font-size:15px;color:#555;margin-bottom:16px}
-    .divider{border-top:1px solid #ddd;margin:16px 0}
-    .meta{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:4px}
-    .meta-block p{margin-bottom:3px}
-    .label{color:#666;font-size:11px;text-transform:uppercase;letter-spacing:.5px}
-    .value{font-weight:600;font-size:14px}
-    table{width:100%;border-collapse:collapse;margin-top:8px}
-    th{background:#f5f5f5;padding:8px 10px;text-align:left;font-size:12px;border-bottom:2px solid #ddd}
-    td{padding:8px 10px;border-bottom:1px solid #eee;font-size:13px}
-    .text-right{text-align:right}
-    .total-row td{font-weight:bold;background:#f9f9f9;border-top:2px solid #ddd}
-    .status-paid{color:#16a34a} .status-unpaid{color:#666} .status-overdue{color:#dc2626}
-    .status-partial{color:#d97706} .status-cancelled{color:#999}
-    .status-waived{color:#0284c7} .status-refunded{color:#7c3aed}
-    .footer{margin-top:32px;font-size:11px;color:#aaa;text-align:center}
-    @media print{body{padding:20px}}
-  </style></head><body>${el.innerHTML}</body></html>`);
-  win.document.close(); win.focus();
-  setTimeout(() => win.print(), 350);
-}
-function computeNthWeekday(year: number, month: number, nth: number, weekday: number): string {
-  if (nth === -1) {
-    const lastDay = new Date(year, month + 1, 0);
-    const diff = (lastDay.getDay() - weekday + 7) % 7;
-    const date = lastDay.getDate() - diff;
-    return `${year}-${String(month + 1).padStart(2, "0")}-${String(date).padStart(2, "0")}`;
-  }
-  const firstDay = new Date(year, month, 1);
-  const firstOccurrence = 1 + ((weekday - firstDay.getDay() + 7) % 7) + (nth - 1) * 7;
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  if (firstOccurrence > daysInMonth) return "";
-  return `${year}-${String(month + 1).padStart(2, "0")}-${String(firstOccurrence).padStart(2, "0")}`;
-}
-
-// ─── StudentCombobox ──────────────────────────────────────────────────────────
-
-function StudentCombobox({ options, value, searchValue, onSearchChange, onSelect, onClear }: {
-  options: StudentOption[]; value: string; searchValue: string;
-  onSearchChange: (v: string) => void; onSelect: (s: StudentOption) => void; onClear: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const filtered = searchValue
-    ? options.filter((s) =>
-        s.name.toLowerCase().includes(searchValue.toLowerCase()) ||
-        s.className.toLowerCase().includes(searchValue.toLowerCase()) ||
-        (s.studentCode ?? "").toLowerCase().includes(searchValue.toLowerCase()))
-    : options.slice(0, 30);
-  useEffect(() => {
-    function handle(e: MouseEvent) { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); }
-    document.addEventListener("mousedown", handle);
-    return () => document.removeEventListener("mousedown", handle);
-  }, []);
-  return (
-    <div className="relative" ref={ref}>
-      <div className="relative">
-        <Input placeholder="Search by name, code, or class…" value={searchValue}
-          onChange={(e) => { onSearchChange(e.target.value); setOpen(true); }}
-          onFocus={() => setOpen(true)} className={value ? "pr-8 border-primary/60" : ""} />
-        {value && (
-          <button onClick={onClear} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" type="button">
-            <X className="w-3.5 h-3.5" />
-          </button>
-        )}
-      </div>
-      {open && !value && (
-        <div className="absolute z-20 w-full bg-[var(--input-background)] border border-border rounded-lg shadow-lg mt-1 max-h-52 overflow-y-auto">
-          {filtered.length === 0
-            ? <p className="text-sm text-muted-foreground text-center py-4">No students found.</p>
-            : filtered.map((s) => (
-              <button key={s.id} type="button" className="w-full text-left px-3 py-2.5 hover:bg-muted transition-colors text-sm"
-                onMouseDown={() => { onSelect(s); setOpen(false); }}>
-                <span className="font-medium">{s.name}</span>
-                {s.studentCode && <span className="text-muted-foreground ml-1.5 text-xs font-mono">· {s.studentCode}</span>}
-                <span className="text-muted-foreground ml-2 text-xs">{s.className}{s.level ? ` · ${s.level}` : ""}</span>
-              </button>
-            ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Setup: Fee Types Tab (Advanced) ─────────────────────────────────────────
-
-function SetupFeeTypesTab({ schoolId }: { schoolId: string }) {
-  const supabase = createClient();
-  const [feeTypes, setFeeTypes] = useState<SetupFeeType[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [showModal, setShowModal] = useState(false);
-  const [editing, setEditing] = useState<SetupFeeType | null>(null);
-  const [form, setForm] = useState({ name: "", description: "" });
-  const [saving, setSaving] = useState(false);
-  const [formError, setFormError] = useState("");
-
-  const fetchFeeTypes = useCallback(async () => {
-    setLoading(true);
-    const { data } = await supabase.from("fee_types").select("id, name, description, is_active").eq("school_id", schoolId).order("name");
-    setFeeTypes((data ?? []).map((f) => ({ id: f.id, name: f.name, description: f.description ?? "", isActive: f.is_active })));
-    setLoading(false);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [schoolId]);
-
-  useEffect(() => { fetchFeeTypes(); }, [fetchFeeTypes]);
-
-  function openAdd() { setEditing(null); setForm({ name: "", description: "" }); setFormError(""); setShowModal(true); }
-  function openEdit(f: SetupFeeType) { setEditing(f); setForm({ name: f.name, description: f.description }); setFormError(""); setShowModal(true); }
-
-  async function handleSave() {
-    if (!form.name.trim()) { setFormError("Name is required."); return; }
-    setSaving(true); setFormError("");
-    if (editing) {
-      const { error } = await supabase.from("fee_types").update({ name: form.name.trim(), description: form.description.trim() || null }).eq("id", editing.id);
-      if (error) { setFormError(error.message); setSaving(false); return; }
-    } else {
-      const { error } = await supabase.from("fee_types").insert({ school_id: schoolId, name: form.name.trim(), description: form.description.trim() || null });
-      if (error) { setFormError(error.message); setSaving(false); return; }
-    }
-    setSaving(false); setShowModal(false); fetchFeeTypes();
-  }
-
-  async function toggleActive(f: SetupFeeType) {
-    await supabase.from("fee_types").update({ is_active: !f.isActive }).eq("id", f.id);
-    fetchFeeTypes();
-  }
-
-  async function handleDelete(id: string) {
-    if (!confirm("Delete this fee type?")) return;
-    await supabase.from("fee_types").delete().eq("id", id);
-    fetchFeeTypes();
-  }
-
-  if (loading) return <div className="flex justify-center py-8"><div className="animate-spin rounded-full border-2 border-border border-t-primary w-8 h-8" /></div>;
-
-  return (
-    <>
-      <div className="flex items-center justify-between mb-4">
-        <p className="text-sm text-muted-foreground">{feeTypes.length} fee type{feeTypes.length !== 1 ? "s" : ""}</p>
-        <Button size="sm" onClick={openAdd}><Plus className="w-4 h-4 mr-1" /> Add Fee Type</Button>
-      </div>
-      <div className="grid gap-3">
-        {feeTypes.length === 0
-          ? <Card><CardContent className="p-8 text-center text-sm text-muted-foreground">No fee types yet.</CardContent></Card>
-          : feeTypes.map((ft) => (
-            <Card key={ft.id}><CardContent className="p-4 flex items-center justify-between">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="font-medium">{ft.name}</span>
-                  {!ft.isActive && <Badge variant="default">Inactive</Badge>}
-                </div>
-                {ft.description && <p className="text-xs text-muted-foreground mt-0.5">{ft.description}</p>}
-              </div>
-              <div className="flex items-center gap-2">
-                <Button size="sm" variant="ghost" onClick={() => toggleActive(ft)}>{ft.isActive ? "Deactivate" : "Activate"}</Button>
-                <Button size="sm" variant="outline" onClick={() => openEdit(ft)}><Pencil className="w-3.5 h-3.5" /></Button>
-                <Button size="sm" variant="outline" onClick={() => handleDelete(ft.id)}><Trash2 className="w-3.5 h-3.5 text-destructive" /></Button>
-              </div>
-            </CardContent></Card>
-          ))}
-      </div>
-      <Modal open={showModal} onClose={() => setShowModal(false)} title={editing ? "Edit Fee Type" : "Add Fee Type"}>
-        <div className="space-y-4">
-          {formError && <ErrorAlert message={formError} />}
-          <div><label className="block text-sm font-medium mb-1.5">Name *</label>
-            <Input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="e.g. Tuition, Books" /></div>
-          <div><label className="block text-sm font-medium mb-1.5">Description</label>
-            <Input value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} placeholder="Optional description" /></div>
-          <div className="flex justify-end gap-3"><ModalCancelButton /><Button onClick={handleSave} disabled={saving}>{saving ? "Saving…" : "Save"}</Button></div>
-        </div>
-      </Modal>
-    </>
-  );
-}
-
-// ─── Setup: Tuition Rates Tab ─────────────────────────────────────────────────
-
-function SetupTuitionTab({ schoolId }: { schoolId: string }) {
-  const supabase = createClient();
-  const [loading, setLoading] = useState(true);
-  const [academicPeriods, setAcademicPeriods] = useState<AcademicPeriod[]>([]);
-  const [tuitionConfigs, setTuitionConfigs] = useState<TuitionConfig[]>([]);
-  const [classes, setClasses] = useState<SetupClassOption[]>([]);
-  const [selectedPeriodId, setSelectedPeriodId] = useState("");
-  const [showModal, setShowModal] = useState(false);
-  const [editing, setEditing] = useState<TuitionConfig | null>(null);
-  const [form, setForm] = useState({ classId: "", totalAmount: "", months: "10" });
-  const [saving, setSaving] = useState(false);
-  const [formError, setFormError] = useState("");
-
-  const fetchAll = useCallback(async () => {
-    setLoading(true);
-    const [periodsRes, tuitionRes, classesRes] = await Promise.all([
-      supabase.from("academic_periods").select("id, name, school_year_id, start_date, end_date, school_years(name)").eq("school_id", schoolId).order("start_date"),
-      supabase.from("tuition_configs").select("id, academic_period_id, level, total_amount, months, monthly_amount, class_id, academic_periods(name), classes(name)").eq("school_id", schoolId).order("level"),
-      supabase.from("classes").select("id, name, level, school_year_id").eq("school_id", schoolId).eq("is_active", true).order("name"),
-    ]);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const periods = ((periodsRes.data ?? []) as any[]).map((p: any) => ({
-      id: p.id, name: p.name, schoolYearId: p.school_year_id,
-      schoolYearName: p.school_years?.name ?? "", startDate: p.start_date, endDate: p.end_date,
-    }));
-    setAcademicPeriods(periods);
-    if (periods.length > 0) setSelectedPeriodId((prev) => prev || periods[0].id);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    setTuitionConfigs(((tuitionRes.data ?? []) as any[]).map((t: any) => ({
-      id: t.id, academicPeriodId: t.academic_period_id, periodName: t.academic_periods?.name ?? "",
-      level: t.level ?? "", totalAmount: Number(t.total_amount), months: t.months,
-      classId: t.class_id ?? null, className: t.classes?.name ?? null,
-      monthlyAmount: t.monthly_amount != null ? Number(t.monthly_amount) : t.months > 0 ? Number(t.total_amount) / t.months : Number(t.total_amount),
-    })));
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    setClasses(((classesRes.data ?? []) as any[]).map((c: any) => ({ id: c.id, name: c.name, level: c.level ?? "", schoolYearId: c.school_year_id })));
-    setLoading(false);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [schoolId]);
-
-  useEffect(() => { fetchAll(); }, [fetchAll]);
-
-  const filtered = tuitionConfigs.filter((t) => t.academicPeriodId === selectedPeriodId);
-  const selectedPeriod = academicPeriods.find((p) => p.id === selectedPeriodId);
-  const periodClasses = selectedPeriod ? classes.filter((c) => c.schoolYearId === selectedPeriod.schoolYearId) : [];
-  const configuredClassIds = new Set(filtered.map((t) => t.classId).filter((id): id is string => !!id && id !== editing?.classId));
-  const availableClasses = periodClasses.filter((c) => !configuredClassIds.has(c.id));
-
-  function openAdd() { setEditing(null); setForm({ classId: "", totalAmount: "", months: "10" }); setFormError(""); setShowModal(true); }
-  function openEdit(t: TuitionConfig) { setEditing(t); setForm({ classId: t.classId ?? "", totalAmount: String(t.totalAmount), months: String(t.months) }); setFormError(""); setShowModal(true); }
-
-  async function handleSave() {
-    if (!form.classId || !form.totalAmount || !selectedPeriodId) { setFormError("Class, amount, and academic period are required."); return; }
-    setSaving(true); setFormError("");
-    const selectedClass = periodClasses.find((c) => c.id === form.classId);
-    const totalAmount = parseFloat(form.totalAmount);
-    const months = parseInt(form.months) || 1;
-    const monthlyAmount = Math.round((totalAmount / months) * 100) / 100;
-    if (editing) {
-      const { error } = await supabase.from("tuition_configs").update({ class_id: form.classId, level: selectedClass?.level ?? "", total_amount: totalAmount, months, monthly_amount: monthlyAmount }).eq("id", editing.id);
-      if (error) { setFormError(error.message); setSaving(false); return; }
-    } else {
-      const { error } = await supabase.from("tuition_configs").insert({ school_id: schoolId, academic_period_id: selectedPeriodId, class_id: form.classId, level: selectedClass?.level ?? "", total_amount: totalAmount, months, monthly_amount: monthlyAmount });
-      if (error) { setFormError(error.message); setSaving(false); return; }
-    }
-    setSaving(false); setShowModal(false); fetchAll();
-  }
-
-  async function handleDelete(id: string) {
-    if (!confirm("Delete this tuition config?")) return;
-    await supabase.from("tuition_configs").delete().eq("id", id);
-    fetchAll();
-  }
-
-  if (loading) return <div className="flex justify-center py-8"><div className="animate-spin rounded-full border-2 border-border border-t-primary w-8 h-8" /></div>;
-
-  return (
-    <>
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-3">
-          <label className="text-sm font-medium">Academic Period:</label>
-          <Select value={selectedPeriodId} onChange={(e) => setSelectedPeriodId(e.target.value)}>
-            {academicPeriods.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.schoolYearName})</option>)}
-          </Select>
-        </div>
-        {selectedPeriodId && <Button size="sm" onClick={openAdd}><Plus className="w-4 h-4 mr-1" /> Add Class</Button>}
-      </div>
-      {academicPeriods.length === 0
-        ? <Card><CardContent className="p-8 text-center text-sm text-muted-foreground">No academic periods found. Set them up in Settings → Academic Periods.</CardContent></Card>
-        : <div className="grid gap-3">
-            {filtered.length === 0
-              ? <Card><CardContent className="p-8 text-center text-sm text-muted-foreground">No tuition configured for this period.</CardContent></Card>
-              : filtered.map((t) => (
-                <Card key={t.id}><CardContent className="p-4 flex items-center justify-between">
-                  <div>
-                    <p className="font-medium">{t.className ?? t.level}</p>
-                    {t.className && t.level && <p className="text-xs text-muted-foreground">{t.level}</p>}
-                    <p className="text-sm text-muted-foreground mt-0.5">
-                      {formatCurrency(t.totalAmount)} total · {t.months} months · <span className="text-foreground font-medium">{formatCurrency(t.monthlyAmount)}/mo</span>
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button size="sm" variant="outline" onClick={() => openEdit(t)}><Pencil className="w-3.5 h-3.5" /></Button>
-                    <Button size="sm" variant="outline" onClick={() => handleDelete(t.id)}><Trash2 className="w-3.5 h-3.5 text-destructive" /></Button>
-                  </div>
-                </CardContent></Card>
-              ))}
-          </div>
-      }
-      <Modal open={showModal} onClose={() => setShowModal(false)} title={editing ? "Edit Tuition Config" : "Add Tuition Config"}>
-        <div className="space-y-4">
-          {formError && <ErrorAlert message={formError} />}
-          <div>
-            <label className="block text-sm font-medium mb-1.5">Class *</label>
-            <Select value={form.classId} onChange={(e) => setForm((f) => ({ ...f, classId: e.target.value }))}>
-              <option value="">— Select class —</option>
-              {availableClasses.map((c) => <option key={c.id} value={c.id}>{c.name}{c.level ? ` (${c.level})` : ""}</option>)}
-            </Select>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div><label className="block text-sm font-medium mb-1.5">Total Amount (PHP) *</label>
-              <Input type="number" value={form.totalAmount} onChange={(e) => setForm((f) => ({ ...f, totalAmount: e.target.value }))} placeholder="e.g. 25000" min="0" /></div>
-            <div><label className="block text-sm font-medium mb-1.5">No. of Months</label>
-              <Input type="number" value={form.months} onChange={(e) => setForm((f) => ({ ...f, months: e.target.value }))} placeholder="e.g. 10" min="1" max="12" /></div>
-          </div>
-          {form.totalAmount && form.months && (
-            <p className="text-sm text-muted-foreground">Monthly: <strong>{formatCurrency(parseFloat(form.totalAmount) / parseInt(form.months || "1"))}</strong></p>
-          )}
-          <div className="flex justify-end gap-3"><ModalCancelButton /><Button onClick={handleSave} disabled={saving}>{saving ? "Saving…" : "Save"}</Button></div>
-        </div>
-      </Modal>
-    </>
-  );
-}
-
-// ─── Setup: Adjustments Tab (Discounts + Credits) ─────────────────────────────
-
-function SetupAdjustmentsTab({ schoolId }: { schoolId: string }) {
-  const supabase = createClient();
-  const [loading, setLoading] = useState(true);
-  const [discounts, setDiscounts] = useState<Discount[]>([]);
-  const [credits, setCredits] = useState<StudentCredit[]>([]);
-  const [students, setStudents] = useState<SimpleStudent[]>([]);
-
-  // Discount modal state
-  const [showDiscModal, setShowDiscModal] = useState(false);
-  const [editingDisc, setEditingDisc] = useState<Discount | null>(null);
-  const [discForm, setDiscForm] = useState({ name: "", type: "fixed" as DiscountType, scope: "custom" as DiscountScope, value: "" });
-  const [discSaving, setDiscSaving] = useState(false);
-  const [discError, setDiscError] = useState("");
-
-  // Credit modal state
-  const [showCredModal, setShowCredModal] = useState(false);
-  const [credForm, setCredForm] = useState({ studentId: "", amount: "", reason: "" });
-  const [credSaving, setCredSaving] = useState(false);
-  const [credError, setCredError] = useState("");
-  const [credSearch, setCredSearch] = useState("");
-
-  const fetchAll = useCallback(async () => {
-    setLoading(true);
-    const [discRes, credRes, studRes] = await Promise.all([
-      supabase.from("discounts").select("id, name, type, scope, value, is_active").eq("school_id", schoolId).order("name"),
-      supabase.from("student_credits").select("id, student_id, amount, reason, applied_to, created_at, students(first_name, last_name)").eq("school_id", schoolId).order("created_at", { ascending: false }).limit(50),
-      supabase.from("students").select("id, first_name, last_name").eq("school_id", schoolId).order("last_name"),
-    ]);
-    setDiscounts((discRes.data ?? []).map((d) => ({ id: d.id, name: d.name, type: d.type as DiscountType, scope: d.scope as DiscountScope, value: Number(d.value), isActive: d.is_active })));
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    setCredits(((credRes.data ?? []) as any[]).map((c: any) => ({
-      id: c.id, studentId: c.student_id,
-      studentName: c.students ? `${c.students.last_name}, ${c.students.first_name}` : "Unknown",
-      amount: Number(c.amount), reason: c.reason ?? "", appliedTo: c.applied_to, createdAt: c.created_at,
-    })));
-    setStudents((studRes.data ?? []).map((s) => ({ id: s.id, name: `${s.last_name}, ${s.first_name}` })));
-    setLoading(false);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [schoolId]);
-
-  useEffect(() => { fetchAll(); }, [fetchAll]);
-
-  // Discount handlers
-  function openAddDisc() { setEditingDisc(null); setDiscForm({ name: "", type: "fixed", scope: "custom", value: "" }); setDiscError(""); setShowDiscModal(true); }
-  function openEditDisc(d: Discount) { setEditingDisc(d); setDiscForm({ name: d.name, type: d.type, scope: d.scope, value: String(d.value) }); setDiscError(""); setShowDiscModal(true); }
-  async function handleSaveDisc() {
-    if (!discForm.name.trim() || !discForm.value) { setDiscError("Name and value are required."); return; }
-    setDiscSaving(true); setDiscError("");
-    if (editingDisc) {
-      const { error } = await supabase.from("discounts").update({ name: discForm.name.trim(), type: discForm.type, scope: discForm.scope, value: parseFloat(discForm.value) }).eq("id", editingDisc.id);
-      if (error) { setDiscError(error.message); setDiscSaving(false); return; }
-    } else {
-      const { error } = await supabase.from("discounts").insert({ school_id: schoolId, name: discForm.name.trim(), type: discForm.type, scope: discForm.scope, value: parseFloat(discForm.value) });
-      if (error) { setDiscError(error.message); setDiscSaving(false); return; }
-    }
-    setDiscSaving(false); setShowDiscModal(false); fetchAll();
-  }
-  async function toggleDisc(d: Discount) { await supabase.from("discounts").update({ is_active: !d.isActive }).eq("id", d.id); fetchAll(); }
-  async function deleteDisc(id: string) { if (!confirm("Delete this discount?")) return; await supabase.from("discounts").delete().eq("id", id); fetchAll(); }
-
-  // Credit handlers
-  function openAddCred() { setCredForm({ studentId: students[0]?.id ?? "", amount: "", reason: "" }); setCredError(""); setShowCredModal(true); }
-  async function handleSaveCred() {
-    if (!credForm.studentId || !credForm.amount) { setCredError("Student and amount are required."); return; }
-    const parsed = parseFloat(credForm.amount);
-    if (isNaN(parsed) || parsed <= 0) { setCredError("Amount must be a positive number."); return; }
-    setCredSaving(true); setCredError("");
-    const { error } = await supabase.from("student_credits").insert({ school_id: schoolId, student_id: credForm.studentId, amount: parsed, reason: credForm.reason.trim() || null });
-    if (error) { setCredError(error.message); setCredSaving(false); return; }
-    setCredSaving(false); setShowCredModal(false); fetchAll();
-  }
-
-  const filteredCredits = credits.filter((c) =>
-    c.studentName.toLowerCase().includes(credSearch.toLowerCase()) ||
-    c.reason.toLowerCase().includes(credSearch.toLowerCase())
-  );
-  const totalCredits = credits.reduce((a, c) => a + c.amount, 0);
-  const appliedCredits = credits.filter((c) => c.appliedTo).reduce((a, c) => a + c.amount, 0);
-
-  if (loading) return <div className="flex justify-center py-8"><div className="animate-spin rounded-full border-2 border-border border-t-primary w-8 h-8" /></div>;
-
-  return (
-    <div className="space-y-10">
-      {/* Discounts section */}
-      <div>
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <p className="font-semibold text-sm">Discounts</p>
-            <p className="text-xs text-muted-foreground mt-0.5">{discounts.length} discount{discounts.length !== 1 ? "s" : ""} configured</p>
-          </div>
-          <Button size="sm" onClick={openAddDisc}><Plus className="w-4 h-4 mr-1" /> Add Discount</Button>
-        </div>
-        <div className="grid gap-3">
-          {discounts.length === 0
-            ? <Card><CardContent className="p-8 text-center text-sm text-muted-foreground">No discounts configured.</CardContent></Card>
-            : discounts.map((d) => (
-              <Card key={d.id}><CardContent className="p-4 flex items-center justify-between">
-                <div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-medium">{d.name}</span>
-                    <Badge variant="default">{SCOPE_LABELS[d.scope]}</Badge>
-                    {!d.isActive && <Badge variant="default">Inactive</Badge>}
-                  </div>
-                  <p className="text-sm text-muted-foreground mt-0.5">
-                    {TYPE_LABELS[d.type]}: {d.type === "percentage" ? `${d.value}%` : formatCurrency(d.value)}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button size="sm" variant="ghost" onClick={() => toggleDisc(d)}>{d.isActive ? "Deactivate" : "Activate"}</Button>
-                  <Button size="sm" variant="outline" onClick={() => openEditDisc(d)}><Pencil className="w-3.5 h-3.5" /></Button>
-                  <Button size="sm" variant="outline" onClick={() => deleteDisc(d.id)}><Trash2 className="w-3.5 h-3.5 text-destructive" /></Button>
-                </div>
-              </CardContent></Card>
-            ))}
-        </div>
-      </div>
-
-      {/* Student Credits section */}
-      <div className="border-t border-border pt-8">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <p className="font-semibold text-sm">Student Credits</p>
-            <p className="text-xs text-muted-foreground mt-0.5">Issued: {formatCurrency(totalCredits)} · Applied: {formatCurrency(appliedCredits)} · Outstanding: {formatCurrency(totalCredits - appliedCredits)}</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Input value={credSearch} onChange={(e) => setCredSearch(e.target.value)} placeholder="Search…" className="w-44 h-8 text-sm" />
-            <Button size="sm" onClick={openAddCred}><Plus className="w-4 h-4 mr-1" /> Issue Credit</Button>
-          </div>
-        </div>
-        <Card><CardContent className="p-0">
-          {filteredCredits.length === 0
-            ? <p className="p-8 text-center text-sm text-muted-foreground">No credits found.</p>
-            : <div className="overflow-x-auto"><table className="w-full text-sm">
-                <thead><tr className="border-b border-border bg-muted/50">
-                  <th className="text-left px-4 py-3 font-medium">Student</th>
-                  <th className="text-left px-4 py-3 font-medium">Reason</th>
-                  <th className="text-right px-4 py-3 font-medium">Amount</th>
-                  <th className="text-center px-4 py-3 font-medium">Status</th>
-                  <th className="text-left px-4 py-3 font-medium">Date</th>
-                </tr></thead>
-                <tbody className="divide-y divide-border">
-                  {filteredCredits.map((c) => (
-                    <tr key={c.id} className="hover:bg-muted/30">
-                      <td className="px-4 py-3 font-medium">{c.studentName}</td>
-                      <td className="px-4 py-3 text-muted-foreground">{c.reason || "—"}</td>
-                      <td className="px-4 py-3 text-right font-medium text-green-700">{formatCurrency(c.amount)}</td>
-                      <td className="px-4 py-3 text-center">
-                        {c.appliedTo ? <Badge variant="enrolled">Applied</Badge> : <Badge variant="inquiry">Pending</Badge>}
-                      </td>
-                      <td className="px-4 py-3 text-muted-foreground">{new Date(c.createdAt).toLocaleDateString("en-PH")}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table></div>}
-        </CardContent></Card>
-      </div>
-
-      {/* Discount modal */}
-      <Modal open={showDiscModal} onClose={() => setShowDiscModal(false)} title={editingDisc ? "Edit Discount" : "Add Discount"}>
-        <div className="space-y-4">
-          {discError && <ErrorAlert message={discError} />}
-          <div><label className="block text-sm font-medium mb-1.5">Discount Name *</label>
-            <Input value={discForm.name} onChange={(e) => setDiscForm((f) => ({ ...f, name: e.target.value }))} placeholder="e.g. Sibling Discount" /></div>
-          <div className="grid grid-cols-2 gap-4">
-            <div><label className="block text-sm font-medium mb-1.5">Type</label>
-              <Select value={discForm.type} onChange={(e) => setDiscForm((f) => ({ ...f, type: e.target.value as DiscountType }))}>
-                <option value="fixed">Fixed Amount</option><option value="percentage">Percentage</option><option value="credit">Credit</option>
-              </Select></div>
-            <div><label className="block text-sm font-medium mb-1.5">Scope</label>
-              <Select value={discForm.scope} onChange={(e) => setDiscForm((f) => ({ ...f, scope: e.target.value as DiscountScope }))}>
-                <option value="custom">Custom</option><option value="full_payment">Full Payment</option>
-                <option value="early_enrollment">Early Enrollment</option><option value="sibling">Sibling</option>
-                <option value="summer_to_sy">Summer → School Year</option>
-              </Select></div>
-          </div>
-          <div><label className="block text-sm font-medium mb-1.5">Value {discForm.type === "percentage" ? "(%)" : "(PHP)"} *</label>
-            <Input type="number" value={discForm.value} onChange={(e) => setDiscForm((f) => ({ ...f, value: e.target.value }))} placeholder={discForm.type === "percentage" ? "e.g. 10" : "e.g. 500"} min="0" /></div>
-          <div className="flex justify-end gap-3"><ModalCancelButton /><Button onClick={handleSaveDisc} disabled={discSaving}>{discSaving ? "Saving…" : "Save"}</Button></div>
-        </div>
-      </Modal>
-
-      {/* Credit modal */}
-      <Modal open={showCredModal} onClose={() => setShowCredModal(false)} title="Issue Student Credit">
-        <div className="space-y-4">
-          {credError && <ErrorAlert message={credError} />}
-          <div><label className="block text-sm font-medium mb-1.5">Student *</label>
-            <Select value={credForm.studentId} onChange={(e) => setCredForm((f) => ({ ...f, studentId: e.target.value }))}>
-              {students.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </Select></div>
-          <div><label className="block text-sm font-medium mb-1.5">Amount (PHP) *</label>
-            <Input type="number" value={credForm.amount} onChange={(e) => setCredForm((f) => ({ ...f, amount: e.target.value }))} placeholder="e.g. 500" min="0" /></div>
-          <div><label className="block text-sm font-medium mb-1.5">Reason</label>
-            <Textarea value={credForm.reason} onChange={(e) => setCredForm((f) => ({ ...f, reason: e.target.value }))} placeholder="e.g. Converted from sibling discount" rows={2} /></div>
-          <div className="flex justify-end gap-3"><ModalCancelButton /><Button onClick={handleSaveCred} disabled={credSaving}>{credSaving ? "Saving…" : "Issue Credit"}</Button></div>
-        </div>
-      </Modal>
-    </div>
-  );
-}
 
 // ─── BillingPage ──────────────────────────────────────────────────────────────
 
@@ -712,11 +58,14 @@ export default function BillingPage() {
   const [classFilter, setClassFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [monthFilter, setMonthFilter] = useState("");
+  const [showSettled, setShowSettled] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   // Payments tab filters
   const [paymentsSearch, setPaymentsSearch] = useState("");
   const [paymentsMethodFilter, setPaymentsMethodFilter] = useState("");
+  const [paymentsDateFrom, setPaymentsDateFrom] = useState("");
+  const [paymentsDateTo, setPaymentsDateTo] = useState("");
   const [payBillSelectModal, setPayBillSelectModal] = useState(false);
   const [payBillSearch, setPayBillSearch] = useState("");
 
@@ -775,6 +124,17 @@ export default function BillingPage() {
   // Receipt modal
   const [receiptData, setReceiptData] = useState<{ payment: PaymentRecord; record: BillingRecord } | null>(null);
 
+  // Edit payment modal (OR# + receipt photo)
+  const [editPaymentModal, setEditPaymentModal] = useState<PaymentRecord | null>(null);
+  const [editPaymentRecord, setEditPaymentRecord] = useState<BillingRecord | null>(null);
+  const [editPaymentForm, setEditPaymentForm] = useState<{ orNumber: string; receiptFile: File | null }>({ orNumber: "", receiptFile: null });
+  const [editPaymentSaving, setEditPaymentSaving] = useState(false);
+  const [editPaymentError, setEditPaymentError] = useState<string | null>(null);
+
+  // Toast notification
+  const [toast, setToast] = useState<string | null>(null);
+  function showToast(msg: string) { setToast(msg); setTimeout(() => setToast(null), 4000); }
+
   // Statement modal
   const [statementStudentId, setStatementStudentId] = useState<string | null>(null);
   const [statementStudentName, setStatementStudentName] = useState("");
@@ -793,7 +153,7 @@ export default function BillingPage() {
       .from("billing_records")
       .select("id, student_id, class_id, amount_due, status, due_date, billing_month, description, notes, students(first_name, last_name), classes(name)")
       .eq("school_id", schoolId!)
-      .order("due_date", { ascending: false });
+      .order("billing_month", { ascending: true });
     if (bResult.error) { setError(bResult.error.message); return null; }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const billingRows = (bResult.data ?? []) as any[];
@@ -815,7 +175,7 @@ export default function BillingPage() {
         studentName: b.students ? `${b.students.first_name} ${b.students.last_name}` : "—",
         classId: b.class_id ?? null, className: b.classes?.name ?? "—",
         description: b.description ?? "", dueDate: b.due_date ?? null,
-        billingMonth: b.billing_month ?? "", amountDue: Number(b.amount_due), amountPaid,
+        billingMonth: b.billing_month ? b.billing_month.substring(0, 7) : "", amountDue: Number(b.amount_due), amountPaid,
         status: computeStatus(b.status as BillingStatus, Number(b.amount_due), amountPaid, b.due_date),
         notes: b.notes ?? null,
       };
@@ -900,6 +260,31 @@ export default function BillingPage() {
     setLoading(false);
   }
 
+  async function loadGenConfigs(periodId: string) {
+    setGenLoading(true);
+    const rateByClassId: Record<string, number> = {};
+    const rateByLevel: Record<string, number> = {};
+    if (periodId && schoolId) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: configs } = await (supabase as any).from("tuition_configs")
+        .select("class_id, level, monthly_amount, total_amount, months")
+        .eq("school_id", schoolId).eq("academic_period_id", periodId);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ((configs ?? []) as any[]).forEach((c: any) => {
+        const monthly = c.monthly_amount != null ? Number(c.monthly_amount) : c.months > 0 ? Math.round(c.total_amount / c.months) : Number(c.total_amount);
+        if (c.class_id) rateByClassId[c.class_id] = monthly;
+        if (c.level) rateByLevel[c.level] = monthly;
+      });
+    }
+    const rows = classOptions.filter((c) => c.enrolled > 0).map((c) => {
+      const rate = rateByClassId[c.id] ?? (c.level ? (rateByLevel[c.level] ?? null) : null);
+      return { classId: c.id, className: c.name, level: c.level ?? "", studentCount: c.enrolled, configRate: rate, overrideRate: rate !== null ? String(rate) : "", include: true };
+    });
+    setGenClasses(rows);
+    setGenFlatClassIds(rows.map((r) => r.classId));
+    setGenLoading(false);
+  }
+
   async function openGenModal() {
     const thisMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
     setGenModal(true); setGenMode("configs"); setGenMonthFrom(thisMonth); setGenMonthTo(thisMonth);
@@ -909,41 +294,23 @@ export default function BillingPage() {
     const tuitionType = feeTypes.find((f) => f.name.toLowerCase().includes("tuition"));
     setGenFeeTypeId(tuitionType?.id ?? feeTypes[0]?.id ?? "");
     setGenLoading(true);
-    const rateByClassId: Record<string, number> = {};
-    const rateByLevel: Record<string, number> = {};
     if (activeYear?.id && schoolId) {
-      // Load all periods for the selector
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: allPeriods } = await (supabase as any).from("academic_periods").select("id, name")
         .eq("school_id", schoolId).eq("school_year_id", activeYear.id).order("start_date");
-      setGenAllPeriods(((allPeriods ?? []) as any[]).map((p: any) => ({ id: p.id, name: p.name })));
-
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: period } = await (supabase as any).from("academic_periods").select("id")
-        .eq("school_id", schoolId).eq("school_year_id", activeYear.id).eq("is_active", true).maybeSingle();
-      const selectedPeriodId = period?.id ?? "";
-      setGenAcademicPeriodId(selectedPeriodId);
-      if (selectedPeriodId) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: configs } = await (supabase as any).from("tuition_configs").select("class_id, level, monthly_amount, total_amount, months")
-          .eq("school_id", schoolId).eq("academic_period_id", selectedPeriodId);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ((configs ?? []) as any[]).forEach((c: any) => {
-          const monthly = c.monthly_amount != null ? Number(c.monthly_amount) : c.months > 0 ? Math.round(c.total_amount / c.months) : Number(c.total_amount);
-          if (c.class_id) rateByClassId[c.class_id] = monthly;
-          if (c.level) rateByLevel[c.level] = monthly;
-        });
-      } else {
-        setGenError("No active academic period found. Go to Setup → Tuition Rates and mark a period as active.");
-      }
+      const periods = ((allPeriods ?? []) as any[]).map((p: any) => ({ id: p.id, name: p.name }));
+      setGenAllPeriods(periods);
+      // Prefer "Regular Term" → any non-summer/non-short → first available
+      const best = periods.find((p) => /regular/i.test(p.name))
+        ?? periods.find((p) => !/(summer|short)/i.test(p.name))
+        ?? periods[0];
+      const defaultPeriodId = best?.id ?? "";
+      setGenAcademicPeriodId(defaultPeriodId);
+      await loadGenConfigs(defaultPeriodId);
+    } else {
+      setGenLoading(false);
     }
-    const rows = classOptions.filter((c) => c.enrolled > 0).map((c) => {
-      const rate = rateByClassId[c.id] ?? (c.level ? (rateByLevel[c.level] ?? null) : null);
-      return { classId: c.id, className: c.name, level: c.level ?? "", studentCount: c.enrolled, configRate: rate, overrideRate: rate !== null ? String(rate) : "", include: true };
-    });
-    setGenClasses(rows);
-    setGenFlatClassIds(rows.map((r) => r.classId));
-    setGenLoading(false);
   }
 
   async function executeGen() {
@@ -1037,10 +404,10 @@ export default function BillingPage() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: earlier } = await (supabase as any).from("billing_records")
       .select("billing_month").eq("school_id", schoolId).eq("student_id", record.studentId)
-      .in("status", ["unpaid", "overdue"]).lt("billing_month", record.billingMonth);
+      .in("status", ["unpaid", "overdue"]).lt("billing_month", record.billingMonth + "-01");
     const rows = (earlier ?? []) as { billing_month: string }[];
     if (rows.length > 0) {
-      const labels = rows.slice(0, 3).map((r) => formatMonth(r.billing_month + "-01")).join(", ");
+      const labels = rows.slice(0, 3).map((r) => formatMonth(r.billing_month)).join(", ");
       const extra = rows.length > 3 ? ` (+${rows.length - 3} more)` : "";
       setPaymentSequenceWarning(`This student has ${rows.length} unpaid earlier month${rows.length > 1 ? "s" : ""}: ${labels}${extra}. Settling earlier months first is recommended.`);
     }
@@ -1064,9 +431,28 @@ export default function BillingPage() {
     }).select("id").single();
     if (pResult.error) { setFormError(pResult.error.message); setSaving(false); return; }
     if (payment.receiptFile && pResult.data?.id) {
-      const ext = payment.receiptFile.name.split(".").pop()?.toLowerCase() ?? "jpg";
-      const path = `payment-receipts/${pResult.data.id}.${ext}`;
-      const { error: uploadErr } = await supabase.storage.from("updates-media").upload(path, payment.receiptFile, { upsert: true });
+      const uploadError = validateUpload(payment.receiptFile, RECEIPT_MAX_BYTES);
+      if (uploadError) {
+        // Payment is already saved — show the upload error without blocking the payment record
+        setFormError(`Payment recorded, but receipt not uploaded: ${uploadError}`);
+        setSaving(false);
+        setPaymentModal(null);
+        setPayment(EMPTY_PAYMENT);
+        setPaymentSequenceWarning(null);
+        setPaymentOverrideReason("");
+        showToast(`Payment of ${formatCurrency(amount)} recorded. To view payment details, go to the Payments tab.`);
+        await refreshData();
+        return;
+      }
+      const ext = ("." + (payment.receiptFile.name.split(".").pop() ?? "jpeg")).toLowerCase();
+      // School-scoped path keeps receipts separate from class-update photos within the bucket
+      const path = `payment-receipts/${schoolId}/${pResult.data.id}${ext}`;
+      const { error: uploadErr } = await supabase.storage
+        .from("updates-media")
+        .upload(path, payment.receiptFile, {
+          upsert: true,
+          contentType: contentTypeFromExt(payment.receiptFile.name),
+        });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       if (!uploadErr) await (supabase as any).from("payments").update({ receipt_photo_path: path }).eq("id", pResult.data.id);
     }
@@ -1076,6 +462,7 @@ export default function BillingPage() {
     await (supabase as any).from("billing_records").update({ status: newStatus }).eq("id", paymentModal.id);
     setSaving(false); setPaymentModal(null); setPayment(EMPTY_PAYMENT);
     setPaymentSequenceWarning(null); setPaymentOverrideReason("");
+    showToast(`Payment of ${formatCurrency(amount)} recorded successfully. To view payment details, go to the Payments tab.`);
     await refreshData();
   }
 
@@ -1086,7 +473,7 @@ export default function BillingPage() {
     if (feeTypes.length > 0 && !effectiveFeeTypeId) return;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let q = (supabase as any).from("billing_records").select("id, description, status")
-      .eq("school_id", schoolId).eq("student_id", studentId).eq("billing_month", billingMonth);
+      .eq("school_id", schoolId).eq("student_id", studentId).eq("billing_month", billingMonth + "-01");
     if (feeTypes.length > 0 && effectiveFeeTypeId) q = q.eq("fee_type_id", effectiveFeeTypeId);
     const { data } = await q;
     const active = ((data ?? []) as { id: string; description: string; status: string }[]).filter((r) => r.status !== "cancelled" && r.status !== "waived");
@@ -1114,7 +501,7 @@ export default function BillingPage() {
       school_id: schoolId!, student_id: addForm.studentId, school_year_id: activeYear.id,
       class_id: student?.classId ?? null, amount_due: amount,
       status: addForm.markAsPaid ? "paid" : "unpaid",
-      due_date: addForm.dueDate || null, billing_month: addForm.billingMonth,
+      due_date: addForm.dueDate || null, billing_month: addForm.billingMonth + "-01",
       description, notes: notesFromOverride, fee_type_id: addForm.feeTypeId || null,
     }).select("id").single();
     if (rResult.error) { setFormError(rResult.error.message); setSaving(false); return; }
@@ -1147,7 +534,7 @@ export default function BillingPage() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const updateData: Record<string, any> = {
       description: editForm.description.trim() || null, amount_due: amount,
-      due_date: editForm.dueDate || null, billing_month: editForm.billingMonth,
+      due_date: editForm.dueDate || null, billing_month: editForm.billingMonth + "-01",
       status: newStatus, notes: editForm.notes.trim() || null,
     };
     if (editForm.changeReason.trim()) { updateData.change_reason = editForm.changeReason.trim(); updateData.changed_by = userId || null; updateData.changed_at = new Date().toISOString(); }
@@ -1199,6 +586,37 @@ export default function BillingPage() {
     if (data?.signedUrl) window.open(data.signedUrl, "_blank");
   }
 
+  function openEditPaymentModal(payment: PaymentRecord, record: BillingRecord | null) {
+    setEditPaymentModal(payment);
+    setEditPaymentRecord(record);
+    setEditPaymentForm({ orNumber: payment.orNumber ?? "", receiptFile: null });
+    setEditPaymentError(null);
+  }
+
+  async function handleEditPayment() {
+    if (!editPaymentModal || !schoolId) return;
+    setEditPaymentSaving(true); setEditPaymentError(null);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const update: Record<string, any> = { or_number: editPaymentForm.orNumber.trim() || null };
+    if (editPaymentForm.receiptFile) {
+      const uploadError = validateUpload(editPaymentForm.receiptFile, RECEIPT_MAX_BYTES);
+      if (uploadError) { setEditPaymentError(uploadError); setEditPaymentSaving(false); return; }
+      const ext = ("." + (editPaymentForm.receiptFile.name.split(".").pop() ?? "jpeg")).toLowerCase();
+      const path = `payment-receipts/${schoolId}/${editPaymentModal.id}${ext}`;
+      const { error: uploadErr } = await supabase.storage.from("updates-media").upload(path, editPaymentForm.receiptFile, { upsert: true, contentType: contentTypeFromExt(editPaymentForm.receiptFile.name) });
+      if (uploadErr) { setEditPaymentError(uploadErr.message); setEditPaymentSaving(false); return; }
+      update.receipt_photo_path = path;
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (supabase as any).from("payments").update(update).eq("id", editPaymentModal.id);
+    if (error) { setEditPaymentError(error.message); setEditPaymentSaving(false); return; }
+    setEditPaymentSaving(false);
+    setEditPaymentModal(null);
+    // Reopen history modal so the updated row is visible
+    if (editPaymentRecord) await openHistoryModal(editPaymentRecord);
+    await refreshData();
+  }
+
   async function openStatementModal(studentId: string, studentName: string) {
     setStatementStudentId(studentId); setStatementStudentName(studentName);
     setStatementData([]); setStatementLoading(true);
@@ -1223,7 +641,7 @@ export default function BillingPage() {
       setStatementData(rows.map((r: any) => {
         const payments = paymentsByRecord[r.id] ?? [];
         const amountPaid = payments.reduce((a: number, p: PaymentRecord) => a + p.amount, 0);
-        return { billingRecord: { id: r.id, studentId, studentName, classId: r.class_id ?? null, className: r.classes?.name ?? "—", description: r.description ?? "", dueDate: r.due_date ?? null, billingMonth: r.billing_month ?? "", amountDue: Number(r.amount_due), amountPaid, status: computeStatus(r.status as BillingStatus, Number(r.amount_due), amountPaid, r.due_date), notes: r.notes ?? null } as BillingRecord, payments };
+        return { billingRecord: { id: r.id, studentId, studentName, classId: r.class_id ?? null, className: r.classes?.name ?? "—", description: r.description ?? "", dueDate: r.due_date ?? null, billingMonth: r.billing_month ? r.billing_month.substring(0, 7) : "", amountDue: Number(r.amount_due), amountPaid, status: computeStatus(r.status as BillingStatus, Number(r.amount_due), amountPaid, r.due_date), notes: r.notes ?? null } as BillingRecord, payments };
       }));
     }
     setStatementLoading(false);
@@ -1237,7 +655,9 @@ export default function BillingPage() {
 
   // Derived
   const classNames = Array.from(new Set(records.map((r) => r.className).filter((n) => n !== "—")));
+  const SETTLED_STATUSES = new Set<BillingStatus>(["paid", "cancelled", "waived", "refunded"]);
   const filtered = records.filter((r) => {
+    if (!showSettled && SETTLED_STATUSES.has(r.status)) return false;
     const matchSearch = !search || r.studentName.toLowerCase().includes(search.toLowerCase());
     const matchClass = !classFilter || r.className === classFilter;
     const matchStatus = !statusFilter || r.status === statusFilter;
@@ -1253,7 +673,9 @@ export default function BillingPage() {
   const filteredAllPayments = allPayments.filter((p) => {
     const matchSearch = !paymentsSearch || p.studentName.toLowerCase().includes(paymentsSearch.toLowerCase()) || p.description.toLowerCase().includes(paymentsSearch.toLowerCase());
     const matchMethod = !paymentsMethodFilter || p.method === paymentsMethodFilter;
-    return matchSearch && matchMethod;
+    const matchFrom = !paymentsDateFrom || p.date >= paymentsDateFrom;
+    const matchTo = !paymentsDateTo || p.date <= paymentsDateTo;
+    return matchSearch && matchMethod && matchFrom && matchTo;
   });
 
   const unpaidBillsForSelect = records.filter((r) => r.status !== "paid" && r.status !== "cancelled" && r.status !== "refunded" && r.status !== "waived");
@@ -1291,11 +713,7 @@ export default function BillingPage() {
               </Button>
             </>
           )}
-          {mainTab === "payments" && (
-            <Button onClick={() => { setPayBillSearch(""); setPayBillSelectModal(true); }}>
-              <Banknote className="w-4 h-4" /> Record Payment
-            </Button>
-          )}
+          {/* Record Payment is initiated from the Pay button on each bill row */}
         </div>
       </div>
 
@@ -1304,7 +722,7 @@ export default function BillingPage() {
       {/* Main Tab Bar */}
       <div className="border-b border-border">
         <nav className="flex gap-1">
-          {([["bills", "Bills", Receipt], ["payments", "Payments", Banknote], ["setup", "Setup", Settings2]] as const).map(([tab, label, Icon]) => (
+          {([["bills", "Bills", FileText], ["payments", "Payments", Banknote], ["setup", "Setup", Settings2]] as const).map(([tab, label, Icon]) => (
             <button key={tab} onClick={() => setMainTab(tab as MainTab)}
               className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px ${mainTab === tab ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
               <Icon className="w-4 h-4" />{label}
@@ -1316,6 +734,7 @@ export default function BillingPage() {
       {/* ── Bills Tab ── */}
       {mainTab === "bills" && (
         <div className="space-y-4">
+          <p className="text-sm text-muted-foreground -mt-2">What students owe</p>
           {/* Filters */}
           <div className="flex flex-col sm:flex-row gap-3 flex-wrap">
             <div className="flex-1 relative min-w-[200px]">
@@ -1330,6 +749,10 @@ export default function BillingPage() {
             <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="sm:w-36">
               {STATUS_OPTS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </Select>
+            <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer select-none whitespace-nowrap">
+              <input type="checkbox" checked={showSettled} onChange={(e) => setShowSettled(e.target.checked)} className="rounded" />
+              Show paid/settled
+            </label>
           </div>
 
           {/* Bulk actions */}
@@ -1357,7 +780,6 @@ export default function BillingPage() {
                     <th className="px-4 py-3 text-left font-medium text-muted-foreground">Description</th>
                     <th className="px-4 py-3 text-left font-medium text-muted-foreground">Month</th>
                     <th className="px-4 py-3 text-right font-medium text-muted-foreground">Due</th>
-                    <th className="px-4 py-3 text-right font-medium text-muted-foreground">Paid</th>
                     <th className="px-4 py-3 text-right font-medium text-muted-foreground">Balance</th>
                     <th className="px-4 py-3 text-left font-medium text-muted-foreground">Status</th>
                     <th className="px-4 py-3 text-left font-medium text-muted-foreground">Due Date</th>
@@ -1366,7 +788,7 @@ export default function BillingPage() {
                 </thead>
                 <tbody className="divide-y divide-border">
                   {filtered.length === 0 ? (
-                    <tr><td colSpan={11} className="px-4 py-10 text-center text-muted-foreground text-sm">No billing records found.</td></tr>
+                    <tr><td colSpan={10} className="px-4 py-10 text-center text-muted-foreground text-sm">No billing records found.</td></tr>
                   ) : filtered.map((r) => {
                     const balance = r.amountDue - r.amountPaid;
                     const aging = r.status === "overdue" ? getAgingDays(r.dueDate) : null;
@@ -1383,7 +805,6 @@ export default function BillingPage() {
                         <td className="px-4 py-3 text-muted-foreground max-w-[180px] truncate">{r.description || "—"}</td>
                         <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">{r.billingMonth ? formatMonth(r.billingMonth + "-01") : "—"}</td>
                         <td className="px-4 py-3 text-right font-medium">{formatCurrency(r.amountDue)}</td>
-                        <td className="px-4 py-3 text-right text-green-600">{formatCurrency(r.amountPaid)}</td>
                         <td className="px-4 py-3 text-right font-medium text-red-600">{balance > 0 && r.status !== "cancelled" && r.status !== "waived" ? formatCurrency(balance) : "—"}</td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-1.5">
@@ -1417,8 +838,9 @@ export default function BillingPage() {
       {/* ── Payments Tab ── */}
       {mainTab === "payments" && (
         <div className="space-y-4">
-          <div className="flex flex-col sm:flex-row gap-3">
-            <div className="flex-1 relative">
+          <p className="text-sm text-muted-foreground -mt-2">What&apos;s been collected</p>
+          <div className="flex flex-col sm:flex-row gap-3 flex-wrap">
+            <div className="flex-1 relative min-w-[200px]">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input placeholder="Search student or description..." value={paymentsSearch} onChange={(e) => setPaymentsSearch(e.target.value)} className="pl-9" />
             </div>
@@ -1430,6 +852,8 @@ export default function BillingPage() {
               <option value="bank_transfer">Bank Transfer</option>
               <option value="other">Other</option>
             </Select>
+            <DatePicker value={paymentsDateFrom} onChange={setPaymentsDateFrom} placeholder="From date" className="sm:w-40" />
+            <DatePicker value={paymentsDateTo} onChange={setPaymentsDateTo} placeholder="To date" className="sm:w-40" />
           </div>
 
           <div className="border border-border rounded-xl overflow-hidden">
@@ -1438,7 +862,6 @@ export default function BillingPage() {
                 <thead>
                   <tr className="bg-muted border-b border-border">
                     <th className="px-4 py-3 text-left font-medium text-muted-foreground">Student</th>
-                    <th className="px-4 py-3 text-left font-medium text-muted-foreground">Class</th>
                     <th className="px-4 py-3 text-left font-medium text-muted-foreground">Description</th>
                     <th className="px-4 py-3 text-left font-medium text-muted-foreground">Month</th>
                     <th className="px-4 py-3 text-right font-medium text-muted-foreground">Amount</th>
@@ -1450,11 +873,10 @@ export default function BillingPage() {
                 </thead>
                 <tbody className="divide-y divide-border">
                   {filteredAllPayments.length === 0 ? (
-                    <tr><td colSpan={9} className="px-4 py-10 text-center text-muted-foreground text-sm">No payments found.</td></tr>
+                    <tr><td colSpan={8} className="px-4 py-10 text-center text-muted-foreground text-sm">No payments found.</td></tr>
                   ) : filteredAllPayments.map((p) => (
                     <tr key={p.id} className="hover:bg-muted/40 transition-colors">
                       <td className="px-4 py-3 font-medium">{p.studentName}</td>
-                      <td className="px-4 py-3 text-muted-foreground">{p.className}</td>
                       <td className="px-4 py-3 text-muted-foreground max-w-[160px] truncate">{p.description || "—"}</td>
                       <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">{p.billingMonth ? formatMonth(p.billingMonth + "-01") : "—"}</td>
                       <td className="px-4 py-3 text-right font-medium text-green-600">{formatCurrency(p.amount)}</td>
@@ -1462,11 +884,24 @@ export default function BillingPage() {
                       <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">{p.date}</td>
                       <td className="px-4 py-3 text-muted-foreground font-mono text-xs">{p.orNumber || "—"}</td>
                       <td className="px-4 py-3">
-                        {p.receiptPhotoPath && (
-                          <button onClick={() => openReceiptPhoto(p.receiptPhotoPath!)} className="flex items-center gap-1 text-xs text-primary hover:underline">
-                            <ImageIcon className="w-3.5 h-3.5" /> Photo
-                          </button>
-                        )}
+                        <div className="flex items-center gap-1 justify-end">
+                          {p.receiptPhotoPath && (
+                            <button onClick={() => openReceiptPhoto(p.receiptPhotoPath!)} className="flex items-center gap-1 text-xs text-primary hover:underline mr-1">
+                              <ImageIcon className="w-3.5 h-3.5" /> Photo
+                            </button>
+                          )}
+                          <Button size="sm" variant="ghost" title="Print receipt" onClick={() => {
+                            const rec = records.find((r) => r.id === p.billingRecordId) ?? null;
+                            if (!rec) return;
+                            const pr: PaymentRecord = { id: p.id, amount: p.amount, method: p.method, date: p.date, reference: p.reference, orNumber: p.orNumber, notes: p.notes, receiptPhotoPath: p.receiptPhotoPath };
+                            setReceiptData({ payment: pr, record: rec });
+                          }}><Printer className="w-3.5 h-3.5" /></Button>
+                          <Button size="sm" variant="ghost" title="Edit OR# / receipt" onClick={() => {
+                            const rec = records.find((r) => r.id === p.billingRecordId) ?? null;
+                            const pr: PaymentRecord = { id: p.id, amount: p.amount, method: p.method, date: p.date, reference: p.reference, orNumber: p.orNumber, notes: p.notes, receiptPhotoPath: p.receiptPhotoPath };
+                            openEditPaymentModal(pr, rec);
+                          }}><Pencil className="w-3.5 h-3.5" /></Button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -1580,7 +1015,16 @@ export default function BillingPage() {
             </div>
             <div>
               <label className="block text-sm font-medium mb-1.5">Receipt Photo <span className="text-muted-foreground font-normal">(optional)</span></label>
-              <input type="file" accept="image/*" onChange={(e) => setPayment((p) => ({ ...p, receiptFile: e.target.files?.[0] ?? null }))} className="text-sm" />
+              <label className="flex items-center gap-2 w-fit cursor-pointer">
+                <div className="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-lg bg-background hover:bg-muted transition-colors">
+                  <ImageIcon className="w-3.5 h-3.5 text-muted-foreground" />
+                  <span className="text-muted-foreground">{payment.receiptFile ? payment.receiptFile.name : "Attach photo"}</span>
+                </div>
+                <input type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" onChange={(e) => setPayment((p) => ({ ...p, receiptFile: e.target.files?.[0] ?? null }))} className="sr-only" />
+              </label>
+              {payment.receiptFile && (
+                <button type="button" onClick={() => setPayment((p) => ({ ...p, receiptFile: null }))} className="mt-1 text-xs text-muted-foreground hover:text-destructive transition-colors">Remove</button>
+              )}
             </div>
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="outline" onClick={() => { setPaymentModal(null); setPayment(EMPTY_PAYMENT); setPaymentSequenceWarning(null); setPaymentOverrideReason(""); setFormError(null); }}>Cancel</Button>
@@ -1727,7 +1171,7 @@ export default function BillingPage() {
           {genAllPeriods.length > 0 && (
             <div className="space-y-1.5">
               <label className="block text-sm font-semibold">Academic Period</label>
-              <Select value={genAcademicPeriodId} onChange={(e) => setGenAcademicPeriodId(e.target.value)}>
+              <Select value={genAcademicPeriodId} onChange={(e) => { setGenAcademicPeriodId(e.target.value); loadGenConfigs(e.target.value); }}>
                 <option value="">— All periods (no filter) —</option>
                 {genAllPeriods.map((p) => (
                   <option key={p.id} value={p.id}>{p.name}</option>
@@ -1775,7 +1219,7 @@ export default function BillingPage() {
                       <div className="col-span-1" /><div className="col-span-4">Class</div><div className="col-span-2">Level</div><div className="col-span-2 text-center">Students</div><div className="col-span-3">Monthly Amount</div>
                     </div>
                   </div>
-                  <div className="divide-y divide-border max-h-64 overflow-y-auto">
+                  <div className="divide-y divide-border max-h-64 overflow-y-auto [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full">
                     {genClasses.map((cls) => (
                       <div key={cls.classId} className={`px-4 py-3 ${!cls.include ? "opacity-50" : ""}`}>
                         <div className="grid grid-cols-12 gap-2 items-start">
@@ -1983,6 +1427,7 @@ export default function BillingPage() {
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
                       {p.receiptPhotoPath && <button onClick={() => openReceiptPhoto(p.receiptPhotoPath!)} className="flex items-center gap-1 text-xs text-primary hover:underline"><ImageIcon className="w-3.5 h-3.5" /> Photo</button>}
+                      <Button variant="ghost" size="sm" onClick={() => openEditPaymentModal(p, historyModal)} title="Edit OR# / receipt"><Pencil className="w-3.5 h-3.5" /></Button>
                       <Button variant="outline" size="sm" onClick={() => setReceiptData({ payment: p, record: historyModal })}><Printer className="w-3.5 h-3.5" /> Receipt</Button>
                     </div>
                   </div>
@@ -1998,11 +1443,11 @@ export default function BillingPage() {
       </Modal>
 
       {/* ── Receipt Modal ── */}
-      <Modal open={!!receiptData} onClose={() => setReceiptData(null)} title="Official Receipt">
+      <Modal open={!!receiptData} onClose={() => setReceiptData(null)} title="Payment Receipt">
         {receiptData && (
           <div className="space-y-4">
             <div id="receipt-print-content" style={{ display: "none" }}>
-              <h1>{schoolName}</h1><h2>Official Receipt</h2><div className="divider" />
+              <h1>{schoolName}</h1><h2>Payment Receipt</h2><div className="divider" />
               <div className="meta">
                 <div className="meta-block"><p className="label">OR Number</p><p className="value">{receiptData.payment.orNumber || "—"}</p></div>
                 <div className="meta-block"><p className="label">Date</p><p className="value">{receiptData.payment.date}</p></div>
@@ -2110,6 +1555,43 @@ export default function BillingPage() {
         </div>
       </Modal>
 
+      {/* ── Edit Payment Modal (OR# + receipt photo) ── */}
+      <Modal open={!!editPaymentModal} onClose={() => setEditPaymentModal(null)} title="Edit Payment">
+        {editPaymentModal && (
+          <div className="space-y-4">
+            <div className="p-3 bg-muted rounded-lg text-sm space-y-1">
+              <p><span className="text-muted-foreground">Amount:</span> <strong>{formatCurrency(editPaymentModal.amount)}</strong> · {editPaymentModal.date} · <span className="capitalize">{editPaymentModal.method.replace("_", " ")}</span></p>
+              {editPaymentModal.reference && <p className="text-muted-foreground text-xs">Ref: {editPaymentModal.reference}</p>}
+            </div>
+            {editPaymentError && <ErrorAlert message={editPaymentError} />}
+            <div>
+              <label className="block text-sm font-medium mb-1.5">OR Number</label>
+              <Input value={editPaymentForm.orNumber} onChange={(e) => setEditPaymentForm((f) => ({ ...f, orNumber: e.target.value }))} placeholder="e.g. OR-00123" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1.5">
+                Receipt Photo
+                {editPaymentModal.receiptPhotoPath && <button type="button" onClick={() => openReceiptPhoto(editPaymentModal.receiptPhotoPath!)} className="ml-2 text-xs text-primary hover:underline font-normal">View current</button>}
+              </label>
+              <label className="flex items-center gap-2 w-fit cursor-pointer">
+                <div className="flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-lg bg-background hover:bg-muted transition-colors">
+                  <ImageIcon className="w-3.5 h-3.5 text-muted-foreground" />
+                  <span className="text-muted-foreground">{editPaymentForm.receiptFile ? editPaymentForm.receiptFile.name : editPaymentModal.receiptPhotoPath ? "Replace photo" : "Attach photo"}</span>
+                </div>
+                <input type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" onChange={(e) => setEditPaymentForm((f) => ({ ...f, receiptFile: e.target.files?.[0] ?? null }))} className="sr-only" />
+              </label>
+              {editPaymentForm.receiptFile && (
+                <button type="button" onClick={() => setEditPaymentForm((f) => ({ ...f, receiptFile: null }))} className="mt-1 text-xs text-muted-foreground hover:text-destructive transition-colors">Remove</button>
+              )}
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="outline" onClick={() => setEditPaymentModal(null)}>Cancel</Button>
+              <Button onClick={handleEditPayment} disabled={editPaymentSaving}>{editPaymentSaving ? "Saving…" : "Save"}</Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
       {/* ── Help Drawer ── */}
       <Modal open={helpOpen} onClose={() => setHelpOpen(false)} title="Billing Help">
         <div className="space-y-3 text-sm">
@@ -2131,6 +1613,14 @@ export default function BillingPage() {
           ))}
         </div>
       </Modal>
+
+      {/* ── Toast ── */}
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-foreground text-background text-sm font-medium px-5 py-3 rounded-xl shadow-lg animate-in fade-in slide-in-from-bottom-2">
+          <Check className="w-4 h-4 flex-shrink-0 text-green-400" />
+          {toast}
+        </div>
+      )}
     </div>
   );
 }

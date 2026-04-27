@@ -2,12 +2,18 @@
 import { useRef } from "react";
 import { Camera } from "lucide-react";
 import { getInitials } from "@/lib/utils";
+import { validateUpload, ALLOWED_IMAGE_MIME, ALLOWED_IMAGE_EXT } from "@/lib/upload-validate";
+
+// 10 MB pre-compression limit. compressImage() targets 500 KB output regardless.
+const AVATAR_PRE_COMPRESS_MAX_BYTES = 10 * 1024 * 1024;
 
 interface AvatarUploadProps {
   currentUrl: string | null;
   name: string;
   size?: "sm" | "md" | "lg";
   onFileSelect?: (file: File) => void;
+  /** Called when the selected file fails validation. Display this to the user. */
+  onValidationError?: (message: string) => void;
   readonly?: boolean;
 }
 
@@ -17,7 +23,7 @@ const SIZES = {
   lg: { wrap: "w-20 h-20", text: "text-2xl", icon: "w-5 h-5" },
 };
 
-export function AvatarUpload({ currentUrl, name, size = "md", onFileSelect, readonly }: AvatarUploadProps) {
+export function AvatarUpload({ currentUrl, name, size = "md", onFileSelect, onValidationError, readonly }: AvatarUploadProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const s = SIZES[size];
   const clickable = !readonly && !!onFileSelect;
@@ -46,11 +52,17 @@ export function AvatarUpload({ currentUrl, name, size = "md", onFileSelect, read
           <input
             ref={inputRef}
             type="file"
-            accept="image/*"
+            accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
             className="hidden"
             onChange={(e) => {
               const file = e.target.files?.[0];
-              if (file) onFileSelect(file);
+              if (!file) return;
+              const err = validateUpload(file, AVATAR_PRE_COMPRESS_MAX_BYTES, ALLOWED_IMAGE_MIME, ALLOWED_IMAGE_EXT);
+              if (err) {
+                onValidationError?.(err);
+              } else {
+                onFileSelect(file);
+              }
               e.target.value = "";
             }}
           />

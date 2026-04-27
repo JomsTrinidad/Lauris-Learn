@@ -88,7 +88,7 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
       >
         <div
           className={cn(
-            "bg-card rounded-xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto overflow-x-hidden",
+            "bg-card rounded-xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto overflow-x-hidden [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full",
             className
           )}
           onClick={(e) => e.stopPropagation()}

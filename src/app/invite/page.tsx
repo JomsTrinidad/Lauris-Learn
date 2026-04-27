@@ -1,18 +1,21 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { CheckCircle, XCircle, GraduationCap } from "lucide-react";
+import { CheckCircle, XCircle, GraduationCap, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { createClient } from "@/lib/supabase/client";
 
-export default function InvitePage() {
+type PageStatus = "loading" | "valid" | "invalid" | "used" | "email_mismatch" | "server_error";
+
+function InvitePageInner() {
   const router = useRouter();
   const params = useSearchParams();
   const token = params.get("token");
   const supabase = createClient();
 
-  const [status, setStatus] = useState<"loading" | "valid" | "invalid" | "used">("loading");
+  const [status, setStatus] = useState<PageStatus>("loading");
+  const [accepting, setAccepting] = useState(false);
   const [studentName, setStudentName] = useState("");
   const [schoolName, setSchoolName] = useState("");
 
@@ -23,6 +26,7 @@ export default function InvitePage() {
   }, [token]);
 
   async function validateToken() {
+    // Public SELECT policy allows anonymous reads for token validation (display only).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data } = await (supabase as any)
       .from("guardian_invites")
@@ -44,17 +48,49 @@ export default function InvitePage() {
   async function handleAccept() {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
-      // Save token to localStorage and redirect to login
       localStorage.setItem("__ll_invite_token", token ?? "");
       router.push("/login?redirect=/parent/invite?token=" + encodeURIComponent(token ?? ""));
       return;
     }
-    // Mark invite as used and set profile role to parent
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (supabase as any).from("guardian_invites").update({ used_at: new Date().toISOString() }).eq("token", token);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (supabase as any).from("profiles").update({ role: "parent" }).eq("id", user.id);
-    router.push("/parent/dashboard");
+
+    setAccepting(true);
+    try {
+      const res = await fetch("/api/invite/accept", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+      });
+
+      const json = await res.json();
+
+      if (res.ok) {
+        router.push("/parent/dashboard");
+        return;
+      }
+
+      switch (json.error) {
+        case "used":
+          setStatus("used");
+          break;
+        case "invalid":
+        case "expired":
+          setStatus("invalid");
+          break;
+        case "email_mismatch":
+          setStatus("email_mismatch");
+          break;
+        case "unauthorized":
+          localStorage.setItem("__ll_invite_token", token ?? "");
+          router.push("/login?redirect=/parent/invite?token=" + encodeURIComponent(token ?? ""));
+          break;
+        default:
+          setStatus("server_error");
+      }
+    } catch {
+      setStatus("server_error");
+    } finally {
+      setAccepting(false);
+    }
   }
 
   return (
@@ -83,7 +119,8 @@ export default function InvitePage() {
             <p className="text-sm text-muted-foreground">
               Sign in (or create an account) with the same email address on file with the school to access your child&apos;s updates, attendance, and more.
             </p>
-            <Button onClick={handleAccept} className="w-full">
+            <Button onClick={handleAccept} className="w-full" disabled={accepting}>
+              {accepting ? <Spinner size="sm" /> : null}
               Accept &amp; Continue
             </Button>
           </div>
@@ -109,7 +146,37 @@ export default function InvitePage() {
             <Button onClick={() => router.push("/login")} className="w-full">Go to Login</Button>
           </div>
         )}
+
+        {status === "email_mismatch" && (
+          <div className="space-y-4">
+            <AlertTriangle className="w-12 h-12 text-amber-500 mx-auto" />
+            <h1 className="text-xl font-semibold">Wrong Account</h1>
+            <p className="text-muted-foreground text-sm">
+              The email address you&apos;re signed in with doesn&apos;t match this invite. Please sign out and sign in with the email address the school has on file, or contact the school to re-send the invite.
+            </p>
+            <Button onClick={() => router.push("/login")} className="w-full">Go to Login</Button>
+          </div>
+        )}
+
+        {status === "server_error" && (
+          <div className="space-y-4">
+            <XCircle className="w-12 h-12 text-red-500 mx-auto" />
+            <h1 className="text-xl font-semibold">Something Went Wrong</h1>
+            <p className="text-muted-foreground text-sm">
+              We couldn&apos;t complete your invite acceptance. Please try again or contact the school.
+            </p>
+            <Button onClick={() => setStatus("valid")} variant="outline" className="w-full">Try Again</Button>
+          </div>
+        )}
       </div>
     </div>
+  );
+}
+
+export default function InvitePage() {
+  return (
+    <Suspense>
+      <InvitePageInner />
+    </Suspense>
   );
 }

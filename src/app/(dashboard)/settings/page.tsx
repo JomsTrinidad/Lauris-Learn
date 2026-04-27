@@ -4,6 +4,7 @@ import { Plus, Pencil, Trash2, Upload, RotateCcw, Library } from "lucide-react";
 import { GradingTemplate, GRADING_TEMPLATES } from "@/lib/grading-templates";
 import { AvatarUpload } from "@/components/ui/avatar-upload";
 import { compressImage, PROFILE_PHOTO_MAX_W, PROFILE_PHOTO_MAX_BYTES } from "@/lib/image-compress";
+import { validateUpload, contentTypeFromExt, LOGO_MAX_BYTES } from "@/lib/upload-validate";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -841,11 +842,21 @@ export default function SettingsPage() {
       let logoChanged = logoRemoved;
 
       if (logoFile) {
-        const ext = logoFile.name.split(".").pop()?.toLowerCase() ?? "jpg";
-        const path = `school-logos/${schoolId}.${ext}`;
+        const logoValidationError = validateUpload(logoFile, LOGO_MAX_BYTES);
+        if (logoValidationError) {
+          setBrandingError(logoValidationError);
+          setBrandingSaving(false);
+          return;
+        }
+        const ext = ("." + (logoFile.name.split(".").pop() ?? "jpeg")).toLowerCase();
+        const path = `school-logos/${schoolId}${ext}`;
         const { error: uploadErr } = await supabase.storage
           .from("profile-photos")
-          .upload(path, logoFile, { upsert: true, contentType: logoFile.type });
+          .upload(path, logoFile, {
+            upsert: true,
+            // Derive contentType from the validated extension, not from the browser-provided file.type
+            contentType: contentTypeFromExt(logoFile.name),
+          });
         if (uploadErr) {
           setBrandingError("Logo upload failed: " + uploadErr.message);
           return;
@@ -988,6 +999,7 @@ export default function SettingsPage() {
                     name={userName || "Admin"}
                     size="lg"
                     onFileSelect={(file) => { setAdminPhotoFile(file); setAdminPhotoError(null); }}
+                    onValidationError={(msg) => setAdminPhotoError(msg)}
                   />
                   <div className="text-sm text-muted-foreground">
                     <p className="font-medium text-foreground">{userName}</p>
@@ -1910,6 +1922,7 @@ export default function SettingsPage() {
               name={teacherForm.fullName || "Teacher"}
               size="lg"
               onFileSelect={(file) => setTeacherPhotoFile(file)}
+              onValidationError={(msg) => setTeacherFormError(msg)}
             />
             <div className="text-sm text-muted-foreground">
               <p className="font-medium text-foreground">Profile Photo</p>

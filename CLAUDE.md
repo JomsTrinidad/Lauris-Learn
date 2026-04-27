@@ -73,6 +73,15 @@ supabase/
   migrations/016_parent_features.sql — absence_notifications table, event_rsvps unique index,
                                         parent RLS on progress_observations
   migrations/017_payment_receipt_photo.sql — receipt_photo_path column on payments
+  migrations/033_billing_fee_type_id.sql — fee_type_id UUID column on billing_records (FK → fee_types, ON DELETE SET NULL)
+src/features/billing/              — Billing feature module (extracted from billing/page.tsx)
+  types.ts                         — All billing TypeScript types
+  constants.ts                     — SCOPE_LABELS, TYPE_LABELS, EMPTY_PAYMENT, STATUS_OPTS, etc.
+  utils.ts                         — formatMonth, computeStatus, getAgingDays, printContent, etc.
+  StudentCombobox.tsx              — Self-contained student search combobox
+  SetupFeeTypesTab.tsx             — Fee types CRUD tab
+  SetupTuitionTab.tsx              — Tuition configs CRUD tab (per academic period)
+  SetupAdjustmentsTab.tsx          — Discounts + student credits CRUD tab
 ```
 
 ---
@@ -164,7 +173,7 @@ messengerLink: string | null // class messenger link
 ## Supabase Setup (New Project)
 
 1. Run `supabase/schema.sql` in SQL Editor
-2. Run all migrations in order (`001` → `017`) in SQL Editor
+2. Run all migrations in order (`001` → `033`) in SQL Editor
 3. In Supabase Dashboard → Storage, create a **private** bucket named `updates-media` (migration 014 adds its RLS policies). Receipt photos also upload here under the `payment-receipts/` prefix.
 4. Sign up as admin user via `/login`
 5. In SQL Editor, assign the admin to BK school:
@@ -181,7 +190,7 @@ messengerLink: string | null // class messenger link
 
 Currently all media lives in one private bucket (`updates-media`). Path conventions:
 - `updates-media/{post_id}/{filename}` — class update photos
-- `payment-receipts/{payment_id}.{ext}` — payment receipt photos
+- `payment-receipts/{schoolId}/{paymentId}.{ext}` — payment receipt photos (school-scoped to avoid collisions)
 
 **Future split (not yet done):** Separate `receipts` bucket (admin-only RLS) and `student-documents` bucket when the document hub is built. The current single-bucket approach works but means receipt photos share RLS policies with update photos.
 
@@ -215,8 +224,10 @@ Currently all media lives in one private bucket (`updates-media`). Path conventi
 | Parent portal — announcements | ✅ Complete | Parent dashboard shows school-wide broadcasts (class_id IS NULL) in a separate Announcements section |
 | Enrollment funnel analytics | ✅ Complete | `/enrollment` Analytics view: conversion %, funnel bars, source breakdown, class demand table |
 | Broadcast announcements | ✅ Complete | Updates page: Broadcast modal → posts to parent_updates with class_id=null (school-wide) or specific class |
-| Billing — receipt photo upload | ✅ Complete | Record Payment modal has optional photo upload; stored in updates-media/payment-receipts/; viewable via signed URL in payment history |
-| Billing — auto-generate | ✅ Complete | Reads tuition configs per level, pre-fills per-class amounts, skips existing records; defaults fee type to "Tuition" |
+| Billing — receipt photo upload | ✅ Complete | Record Payment modal has optional photo upload; stored in updates-media/payment-receipts/{schoolId}/{paymentId}.ext; viewable via signed URL in payment history |
+| Billing — generate modal | ✅ Complete | Merged Generate Billing modal: "Use tuition rates" vs "Flat amount" toggle, month range, fee type, due date modes (none/fixed/nth-weekday), skip existing, mark as paid shortcut |
+| Billing — UX restructure | ✅ Complete | Bills tab = "What students owe"; Payments tab = "What's been collected"; paid/settled hidden by default; per-row edit OR#/receipt + print in Payments tab |
+| Billing — edit payment | ✅ Complete | Pencil icon per payment row (both Payment History modal and Payments tab) opens Edit OR#/receipt photo modal |
 
 ---
 
@@ -235,7 +246,8 @@ Currently all media lives in one private bucket (`updates-media`). Path conventi
 - [x] **Parent portal — progress, events, RSVP, absence reporting, announcements** — done
 - [x] **Enrollment funnel analytics** — done
 - [x] **Broadcast announcements** — done
-- [x] **Billing — generate modal** ⚠️ Pending merge: Auto-Generate + Bulk Generate are two separate modals with overlapping functionality. Plan is to merge into one "Generate Billing" modal with a "Use tuition configs / Flat amount" toggle and month range support. See Session Log 2026-04-26.
+- [x] **Billing — generate modal** — done (merged into single Generate Billing modal with tuition rates / flat amount toggle, month range, fee type, due date modes)
+- [ ] **Viewing School Year** — planned (see Session Log 2026-04-28). Allow browsing prior years without changing DB active year. Requires `viewingYear`/`isHistoricalView` in SchoolContext, Header dropdown, amber banner, per-page query swap + write guards.
 - [ ] **Resource / Document Hub** — file uploads, categorized downloads for parents
 - [ ] **Online classes** — wire `online-classes` page to Supabase (currently static)
 - [ ] **Storage bucket separation** — split `updates-media` into `receipts` (admin-only) + `student-documents` when document hub is built
@@ -270,7 +282,13 @@ Currently all media lives in one private bucket (`updates-media`). Path conventi
 - `progress_observations`: added parent SELECT policy where `visibility = 'parent_visible'`
 
 ### Migration 017 — Payment Receipt Photo
-- `payments`: added `receipt_photo_path TEXT` — stores storage path in `updates-media/payment-receipts/{payment_id}.{ext}`
+- `payments`: added `receipt_photo_path TEXT` — stores storage path in `updates-media/payment-receipts/{schoolId}/{payment_id}.{ext}`
+
+### Migration 033 — Billing Fee Type ID
+- `billing_records`: added `fee_type_id UUID REFERENCES fee_types(id) ON DELETE SET NULL` (nullable — existing rows get NULL)
+- Added super-admin RLS bypass policy `"super_admin_all_billing_records_fee_type"` (FOR ALL)
+- **Must be run before Add Record or Generate Billing will work** — both INSERT paths send `fee_type_id`
+- Existing billing records with `fee_type_id = NULL` display correctly; skip-existing check in Generate Billing falls back to student+month filter when fee type is unset
 
 ### Billing Status Enum (Migration 009)
 - Added `waived` status — excluded from outstanding balance and revenue totals; requires change reason
@@ -328,6 +346,75 @@ All implemented in `supabase/migrations/002_super_admin_trial_periods_tuition.sq
 ---
 
 ## Session Log
+
+### 2026-04-28 — Billing Refactor, UX Restructure, Generate Billing Fixes
+
+**Billing feature module extracted (`src/features/billing/`):**
+- `types.ts` — all billing TypeScript types (MainTab, BillingRecord, PaymentRecord, AllPayment, FeeType, Discount, StudentCredit, etc.)
+- `constants.ts` — SCOPE_LABELS, TYPE_LABELS, STATUS_OPTS, EDITABLE_STATUSES, EMPTY_PAYMENT, EMPTY_ADD, currentYearMonth()
+- `utils.ts` — formatMonth, computeStatus, getMonthRange, getAgingDays, agingLabel, agingClass, printContent, computeNthWeekday
+- `StudentCombobox.tsx` — self-contained student search combobox with click-away
+- `SetupFeeTypesTab.tsx` — fee types CRUD (name, description, active toggle)
+- `SetupTuitionTab.tsx` — tuition configs CRUD per academic period; periods now sorted by school year name descending then start_date ascending (client-side sort after fetch)
+- `SetupAdjustmentsTab.tsx` — discounts CRUD + student credits CRUD
+
+**Generate Billing modal:**
+- Merged Auto-Generate + Bulk Generate into single "Generate Billing" modal with:
+  - "Use tuition rates" vs "Flat amount" toggle
+  - Month range (From → To); single month when both are equal
+  - Academic Period dropdown defaulting to: Regular Term → first non-summer/non-short term → first available
+  - Fee type dropdown (defaults to fee type whose name includes "Tuition")
+  - Due date modes: No due date / Fixed date / Nth weekday (with live preview)
+  - Skip existing checkbox (default on); Mark as paid shortcut with method + date
+  - Summary panel showing estimated bills count and total
+- `loadGenConfigs(periodId)` extracted so period dropdown onChange reloads class rates correctly
+- Class list scrollbar: thin styled scrollbar (`[&::-webkit-scrollbar]:w-1.5` etc.)
+
+**Billing date format fix:**
+- `billing_month` is stored as PostgreSQL `DATE` (`YYYY-MM-DD`); normalized to `YYYY-MM` on read via `.substring(0, 7)`; `-01` appended on all DB writes and filter queries
+- Fixes "Invalid Date" in Month column throughout Bills and Payments tabs
+
+**Migration 033 — `fee_type_id` on `billing_records`:**
+- Added `fee_type_id UUID REFERENCES fee_types(id) ON DELETE SET NULL`
+- Required for Add Record and Generate Billing to work; must be run in Supabase SQL Editor
+- Existing records get `NULL`; all code paths are null-safe
+
+**Bills tab UX:**
+- Subtitle added: "What students owe"
+- Tab icon changed from `Receipt` to `FileText` (generic document, no currency symbol)
+- "Paid" column removed — Balance + Status badge already convey the same information
+- Bills sorted ascending by `billing_month` (oldest first)
+- Paid/settled bills hidden by default; "Show paid/settled" checkbox toggle added to filter row
+- When a full payment is recorded, bill disappears from Bills tab and a toast notification appears: "Payment of ₱X recorded successfully. To view payment details, go to the Payments tab." (auto-dismisses after 4 s)
+
+**Payments tab UX:**
+- Subtitle added: "What's been collected"
+- "Record Payment" header button removed — payment entry is exclusively via Pay button on each bill row
+- "Class" column removed — Student + Description + Month give sufficient bill context
+- From/To date range `DatePicker` filters added (client-side on `p.date` YYYY-MM-DD string; lexicographic comparison is timezone-safe)
+- Printer icon per row: opens Payment Receipt modal for that payment
+- Pencil icon per row: opens Edit OR#/receipt photo modal
+
+**Payment Receipt modal:**
+- Renamed from "Official Receipt" to "Payment Receipt" (modal title + print `<h2>`)
+- Edit payment modal: updates `or_number` and optionally re-uploads receipt photo with upsert; reopens Payment History modal after save
+
+**Modal component (`src/components/ui/modal.tsx`):**
+- Thin styled scrollbar applied to the shared modal scroll container — affects all modals in the app
+
+**Header school year pill:**
+- Currently decorative (shows active year name + ChevronDown, no onClick handler)
+- Planned: wire to year-switcher dropdown for "Viewing School Year" feature (see below)
+
+**Viewing School Year — planned, not implemented:**
+- Goal: browse prior school year data without changing `school_years.status = 'active'` in DB
+- Requires: `viewingYear` + `setViewingYear` + `isHistoricalView` + `allSchoolYears` added to SchoolContext
+- Header pill becomes dropdown listing all years; selecting one calls `setViewingYear` (no DB write)
+- Amber banner shown in layout when `isHistoricalView` is true
+- All 10 dashboard pages switch read queries from `activeYear.id` → `viewingYear.id`
+- Write actions disabled in historical view via shared `useIsReadOnly()` hook (composes with existing trial-expired read-only)
+- Implementation sequence: Context + Header first (zero page impact) → read queries page by page → write guards last
+- Full per-page breakdown in session planning notes
 
 ### 2026-04-27 — Settings Refinements + Parent Portal RLS + Promote Students UX
 
@@ -396,13 +483,8 @@ DELETE FROM billing_discounts WHERE billing_record_id IN (SELECT id FROM billing
 DELETE FROM billing_records WHERE school_id = '00000000-0000-0000-0000-000000000001';
 ```
 
-**Billing — generate modal merge (PLANNED, not yet implemented):**
-- Auto-Generate + Bulk Generate are two separate modals with overlapping logic; plan is to merge into one "Generate Billing" modal
-- Toggle: "Use tuition configs" (per-class pre-filled amounts) vs "Flat amount" (single amount, all classes)
-- Month range (From/To, same month = single month); fee type defaults to Tuition; due date optional
-- "Skip existing" checkbox (default on); "Mark as paid" checkbox (edge case, always available in both modes)
-- Single `executeGen()` function replaces `executeAutoGen()` and `handleBulkGenerate()`
-- Header: one "Generate Billing" button replaces both "Auto-Generate" and "Bulk Generate"
+**Billing — generate modal merge (COMPLETED 2026-04-28):**
+- Auto-Generate + Bulk Generate merged into single "Generate Billing" modal — see Session Log 2026-04-28
 
 **Parent portal — new pages:**
 - `/parent/progress` — fetches `progress_observations` where `visibility = 'parent_visible'`, deduplicates by category (latest per category), renders rating pills + CSS progress bars; ratings: emerging/developing/consistent/advanced

@@ -205,15 +205,37 @@ export function SchoolProvider({ children }: { children: ReactNode }) {
     setValue((v) => ({ ...v, branding: { ...v.branding, ...patch } }));
   }
 
+  function logImpersonationEvent(
+    targetSchoolId: string,
+    targetSchoolName: string,
+    eventType: "impersonation_started" | "impersonation_ended",
+  ) {
+    fetch("/api/super-admin/impersonation-log", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ targetSchoolId, targetSchoolName, eventType }),
+    }).catch(() => { /* audit failure must not block impersonation UX */ });
+  }
+
   function startImpersonation(schoolId: string, schoolName: string) {
     if (typeof window !== "undefined") {
       sessionStorage.setItem(IMPERSONATION_KEY, JSON.stringify({ schoolId, schoolName }));
     }
+    // Logging is handled by the caller (super-admin schools page) because that page
+    // lives outside SchoolProvider and initiates the session directly via sessionStorage.
     load();
   }
 
   function stopImpersonation() {
     if (typeof window !== "undefined") {
+      // Read school info before clearing so the end-event log is accurate.
+      const raw = sessionStorage.getItem(IMPERSONATION_KEY);
+      if (raw) {
+        try {
+          const { schoolId, schoolName } = JSON.parse(raw) as ImpersonationData;
+          logImpersonationEvent(schoolId, schoolName, "impersonation_ended");
+        } catch { /* ignore parse errors */ }
+      }
       sessionStorage.removeItem(IMPERSONATION_KEY);
     }
     load();

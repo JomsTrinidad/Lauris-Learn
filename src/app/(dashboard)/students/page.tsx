@@ -473,13 +473,24 @@ export default function StudentsPage() {
     } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
 
     if (form.classId) {
-      await supabase.from("enrollments").insert({
-        student_id: student.id,
-        class_id: form.classId,
-        school_year_id: activeYear.id,
-        academic_period_id: form.periodId || null,
-        status: form.enrollmentStatus,
+      const enrollRes = await fetch("/api/students/enroll", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          studentId: student.id,
+          classId: form.classId,
+          schoolYearId: activeYear.id,
+          academicPeriodId: form.periodId || null,
+          status: form.enrollmentStatus,
+        }),
       });
+      if (!enrollRes.ok) {
+        const j = await enrollRes.json();
+        setFormError(j.error ?? "Student created but enrollment failed.");
+        setSaving(false);
+        await loadAll();
+        return;
+      }
     }
 
     setSaving(false);
@@ -590,16 +601,27 @@ export default function StudentsPage() {
     if (!activeYear?.id) { setEnrollmentFormError("No active school year."); return; }
     setEnrollmentSaving(true);
     setEnrollmentFormError(null);
-    const { error } = await supabase.from("enrollments").insert({
-      student_id: enrollmentModal.id,
-      class_id: enrollmentForm.classId,
-      school_year_id: activeYear.id,
-      academic_period_id: enrollmentForm.periodId || null,
-      status: enrollmentForm.status as EnrollmentStatus,
-      start_date: enrollmentForm.startDate || null,
-      end_date: enrollmentForm.endDate || null,
-    });
-    if (error) { setEnrollmentFormError(error.message); setEnrollmentSaving(false); return; }
+    try {
+      const res = await fetch("/api/students/enroll", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          studentId: enrollmentModal.id,
+          classId: enrollmentForm.classId,
+          schoolYearId: activeYear.id,
+          academicPeriodId: enrollmentForm.periodId || null,
+          status: enrollmentForm.status,
+          startDate: enrollmentForm.startDate || null,
+          endDate: enrollmentForm.endDate || null,
+        }),
+      });
+      const j = await res.json();
+      if (!res.ok) { setEnrollmentFormError(j.error ?? "Enrollment failed."); setEnrollmentSaving(false); return; }
+    } catch {
+      setEnrollmentFormError("Network error. Please try again.");
+      setEnrollmentSaving(false);
+      return;
+    }
     setEnrollmentSaving(false);
     setEnrollmentModal(null);
     await loadAll();
@@ -772,46 +794,36 @@ export default function StudentsPage() {
     setPromoteSaving(true);
     setPromoteRowsError(null);
 
-    const targetSchoolYearId = targetYearId;
-    let created = 0, graduated = 0, skipped = 0;
-    const errors: string[] = [];
-
-    // Enroll in new class
-    for (const row of toEnroll) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: existing } = await (supabase as any)
-        .from("enrollments")
-        .select("id")
-        .eq("student_id", row.studentId)
-        .eq("class_id", row.selectedClassId)
-        .eq("school_year_id", targetYearId)
-        .maybeSingle();
-
-      if (existing) { skipped++; continue; }
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { error: insErr } = await (supabase as any).from("enrollments").insert({
-        student_id: row.studentId,
-        class_id: row.selectedClassId,
-        school_year_id: targetSchoolYearId,
-        status: "enrolled",
+    try {
+      const res = await fetch("/api/students/promote", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          targetSchoolYearId: targetYearId,
+          enroll: toEnroll.map((r) => ({
+            studentId: r.studentId,
+            studentName: r.studentName,
+            classId: r.selectedClassId,
+          })),
+          graduate: toGraduate.map((r) => ({
+            enrollmentId: r.currentEnrollmentId,
+            studentName: r.studentName,
+          })),
+        }),
       });
 
-      if (insErr) { errors.push(`${row.studentName}: ${insErr.message}`); } else { created++; }
+      const j = await res.json();
+      if (!res.ok) {
+        setPromoteRowsError(j.error ?? "Promotion failed.");
+        setPromoteSaving(false);
+        return;
+      }
+
+      setPromoteResult(j.result);
+    } catch {
+      setPromoteRowsError("Network error. Please try again.");
     }
 
-    // Graduate — mark source enrollment as completed
-    for (const row of toGraduate) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { error: updErr } = await (supabase as any)
-        .from("enrollments")
-        .update({ status: "completed" })
-        .eq("id", row.currentEnrollmentId);
-
-      if (updErr) { errors.push(`${row.studentName}: ${updErr.message}`); } else { graduated++; }
-    }
-
-    setPromoteResult({ created, graduated, skipped, errors });
     setPromoteSaving(false);
   }
 
@@ -1490,9 +1502,9 @@ export default function StudentsPage() {
 
       {/* Add / Edit Student Modals */}
       {[
-        { open: editModalOpen, onClose: () => { setEditModalOpen(false); setEditingStudent(null); }, title: "Edit Student", fErr: editFormError, f: editForm, setF: setEditForm, onSave: handleEdit, isEdit: true, photoFile: editPhotoFile, setPhotoFile: setEditPhotoFile },
-        { open: addModalOpen, onClose: () => { setAddModalOpen(false); setForm(EMPTY_FORM); }, title: "Add Student", fErr: formError, f: form, setF: setForm, onSave: handleAdd, isEdit: false, photoFile: addPhotoFile, setPhotoFile: setAddPhotoFile },
-      ].map(({ open, onClose, title, fErr, f, setF, onSave, isEdit, photoFile, setPhotoFile }) => (
+        { open: editModalOpen, onClose: () => { setEditModalOpen(false); setEditingStudent(null); }, title: "Edit Student", fErr: editFormError, setFErr: setEditFormError, f: editForm, setF: setEditForm, onSave: handleEdit, isEdit: true, photoFile: editPhotoFile, setPhotoFile: setEditPhotoFile },
+        { open: addModalOpen, onClose: () => { setAddModalOpen(false); setForm(EMPTY_FORM); }, title: "Add Student", fErr: formError, setFErr: setFormError, f: form, setF: setForm, onSave: handleAdd, isEdit: false, photoFile: addPhotoFile, setPhotoFile: setAddPhotoFile },
+      ].map(({ open, onClose, title, fErr, setFErr, f, setF, onSave, isEdit, photoFile, setPhotoFile }) => (
         <Modal key={title} open={open} onClose={onClose} title={title} className="max-w-2xl">
           <div className="space-y-4">
             {fErr && <ErrorAlert message={fErr} />}
@@ -1503,6 +1515,7 @@ export default function StudentsPage() {
                 name={`${f.firstName} ${f.lastName}`}
                 size="lg"
                 onFileSelect={(file) => setPhotoFile(file)}
+                onValidationError={(msg) => setFErr(msg)}
               />
               <div className="text-sm text-muted-foreground">
                 <p className="font-medium text-foreground">Student Photo</p>
