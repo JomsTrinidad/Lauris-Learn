@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Star, Plus, Trash2, Search } from "lucide-react";
+import { Star, Plus, Trash2, Search, BookOpen, HelpCircle, X, ChevronDown, ChevronRight, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -74,6 +74,10 @@ export default function ProudMomentsPage() {
 
   const [showModal, setShowModal] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [helpSearch, setHelpSearch] = useState("");
+  const [helpExpanded, setHelpExpanded] = useState<Record<string, boolean>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [form, setForm] = useState({ studentId: "", category: "Kindness", note: "" });
 
@@ -191,10 +195,16 @@ export default function ProudMomentsPage() {
           <h1 className="text-2xl font-bold">Proud Moments</h1>
           <p className="text-muted-foreground text-sm mt-1">Celebrate student achievements and share them with parents.</p>
         </div>
-        <Button onClick={() => setShowModal(true)}>
-          <Plus className="w-4 h-4 mr-2" />
-          Add Moment
-        </Button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => { setHelpOpen(true); setHelpSearch(""); }}
+            className="flex items-center gap-1.5 px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors border border-border">
+            <HelpCircle className="w-4 h-4" /> Help
+          </button>
+          <Button onClick={() => setShowModal(true)}>
+            <Plus className="w-4 h-4 mr-2" />
+            Add Moment
+          </Button>
+        </div>
       </div>
 
       <div className="relative">
@@ -262,6 +272,180 @@ export default function ProudMomentsPage() {
               </Card>
             );
           })}
+        </div>
+      )}
+
+      {/* ── Proud Moments Help Drawer ── */}
+      {helpOpen && (
+        <div className="fixed inset-0 z-50 flex justify-end">
+          <div className="absolute inset-0 bg-black/30" onClick={() => { setHelpOpen(false); setHelpSearch(""); }} />
+          <div className="relative flex flex-col w-full max-w-md bg-card border-l border-border shadow-2xl h-full animate-in slide-in-from-right duration-200">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center"><BookOpen className="w-4 h-4 text-primary" /></div>
+                <h2 className="font-semibold text-base">Proud Moments Help</h2>
+              </div>
+              <button onClick={() => { setHelpOpen(false); setHelpSearch(""); }} className="p-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="px-5 py-3 border-b border-border flex-shrink-0">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <input type="text" placeholder="Search topics..." value={helpSearch} onChange={(e) => setHelpSearch(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 text-sm bg-muted border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors" />
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-2 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full">
+              {(() => {
+                const Step = ({ n, text }: { n: number; text: React.ReactNode }) => (
+                  <div className="flex gap-2.5 items-start">
+                    <span className="flex-shrink-0 w-5 h-5 rounded-full bg-primary/15 text-primary text-[10px] font-bold flex items-center justify-center mt-0.5">{n}</span>
+                    <span>{text}</span>
+                  </div>
+                );
+                const Tip = ({ children }: { children: React.ReactNode }) => (
+                  <div className="mt-3 flex gap-2 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2 text-amber-800 dark:text-amber-300 text-xs">
+                    <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" /><span>{children}</span>
+                  </div>
+                );
+                const Note = ({ children }: { children: React.ReactNode }) => (
+                  <div className="mt-3 flex gap-2 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg px-3 py-2 text-blue-800 dark:text-blue-300 text-xs">
+                    <HelpCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" /><span>{children}</span>
+                  </div>
+                );
+                type HelpTopic = { id: string; icon: React.ElementType; title: string; searchText: string; body: React.ReactNode };
+                const topics: HelpTopic[] = [
+                  {
+                    id: "add-moment",
+                    icon: Star,
+                    title: "Record a proud moment",
+                    searchText: "add record moment student achievement celebrate category note",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Use Proud Moments to celebrate a student's positive behavior or achievement and share it with their parents.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Click <strong>Add Moment</strong> (top right).</span>} />
+                          <Step n={2} text={<span>Select the <strong>student</strong> from the dropdown.</span>} />
+                          <Step n={3} text={<span>Choose a <strong>category</strong> by clicking one of the coloured chips: Effort, Kindness, Focus, Participation, Independence, Creativity, Improvement, or Helping Others.</span>} />
+                          <Step n={4} text={<span>Optionally add a <strong>note</strong> — a short sentence about what the student did. This is the most meaningful part for parents (e.g. "Juan helped a classmate tie their shoes today").</span>} />
+                          <Step n={5} text={<span>Click <strong>Save Moment</strong>. It immediately appears in the parent's portal.</span>} />
+                        </div>
+                        <Note>Proud moments are always visible to parents — there's no internal-only option here (use Progress Tracking for that). Keep notes positive and specific.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "categories",
+                    icon: Star,
+                    title: "What the categories mean",
+                    searchText: "effort kindness focus participation independence creativity improvement helping others category",
+                    body: (
+                      <div className="space-y-2.5 mt-1">
+                        {[
+                          { label: "Effort", desc: "Student tried hard even when something was difficult." },
+                          { label: "Kindness", desc: "Student showed care, compassion, or generosity toward others." },
+                          { label: "Focus", desc: "Student stayed on task and was attentive during an activity." },
+                          { label: "Participation", desc: "Student actively engaged, volunteered answers, or joined in activities." },
+                          { label: "Independence", desc: "Student completed a task without needing prompting or assistance." },
+                          { label: "Creativity", desc: "Student showed original thinking or an imaginative approach." },
+                          { label: "Improvement", desc: "Student showed noticeable growth from a previous attempt." },
+                          { label: "Helping Others", desc: "Student assisted a classmate or contributed positively to the group." },
+                        ].map(({ label, desc }) => (
+                          <div key={label} className="flex gap-2.5 items-start">
+                            <span className="font-semibold text-xs w-28 flex-shrink-0 mt-0.5 text-foreground">{label}</span>
+                            <span className="text-xs">{desc}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "reactions",
+                    icon: Star,
+                    title: "Reactions — what they are",
+                    searchText: "reaction emoji proud great job keep going heart clap star parent",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Parents can react to proud moments from their portal using three reaction types.</p>
+                        <div className="space-y-2.5 mt-2">
+                          {[
+                            { emoji: "❤️", label: "Proud", desc: "Parent is proud of their child." },
+                            { emoji: "👏", label: "Great Job", desc: "Parent is cheering the achievement." },
+                            { emoji: "🌟", label: "Keep Going", desc: "Parent is encouraging continued effort." },
+                          ].map(({ emoji, label, desc }) => (
+                            <div key={label} className="flex gap-2.5 items-start">
+                              <span className="text-base w-6 flex-shrink-0">{emoji}</span>
+                              <div><span className="font-semibold text-xs text-foreground">{label}</span><p className="text-xs mt-0.5">{desc}</p></div>
+                            </div>
+                          ))}
+                        </div>
+                        <Note>Reaction counts are shown on each moment card (e.g. "❤️ 2"). You can see at a glance which moments parents engaged with most.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "delete",
+                    icon: Trash2,
+                    title: "Delete a proud moment",
+                    searchText: "delete remove trash icon soft delete hide parent",
+                    body: (
+                      <div className="space-y-2">
+                        <p>If you need to remove a proud moment (e.g. wrong student selected), use the delete action.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Find the moment card and click the <strong>trash icon</strong> on the right side of the card.</span>} />
+                          <Step n={2} text={<span>The moment is soft-deleted immediately — it disappears from this view and from the parent portal.</span>} />
+                        </div>
+                        <Tip>Deletion is instant with no confirmation dialog — be deliberate. The record is soft-deleted (not permanently erased) so it can be recovered from the database by a Super Admin if needed.</Tip>
+                        <Note>Only the creator of a moment and school admins can delete it. Teachers can delete their own entries.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "search-filter",
+                    icon: Search,
+                    title: "Find a proud moment",
+                    searchText: "search filter find student category name look up",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Use the search bar at the top to filter moments by student name or category.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Type a <strong>student name</strong> to see only that student's moments.</span>} />
+                          <Step n={2} text={<span>Type a <strong>category name</strong> (e.g. "Kindness") to see all moments of that type across all students.</span>} />
+                        </div>
+                        <Note>The list shows the 100 most recent moments. There's no date filter — if you need to find older entries, search by the student's name to narrow the list.</Note>
+                      </div>
+                    ),
+                  },
+                ];
+                const q = helpSearch.trim().toLowerCase();
+                const filtered = q ? topics.filter((t) => t.title.toLowerCase().includes(q) || t.searchText.toLowerCase().includes(q)) : topics;
+                if (filtered.length === 0) return (
+                  <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
+                    <HelpCircle className="w-8 h-8 mb-3 opacity-40" />
+                    <p className="text-sm">No topics match <span className="font-medium text-foreground">"{helpSearch}"</span></p>
+                    <button onClick={() => setHelpSearch("")} className="mt-2 text-xs text-primary hover:underline">Clear search</button>
+                  </div>
+                );
+                return filtered.map((item) => {
+                  const Icon = item.icon;
+                  const open = !!helpExpanded[item.id];
+                  return (
+                    <div key={item.id} className="border border-border rounded-xl overflow-hidden">
+                      <button className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-muted/60 transition-colors"
+                        onClick={() => setHelpExpanded((prev) => ({ ...prev, [item.id]: !prev[item.id] }))}>
+                        <div className="w-6 h-6 rounded-md bg-muted flex items-center justify-center flex-shrink-0"><Icon className="w-3.5 h-3.5 text-muted-foreground" /></div>
+                        <span className="flex-1 text-sm font-medium">{item.title}</span>
+                        {open ? <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0" /> : <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />}
+                      </button>
+                      {open && <div className="px-4 pb-4 pt-3 text-sm text-muted-foreground leading-relaxed border-t border-border bg-muted/20">{item.body}</div>}
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+            <div className="px-5 py-3 border-t border-border flex-shrink-0 text-xs text-muted-foreground">
+              {helpSearch ? <span>Showing results for "<span className="font-medium text-foreground">{helpSearch}</span>"</span> : <span>5 topics · click any to expand</span>}
+            </div>
+          </div>
         </div>
       )}
 

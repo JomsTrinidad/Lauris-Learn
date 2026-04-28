@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
-import { Plus, Pencil, Trash2, Upload, RotateCcw, Library } from "lucide-react";
+import { Plus, Pencil, Trash2, Upload, RotateCcw, Library, BookOpen, HelpCircle, X, Search, ChevronDown, ChevronRight, AlertTriangle } from "lucide-react";
 import { GradingTemplate, GRADING_TEMPLATES } from "@/lib/grading-templates";
 import { AvatarUpload } from "@/components/ui/avatar-upload";
 import { compressImage, PROFILE_PHOTO_MAX_W, PROFILE_PHOTO_MAX_BYTES } from "@/lib/image-compress";
@@ -209,6 +209,10 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [helpSearch, setHelpSearch] = useState("");
+  const [helpExpanded, setHelpExpanded] = useState<Record<string, boolean>>({});
 
   // School info
   const [schoolInfo, setSchoolInfo] = useState({
@@ -950,9 +954,15 @@ export default function SettingsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1>Settings</h1>
-        <p className="text-muted-foreground text-sm mt-1">Configure your school, school years, and holidays</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1>Settings</h1>
+          <p className="text-muted-foreground text-sm mt-1">Configure your school, school years, and holidays</p>
+        </div>
+        <button onClick={() => { setHelpOpen(true); setHelpSearch(""); }}
+          className="flex items-center gap-1.5 px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors border border-border">
+          <HelpCircle className="w-4 h-4" /> Help
+        </button>
       </div>
       {error && <ErrorAlert message={error} />}
 
@@ -1633,6 +1643,230 @@ export default function SettingsPage() {
 
         </div>
       </div>
+
+      {/* ── Settings Help Drawer ── */}
+      {helpOpen && (
+        <div className="fixed inset-0 z-50 flex justify-end">
+          <div className="absolute inset-0 bg-black/30" onClick={() => { setHelpOpen(false); setHelpSearch(""); }} />
+          <div className="relative flex flex-col w-full max-w-md bg-card border-l border-border shadow-2xl h-full animate-in slide-in-from-right duration-200">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center"><BookOpen className="w-4 h-4 text-primary" /></div>
+                <h2 className="font-semibold text-base">Settings Help</h2>
+              </div>
+              <button onClick={() => { setHelpOpen(false); setHelpSearch(""); }} className="p-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="px-5 py-3 border-b border-border flex-shrink-0">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <input type="text" placeholder="Search topics..." value={helpSearch} onChange={(e) => setHelpSearch(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 text-sm bg-muted border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors" />
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-2 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full">
+              {(() => {
+                const Step = ({ n, text }: { n: number; text: React.ReactNode }) => (
+                  <div className="flex gap-2.5 items-start">
+                    <span className="flex-shrink-0 w-5 h-5 rounded-full bg-primary/15 text-primary text-[10px] font-bold flex items-center justify-center mt-0.5">{n}</span>
+                    <span>{text}</span>
+                  </div>
+                );
+                const Tip = ({ children }: { children: React.ReactNode }) => (
+                  <div className="mt-3 flex gap-2 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2 text-amber-800 dark:text-amber-300 text-xs">
+                    <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" /><span>{children}</span>
+                  </div>
+                );
+                const Note = ({ children }: { children: React.ReactNode }) => (
+                  <div className="mt-3 flex gap-2 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg px-3 py-2 text-blue-800 dark:text-blue-300 text-xs">
+                    <HelpCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" /><span>{children}</span>
+                  </div>
+                );
+                type HelpTopic = { id: string; icon: React.ElementType; title: string; searchText: string; body: React.ReactNode };
+                const topics: HelpTopic[] = [
+                  {
+                    id: "school-info",
+                    icon: Plus,
+                    title: "School Information — update name, address, phone",
+                    searchText: "school information name branch address phone save info",
+                    body: (
+                      <div className="space-y-2">
+                        <p>This section holds your school's basic details that appear on billing statements and other printed documents.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Click <strong>School Information</strong> in the left nav.</span>} />
+                          <Step n={2} text={<span>Update fields: <strong>School Name</strong>, <strong>Branch Name</strong>, <strong>Address</strong>, and <strong>Telephone Number</strong>.</span>} />
+                          <Step n={3} text={<span>Click <strong>Save Changes</strong> at the bottom of the card.</span>} />
+                        </div>
+                        <Note>The school name shown in the header and parent portal is pulled from the database and refreshes after you save. If it doesn't update immediately, refresh the page.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "school-years",
+                    icon: Plus,
+                    title: "School years — create, set active, delete",
+                    searchText: "school year create add set active draft archived delete status",
+                    body: (
+                      <div className="space-y-2">
+                        <p>School years scope all classes, attendance, and billing. Only one year can be active at a time.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Click <strong>School Year &amp; Terms</strong> in the left nav.</span>} />
+                          <Step n={2} text={<span>To create a new year: click <strong>Add School Year</strong>, enter the name (e.g. "SY 2026–2027"), set start/end dates, and click Save.</span>} />
+                          <Step n={3} text={<span>To activate a year: click <strong>Set as Active</strong> next to the year. This automatically archives the previous active year.</span>} />
+                          <Step n={4} text={<span>To delete a year: click the <strong>trash icon</strong> next to a non-active year. Cannot delete the active year or years with linked classes.</span>} />
+                        </div>
+                        <Tip>Create the new school year before running Promote Students — the target year must exist so you can assign students to next year's classes.</Tip>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "terms",
+                    icon: Plus,
+                    title: "Academic terms / periods",
+                    searchText: "term academic period add regular summer short name dates",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Terms (Academic Periods) subdivide a school year — e.g. Regular Term and Summer Term. They're used in billing and tuition setup.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>In the School Year &amp; Terms section, click <strong>Add Term</strong> under the school year you want to add it to.</span>} />
+                          <Step n={2} text={<span>Enter the <strong>name</strong> (e.g. "Regular Term"), <strong>start date</strong>, and <strong>end date</strong>.</span>} />
+                          <Step n={3} text={<span>Click <strong>Save</strong>.</span>} />
+                        </div>
+                        <Note>Terms are used in Finance Setup to configure tuition rates per period and level. If you add a term after setting up tuition, go to Finance → Tuition Setup to add rates for the new term.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "holidays",
+                    icon: AlertTriangle,
+                    title: "Holidays — mark no-class days",
+                    searchText: "holiday add no class day date name applies attendance warning",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Holidays marked as "No Class" show a warning on the Attendance page when the date is selected, so teachers know class wasn't held.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Click <strong>Holidays</strong> in the left nav.</span>} />
+                          <Step n={2} text={<span>Click <strong>Add Holiday</strong>. Enter the <strong>name</strong> (e.g. "National Heroes Day") and <strong>date</strong>.</span>} />
+                          <Step n={3} text={<span>Check <strong>No class this day</strong> if you didn't hold classes. Leave unchecked for informational holidays that don't affect class schedules.</span>} />
+                          <Step n={4} text={<span>Click <strong>Save</strong>.</span>} />
+                        </div>
+                        <Note>Holidays are school-wide — you can't assign a holiday to only one class. The no-class warning on Attendance applies to all classes on that date.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "teachers",
+                    icon: Plus,
+                    title: "Teacher records — add, edit, deactivate",
+                    searchText: "teacher add edit deactivate active staff record photo contact",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Teacher records in Settings are your staff directory. These are the names that appear in the teacher dropdown when creating or editing classes.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Click <strong>Teachers</strong> in the left nav.</span>} />
+                          <Step n={2} text={<span>Click <strong>Add Teacher</strong>. Enter their <strong>full name</strong> (required), email, phone, and start date. Optionally upload a photo.</span>} />
+                          <Step n={3} text={<span>To edit: click the <strong>pencil icon</strong> on the teacher row.</span>} />
+                          <Step n={4} text={<span>To deactivate (no longer at the school): edit the record and uncheck <strong>Active</strong>. They'll no longer appear in the class teacher dropdown.</span>} />
+                        </div>
+                        <Note>Teacher records here are separate from teacher login accounts. A teacher can have a record here for directory purposes without having a system login, and vice versa.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "student-ids",
+                    icon: Plus,
+                    title: "Student ID format",
+                    searchText: "student id code format prefix padding year include generate auto",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Controls how auto-generated student codes look (e.g. BK-0001 or BK-26-0001).</p>
+                        <div className="space-y-2.5 mt-2">
+                          {[
+                            { label: "Prefix", desc: "Letters before the number (e.g. \"BK\" → BK-0001). Use your school initials." },
+                            { label: "Padding", desc: "How many digits the number has (e.g. 4 → BK-0001, 3 → BK-001)." },
+                            { label: "Include Year", desc: "When checked, the current 2-digit year is inserted after the prefix (e.g. BK-26-0001)." },
+                          ].map(({ label, desc }) => (
+                            <div key={label} className="flex gap-2.5 items-start">
+                              <span className="font-semibold text-xs w-20 flex-shrink-0 mt-0.5 text-foreground">{label}</span>
+                              <span className="text-xs">{desc}</span>
+                            </div>
+                          ))}
+                        </div>
+                        <Tip>Changing the format only affects new students added going forward. Existing student codes are not retroactively updated.</Tip>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "grading",
+                    icon: Library,
+                    title: "Grading scales — set up and use templates",
+                    searchText: "grading scale descriptive score based template add level label color",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Grading scales define your school's rating vocabulary — used on report cards and assessments.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Click <strong>Grading</strong> in the left nav.</span>} />
+                          <Step n={2} text={<span>Click <strong>Add Scale Set</strong> to create a new grading system. Give it a name and choose the mode: <strong>Label Only</strong> (Excellent / Good / Needs Improvement) or <strong>Score Range</strong> (90–100 = A).</span>} />
+                          <Step n={3} text={<span>Or click <strong>Use Template</strong> to apply a pre-built scale (e.g. DepEd descriptive, A–F, 1–4 rubric).</span>} />
+                          <Step n={4} text={<span>Once a scale set is created, expand it and click <strong>Add Level</strong> to define each grade: label, description, color, and score range (if score-based).</span>} />
+                        </div>
+                        <Note>Grading scales are currently stored for reference. Direct integration with student report cards is a planned feature.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "branding",
+                    icon: Upload,
+                    title: "Branding — logo, colors, text size",
+                    searchText: "branding logo color primary accent text size spacing accessibility upload",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Customize how the app looks for your school — changes apply immediately across the admin and parent portal.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Click <strong>Branding &amp; Accessibility</strong> in the left nav.</span>} />
+                          <Step n={2} text={<span><strong>Logo</strong> — click the school logo area to upload an image (JPG/PNG, compressed automatically).</span>} />
+                          <Step n={3} text={<span><strong>Primary Color</strong> — the main UI color (buttons, active states, links). Use your school's brand color.</span>} />
+                          <Step n={4} text={<span><strong>Accent Color</strong> — secondary color used for highlights and badges.</span>} />
+                          <Step n={5} text={<span><strong>Text Size</strong> and <strong>Spacing</strong> — accessibility adjustments for parents who find the default size hard to read. Default → Large → Extra Large.</span>} />
+                          <Step n={6} text={<span>Check the <strong>Live Preview</strong> at the bottom before saving.</span>} />
+                          <Step n={7} text={<span>Click <strong>Save Changes</strong>.</span>} />
+                        </div>
+                        <Tip>If the colors look off in the live preview, use the contrast indicator to ensure text remains readable. A contrast ratio below 4.5:1 fails accessibility standards.</Tip>
+                      </div>
+                    ),
+                  },
+                ];
+                const q = helpSearch.trim().toLowerCase();
+                const filtered = q ? topics.filter((t) => t.title.toLowerCase().includes(q) || t.searchText.toLowerCase().includes(q)) : topics;
+                if (filtered.length === 0) return (
+                  <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
+                    <HelpCircle className="w-8 h-8 mb-3 opacity-40" />
+                    <p className="text-sm">No topics match <span className="font-medium text-foreground">"{helpSearch}"</span></p>
+                    <button onClick={() => setHelpSearch("")} className="mt-2 text-xs text-primary hover:underline">Clear search</button>
+                  </div>
+                );
+                return filtered.map((item) => {
+                  const Icon = item.icon;
+                  const open = !!helpExpanded[item.id];
+                  return (
+                    <div key={item.id} className="border border-border rounded-xl overflow-hidden">
+                      <button className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-muted/60 transition-colors"
+                        onClick={() => setHelpExpanded((prev) => ({ ...prev, [item.id]: !prev[item.id] }))}>
+                        <div className="w-6 h-6 rounded-md bg-muted flex items-center justify-center flex-shrink-0"><Icon className="w-3.5 h-3.5 text-muted-foreground" /></div>
+                        <span className="flex-1 text-sm font-medium">{item.title}</span>
+                        {open ? <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0" /> : <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />}
+                      </button>
+                      {open && <div className="px-4 pb-4 pt-3 text-sm text-muted-foreground leading-relaxed border-t border-border bg-muted/20">{item.body}</div>}
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+            <div className="px-5 py-3 border-t border-border flex-shrink-0 text-xs text-muted-foreground">
+              {helpSearch ? <span>Showing results for "<span className="font-medium text-foreground">{helpSearch}</span>"</span> : <span>8 topics · click any to expand</span>}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Term Modal */}
       <Modal open={periodModal} onClose={() => setPeriodModal(false)} title={editingPeriod ? "Edit Term" : "Add Term"}>

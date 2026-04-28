@@ -3,6 +3,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import {
   ImagePlus, Send, Lightbulb, ChevronDown, ChevronUp, X,
   Eye, EyeOff, Trash2, RotateCcw, AlertTriangle, FileText, Pencil, Megaphone,
+  BookOpen, HelpCircle, ChevronRight, Search,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -117,6 +118,10 @@ export default function ParentUpdatesPage() {
   const [showPreview, setShowPreview] = useState(false);
   const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [helpSearch, setHelpSearch] = useState("");
+  const [helpExpanded, setHelpExpanded] = useState<Record<string, boolean>>({});
 
   // Broadcast modal state
   const [broadcastOpen, setBroadcastOpen] = useState(false);
@@ -552,13 +557,21 @@ export default function ParentUpdatesPage() {
           <h1>Parent Updates</h1>
           <p className="text-muted-foreground text-sm mt-1">Share updates with parents about class activities</p>
         </div>
-        <Button
-          variant="outline"
-          onClick={() => { setBroadcastOpen(true); setBroadcastError(null); setBroadcastSent(false); }}
-          className="flex-shrink-0"
-        >
-          <Megaphone className="w-4 h-4" /> Broadcast
-        </Button>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <button
+            onClick={() => { setHelpOpen(true); setHelpSearch(""); }}
+            className="flex items-center gap-1.5 px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors border border-border"
+          >
+            <HelpCircle className="w-4 h-4" />
+            Help
+          </button>
+          <Button
+            variant="outline"
+            onClick={() => { setBroadcastOpen(true); setBroadcastError(null); setBroadcastSent(false); }}
+          >
+            <Megaphone className="w-4 h-4" /> Broadcast
+          </Button>
+        </div>
       </div>
 
       {error && <ErrorAlert message={error} />}
@@ -1022,6 +1035,212 @@ export default function ParentUpdatesPage() {
           </div>
         </div>
       </Modal>
+
+      {/* ── Parent Updates Help Drawer ── */}
+      {helpOpen && (
+        <div className="fixed inset-0 z-50 flex justify-end">
+          <div className="absolute inset-0 bg-black/30" onClick={() => { setHelpOpen(false); setHelpSearch(""); }} />
+          <div className="relative flex flex-col w-full max-w-md bg-card border-l border-border shadow-2xl h-full animate-in slide-in-from-right duration-200">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center">
+                  <BookOpen className="w-4 h-4 text-primary" />
+                </div>
+                <h2 className="font-semibold text-base">Parent Updates Help</h2>
+              </div>
+              <button onClick={() => { setHelpOpen(false); setHelpSearch(""); }} className="p-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="px-5 py-3 border-b border-border flex-shrink-0">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <input type="text" placeholder="Search topics..." value={helpSearch} onChange={(e) => setHelpSearch(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 text-sm bg-muted border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors" />
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-2 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full">
+              {(() => {
+                const Step = ({ n, text }: { n: number; text: React.ReactNode }) => (
+                  <div className="flex gap-2.5 items-start">
+                    <span className="flex-shrink-0 w-5 h-5 rounded-full bg-primary/15 text-primary text-[10px] font-bold flex items-center justify-center mt-0.5">{n}</span>
+                    <span>{text}</span>
+                  </div>
+                );
+                const Tip = ({ children }: { children: React.ReactNode }) => (
+                  <div className="mt-3 flex gap-2 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2 text-amber-800 dark:text-amber-300 text-xs">
+                    <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" /><span>{children}</span>
+                  </div>
+                );
+                const Note = ({ children }: { children: React.ReactNode }) => (
+                  <div className="mt-3 flex gap-2 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg px-3 py-2 text-blue-800 dark:text-blue-300 text-xs">
+                    <HelpCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" /><span>{children}</span>
+                  </div>
+                );
+                type HelpTopic = { id: string; icon: React.ElementType; title: string; searchText: string; body: React.ReactNode };
+                const topics: HelpTopic[] = [
+                  {
+                    id: "post-update",
+                    icon: Send,
+                    title: "Post an update to parents",
+                    searchText: "post send update class parents write text compose publish",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Updates appear in parents' feeds immediately after posting.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Select the <strong>class</strong> in the dropdown above the compose box, or leave it as "All Classes" if the update applies school-wide.</span>} />
+                          <Step n={2} text={<span>Type your message in the compose box. Use the <strong>Lightbulb</strong> icon to insert a pre-written template to speed things up.</span>} />
+                          <Step n={3} text={<span>Optionally add <strong>photos</strong> (up to 4, 8 MB total) using the camera icon.</span>} />
+                          <Step n={4} text={<span>Click <strong>Post Update</strong> (or use Preview first to see how it will look).</span>} />
+                        </div>
+                        <Note>Parents only see updates for the class their child is enrolled in, plus school-wide posts (those with no class selected).</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "draft",
+                    icon: FileText,
+                    title: "Save a draft and finish it later",
+                    searchText: "draft save later unfinished work in progress edit",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Drafts are private — parents can't see them. Use them to start a message and come back to polish it later.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Write your message in the compose box.</span>} />
+                          <Step n={2} text={<span>Click <strong>Save Draft</strong> (the document icon next to Post Update). The update is saved with "Draft" status.</span>} />
+                          <Step n={3} text={<span>To edit it later: switch the status filter to <strong>Drafts</strong>. Find the draft and click <strong>Edit Draft</strong>.</span>} />
+                          <Step n={4} text={<span>When ready, click <strong>Post Update</strong> to publish it.</span>} />
+                        </div>
+                        <Tip>Draft photos are uploaded immediately when you save the draft, not when you post. If you delete a draft, the photos remain in storage — they're cleaned up periodically by the system.</Tip>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "templates",
+                    icon: Lightbulb,
+                    title: "Use message templates",
+                    searchText: "template draft suggestion lightbulb announcement reminder progress event individual",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Templates give you a starting structure so you're not writing from scratch every time.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Click the <strong>Lightbulb icon</strong> below the compose box.</span>} />
+                          <Step n={2} text={<span>Choose from: Class Announcement, Reminder, Progress Note, Event Notice, or Student Update.</span>} />
+                          <Step n={3} text={<span>The template pre-fills the compose box with placeholder text. Replace the bracketed parts with your actual content.</span>} />
+                        </div>
+                        <Note>Applying a template replaces whatever is currently in the compose box. If you've already started writing, click the lightbulb only on a fresh compose — or copy your text first.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "broadcast",
+                    icon: Megaphone,
+                    title: "Send a broadcast announcement",
+                    searchText: "broadcast announcement school-wide all parents quick send megaphone",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Broadcasts are for quick, no-draft announcements — sent directly to parent feeds with no preview step (unless you want one).</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Click the <strong>Broadcast</strong> button (top right, megaphone icon).</span>} />
+                          <Step n={2} text={<span>Select who to send to: <strong>All Parents</strong> (school-wide) or a specific class's parents only.</span>} />
+                          <Step n={3} text={<span>Type your message. Optionally add up to 2 photos.</span>} />
+                          <Step n={4} text={<span>Click <strong>Preview</strong>, then <strong>Send Broadcast</strong>. It's live immediately — there's no undo.</span>} />
+                        </div>
+                        <Tip>Broadcasts skip the compose feed and go straight to parent feeds. They appear in parents' Announcements section (separate from class updates) so they stand out.</Tip>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "photos",
+                    icon: ImagePlus,
+                    title: "Add photos to an update",
+                    searchText: "photo image upload attach picture camera grid max size",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Photos make updates more engaging — parents see them in a grid layout in their feed.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Click the <strong>camera icon</strong> below the compose box.</span>} />
+                          <Step n={2} text={<span>Select an image (JPG, PNG, WebP). It's auto-compressed before upload.</span>} />
+                          <Step n={3} text={<span>Repeat to add more — up to <strong>4 photos</strong>, <strong>8 MB total</strong>.</span>} />
+                          <Step n={4} text={<span>Click the <strong>×</strong> on a photo thumbnail to remove it before posting.</span>} />
+                        </div>
+                        <Note>Photos are stored in a private bucket and served via signed URLs that expire after 1 hour. Parents always get a fresh URL when they open their feed.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "hide-restore",
+                    icon: EyeOff,
+                    title: "Hide, restore, or delete a posted update",
+                    searchText: "hide restore delete remove take down moderate eye off",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Use these actions when a posted update needs to be corrected or removed from parent feeds.</p>
+                        <div className="space-y-2.5 mt-2">
+                          {[
+                            { label: "Hide", desc: "Removes the post from parent feeds temporarily. You must enter a reason. Parents can no longer see it until it's restored." },
+                            { label: "Restore", desc: "Reverses a hide — the post reappears in parent feeds. No reason needed." },
+                            { label: "Delete", desc: "Permanently removes the post. You must enter a reason. This cannot be undone." },
+                          ].map(({ label, desc }) => (
+                            <div key={label} className="flex gap-2.5 items-start">
+                              <span className="font-semibold text-xs w-14 flex-shrink-0 mt-0.5 text-foreground">{label}</span>
+                              <span className="text-xs">{desc}</span>
+                            </div>
+                          ))}
+                        </div>
+                        <Note>To find hidden posts, switch the status filter (above the feed) to <strong>Hidden</strong>. Deleted posts show under the <strong>All</strong> filter but can't be restored.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "filter-feed",
+                    icon: Eye,
+                    title: "Filter and view the update feed",
+                    searchText: "filter class status posted draft hidden all feed view",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Two filter dropdowns control what you see in the feed:</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span><strong>Class filter</strong> — shows updates for a specific class, or "All Classes" to see everything (including school-wide posts).</span>} />
+                          <Step n={2} text={<span><strong>Status filter</strong> — toggles between <strong>Posted</strong> (default), <strong>Drafts</strong>, <strong>Hidden</strong>, and <strong>All</strong>. Switch to Drafts to find and edit saved drafts.</span>} />
+                        </div>
+                        <Note>The feed shows the most recent updates first. There's no pagination — all matching updates load at once. If the feed is slow, narrow it with the class filter.</Note>
+                      </div>
+                    ),
+                  },
+                ];
+                const q = helpSearch.trim().toLowerCase();
+                const filtered = q ? topics.filter((t) => t.title.toLowerCase().includes(q) || t.searchText.toLowerCase().includes(q)) : topics;
+                if (filtered.length === 0) return (
+                  <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
+                    <HelpCircle className="w-8 h-8 mb-3 opacity-40" />
+                    <p className="text-sm">No topics match <span className="font-medium text-foreground">"{helpSearch}"</span></p>
+                    <button onClick={() => setHelpSearch("")} className="mt-2 text-xs text-primary hover:underline">Clear search</button>
+                  </div>
+                );
+                return filtered.map((item) => {
+                  const Icon = item.icon;
+                  const open = !!helpExpanded[item.id];
+                  return (
+                    <div key={item.id} className="border border-border rounded-xl overflow-hidden">
+                      <button className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-muted/60 transition-colors"
+                        onClick={() => setHelpExpanded((prev) => ({ ...prev, [item.id]: !prev[item.id] }))}>
+                        <div className="w-6 h-6 rounded-md bg-muted flex items-center justify-center flex-shrink-0"><Icon className="w-3.5 h-3.5 text-muted-foreground" /></div>
+                        <span className="flex-1 text-sm font-medium">{item.title}</span>
+                        {open ? <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0" /> : <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />}
+                      </button>
+                      {open && <div className="px-4 pb-4 pt-3 text-sm text-muted-foreground leading-relaxed border-t border-border bg-muted/20">{item.body}</div>}
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+            <div className="px-5 py-3 border-t border-border flex-shrink-0 text-xs text-muted-foreground">
+              {helpSearch ? <span>Showing results for "<span className="font-medium text-foreground">{helpSearch}</span>"</span> : <span>7 topics · click any to expand</span>}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Action Modal ─────────────────────────────────────────────────── */}
       <Modal

@@ -345,6 +345,25 @@ All implemented in `supabase/migrations/002_super_admin_trial_periods_tuition.sq
 
 ---
 
+## Help Drawer Rule
+
+Every dashboard page has a Help drawer (slide-in right panel, `HelpCircle` button in the page header). **Whenever a new feature, UI change, or behavior is added to any page, the corresponding help drawer topics must be updated to reflect it.** The help drawer is the single source of truth for how to use each page.
+
+- New feature added → add or update the relevant topic in that page's drawer
+- Feature removed or renamed → remove or rename the topic
+- Behavior changes (e.g. new field, new status, new workflow step) → update the topic body
+- New page created → add a help drawer with topics covering all key workflows
+
+Help drawer implementation pattern (consistent across all pages):
+- State: `helpOpen`, `helpSearch`, `helpExpanded: Record<string, boolean>`
+- Type: `HelpTopic = { id: string; icon: React.ElementType; title: string; searchText: string; body: React.ReactNode }` — defined inline
+- Sub-components `Step`, `Tip`, `Note` defined inside the topic list IIFE
+- Fixed overlay + slide-in panel: `animate-in slide-in-from-right duration-200`
+- Thin scrollbar: `[&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full`
+- No `createPortal` — rendered inline at end of page JSX
+
+---
+
 ## Session Log
 
 ### 2026-04-28 — Billing Refactor, UX Restructure, Generate Billing Fixes

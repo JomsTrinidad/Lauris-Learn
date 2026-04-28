@@ -4,6 +4,7 @@ import {
   Search, Plus, Pencil, ChevronDown, ChevronUp,
   Link as LinkIcon, Copy, Check, BookOpen,
   ArrowRight, RefreshCw, Users, GraduationCap,
+  HelpCircle, AlertTriangle, ChevronRight, X, UserPlus, FileText,
 } from "lucide-react";
 import { DatePicker } from "@/components/ui/datepicker";
 import { AvatarUpload } from "@/components/ui/avatar-upload";
@@ -200,6 +201,10 @@ export default function StudentsPage() {
   const [inviteLink, setInviteLink] = useState<string | null>(null);
   const [inviteGenerating, setInviteGenerating] = useState(false);
   const [inviteCopied, setInviteCopied] = useState(false);
+
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [helpSearch, setHelpSearch] = useState("");
+  const [helpExpanded, setHelpExpanded] = useState<Record<string, boolean>>({});
 
   // Promote tab state
   const [promoteInitialized, setPromoteInitialized] = useState(false);
@@ -890,11 +895,20 @@ export default function StudentsPage() {
           <h1>Students</h1>
           <p className="text-muted-foreground text-sm mt-1">Manage student information and enrollment</p>
         </div>
-        {activeTab === "students" && (
-          <Button onClick={() => { setForm(EMPTY_FORM); setFormError(null); setAddModalOpen(true); }}>
-            <Plus className="w-4 h-4" /> Add Student
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => { setHelpOpen(true); setHelpSearch(""); }}
+            className="flex items-center gap-1.5 px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors border border-border"
+          >
+            <HelpCircle className="w-4 h-4" />
+            Help
+          </button>
+          {activeTab === "students" && (
+            <Button onClick={() => { setForm(EMPTY_FORM); setFormError(null); setAddModalOpen(true); }}>
+              <Plus className="w-4 h-4" /> Add Student
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Tab nav */}
@@ -1760,6 +1774,281 @@ export default function StudentsPage() {
           </div>
         )}
       </Modal>
+
+      {/* ── Students Help Drawer ── */}
+      {helpOpen && (
+        <div className="fixed inset-0 z-50 flex justify-end">
+          <div className="absolute inset-0 bg-black/30" onClick={() => { setHelpOpen(false); setHelpSearch(""); }} />
+          <div className="relative flex flex-col w-full max-w-md bg-card border-l border-border shadow-2xl h-full animate-in slide-in-from-right duration-200">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center">
+                  <BookOpen className="w-4 h-4 text-primary" />
+                </div>
+                <h2 className="font-semibold text-base">Students Help</h2>
+              </div>
+              <button onClick={() => { setHelpOpen(false); setHelpSearch(""); }} className="p-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="px-5 py-3 border-b border-border flex-shrink-0">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <input
+                  type="text"
+                  placeholder="Search topics..."
+                  value={helpSearch}
+                  onChange={(e) => setHelpSearch(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 text-sm bg-muted border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors"
+                />
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-2 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full">
+              {(() => {
+                const Step = ({ n, text }: { n: number; text: React.ReactNode }) => (
+                  <div className="flex gap-2.5 items-start">
+                    <span className="flex-shrink-0 w-5 h-5 rounded-full bg-primary/15 text-primary text-[10px] font-bold flex items-center justify-center mt-0.5">{n}</span>
+                    <span>{text}</span>
+                  </div>
+                );
+                const Tip = ({ children }: { children: React.ReactNode }) => (
+                  <div className="mt-3 flex gap-2 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2 text-amber-800 dark:text-amber-300 text-xs">
+                    <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                    <span>{children}</span>
+                  </div>
+                );
+                const Note = ({ children }: { children: React.ReactNode }) => (
+                  <div className="mt-3 flex gap-2 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg px-3 py-2 text-blue-800 dark:text-blue-300 text-xs">
+                    <HelpCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                    <span>{children}</span>
+                  </div>
+                );
+
+                type HelpTopic = { id: string; icon: React.ElementType; title: string; searchText: string; body: React.ReactNode };
+                const topics: HelpTopic[] = [
+                  {
+                    id: "add-student",
+                    icon: UserPlus,
+                    title: "Add a new student",
+                    searchText: "add new student create enroll register name guardian parent",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Use this when a student is confirmed and ready to be added to the system. If they're still just expressing interest, log them in <strong>Enrollment</strong> instead.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Click <strong>Add Student</strong> (top right).</span>} />
+                          <Step n={2} text={<span>Enter <strong>First Name</strong>, <strong>Last Name</strong>, and the <strong>Parent/Guardian name</strong> — these three are required.</span>} />
+                          <Step n={3} text={<span>Select a <strong>class</strong> to enroll the student in. If you're not sure yet, leave it blank and assign later.</span>} />
+                          <Step n={4} text={<span>Fill in the guardian's <strong>contact number</strong> and <strong>email</strong> — the email is used to send the parent portal invite.</span>} />
+                          <Step n={5} text={<span>Expand <strong>Medical & Special Needs</strong>, <strong>Emergency Contact</strong>, or other sections for additional details. These are optional but useful for teachers.</span>} />
+                          <Step n={6} text={<span>Click <strong>Save Student</strong>.</span>} />
+                        </div>
+                        <Note>If the student came through the Enrollment pipeline, use <strong>Enroll Student →</strong> from the Enrollment page instead. That flow automatically creates the student, guardian, and enrollment record in one step.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "edit-student",
+                    icon: Pencil,
+                    title: "Edit a student's details",
+                    searchText: "edit update change student details profile class guardian contact photo",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Click the student row to open their profile, then use the Edit button to change any information.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Click anywhere on the student's row in the list to open the <strong>profile panel</strong> on the right.</span>} />
+                          <Step n={2} text={<span>Click the <strong>pencil icon</strong> (Edit) in the profile panel header.</span>} />
+                          <Step n={3} text={<span>Update the fields you need. The form is divided into collapsible sections — expand the ones relevant to your change.</span>} />
+                          <Step n={4} text={<span>Click <strong>Save Changes</strong>.</span>} />
+                        </div>
+                        <Tip>Changing the class here changes the student's <em>enrollment</em> assignment. Use the <strong>Add Enrollment</strong> button in the profile instead if the student is enrolling in an additional class, or if you want to keep the history of prior enrollments.</Tip>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "guardian",
+                    icon: Users,
+                    title: "Add or update a guardian",
+                    searchText: "guardian parent mother father contact email phone relationship add",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Each student should have at least one primary guardian — this is the person who will receive the parent portal invite.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Open the student's <strong>profile panel</strong> by clicking their row.</span>} />
+                          <Step n={2} text={<span>The <strong>Guardian</strong> section shows the current primary guardian's name, phone, and email.</span>} />
+                          <Step n={3} text={<span>To edit guardian details, click <strong>Edit (pencil icon)</strong> on the student and update the Parent / Guardian section.</span>} />
+                        </div>
+                        <Note>Currently the system supports one guardian per student in the add/edit flow. If a student has multiple guardians (both parents, etc.), note the additional contact in the emergency contact fields for now.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "invite-parent",
+                    icon: LinkIcon,
+                    title: "Send a parent portal invite",
+                    searchText: "invite parent portal link send copy generate access app",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Parents need an invite link to access their child's info in the parent portal. The link is tied to their email address.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Open the student's <strong>profile panel</strong> by clicking their row.</span>} />
+                          <Step n={2} text={<span>Click <strong>Invite Parent</strong> (link icon button in the profile header).</span>} />
+                          <Step n={3} text={<span>The system generates a unique invite link. Click <strong>Copy Link</strong>, then share it with the parent via WhatsApp, Messenger, or SMS.</span>} />
+                          <Step n={4} text={<span>When the parent opens the link and signs up, they'll see their child's attendance, updates, billing, events, and progress.</span>} />
+                        </div>
+                        <Tip>The invite link is tied to the guardian's email. Make sure the email on the student record matches what the parent will use to sign up — otherwise the link won't connect to the right student.</Tip>
+                        <Note>If the parent loses access or the link expires, you can regenerate it by clicking Invite Parent again — a new link is created each time.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "enrollment",
+                    icon: FileText,
+                    title: "Manage a student's enrollments",
+                    searchText: "enrollment class enroll add change status period history multiple",
+                    body: (
+                      <div className="space-y-2">
+                        <p>A student can be enrolled in multiple classes or have enrollment history across school years. All of this is tracked under their profile.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Open the student's <strong>profile panel</strong> and find the <strong>Enrollments</strong> section.</span>} />
+                          <Step n={2} text={<span>Existing enrollments are listed with class name, period, and status. Click <strong>+ Add Enrollment</strong> to add another.</span>} />
+                          <Step n={3} text={<span>In the Add Enrollment modal, select the <strong>class</strong> and set the <strong>status</strong> (Enrolled, Waitlisted, etc.). Adding an academic period is optional.</span>} />
+                          <Step n={4} text={<span>To change a student's status (e.g. from Enrolled to Withdrawn), edit the enrollment from this section.</span>} />
+                        </div>
+                        <Note>The class filter and enrollment count on the student list are based on the student's <em>active</em> enrollment for the current school year. If a student has multiple enrollments, only the most recent enrolled one is shown in the list view.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "photo",
+                    icon: UserPlus,
+                    title: "Upload a student photo",
+                    searchText: "photo profile picture upload avatar image student",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Student photos appear in the attendance list, profile panel, and parent portal.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Open the student edit modal (pencil icon in profile panel).</span>} />
+                          <Step n={2} text={<span>Click the <strong>avatar circle</strong> at the top of the form to upload a photo.</span>} />
+                          <Step n={3} text={<span>Supported: JPG, PNG. Photos are auto-compressed and cropped to a square before upload.</span>} />
+                          <Step n={4} text={<span>Click <strong>Save Changes</strong> — the new photo takes effect immediately.</span>} />
+                        </div>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "filter-search",
+                    icon: Search,
+                    title: "Find a student or filter the list",
+                    searchText: "search filter find class status code name lookup narrow",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Several ways to find who you're looking for:</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span><strong>Search bar</strong> — searches by student name, student code, or guardian name. Works across all statuses and classes.</span>} />
+                          <Step n={2} text={<span><strong>Class filter</strong> — shows students in a specific class only.</span>} />
+                          <Step n={3} text={<span><strong>Status filter</strong> — narrows to Enrolled, Waitlisted, Inquiry, Withdrawn, or Completed.</span>} />
+                        </div>
+                        <Note>All filters work together. To see all Waitlisted students in Kinder AM, set both the class filter and the status filter at the same time.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "promote",
+                    icon: GraduationCap,
+                    title: "Promote students to the next school year",
+                    searchText: "promote promotion next year class graduate advance bulk end year",
+                    body: (
+                      <div className="space-y-2">
+                        <p>At the end of the school year, use the <strong>Promote Students</strong> tab to move students to their next class in bulk.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Click the <strong>Promote Students</strong> tab at the top of this page.</span>} />
+                          <Step n={2} text={<span>Select the <strong>source year</strong> (current year) and <strong>target year</strong> (next year). The target year must already exist in Settings.</span>} />
+                          <Step n={3} text={<span>Use the <strong>Step 2 panel</strong> to bulk-assign next classes per current class — this sets the default for all students in that class at once.</span>} />
+                          <Step n={4} text={<span>Review the student list. Change individual actions to <strong>Repeat</strong> (stays in same level), <strong>Graduate</strong> (marks as completed, no next enrollment), or <strong>Skip</strong> (exclude from this promotion run).</span>} />
+                          <Step n={5} text={<span>Click <strong>Confirm Promotion</strong>.</span>} />
+                        </div>
+                        <Tip>Set the <strong>Promotion Path</strong> on each class (Classes → Edit class) before running this. That setting pre-fills the next class for each student and makes the bulk assignment panel accurate.</Tip>
+                        <Note>Promotion creates new enrollment records in the target year. It doesn't delete or archive the current year's enrollments.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "student-code",
+                    icon: FileText,
+                    title: "Student codes — what they are and how they're assigned",
+                    searchText: "student code id number generate prefix format auto",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Student codes are optional internal reference numbers (e.g. BK-0001) used on billing statements and reports.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Codes are auto-generated when a student is saved — based on your school's code format configured in Settings.</span>} />
+                          <Step n={2} text={<span>The code appears in the student list below their name. It's also searchable in the search bar.</span>} />
+                          <Step n={3} text={<span>To configure the code format (prefix, padding), go to <strong>Settings → Student Code Format</strong>.</span>} />
+                        </div>
+                        <Note>If a student was added before code generation was configured, they may not have a code. You can edit the student and save again to trigger code generation, or assign a custom code manually through the database.</Note>
+                      </div>
+                    ),
+                  },
+                ];
+
+                const q = helpSearch.trim().toLowerCase();
+                const filtered = q
+                  ? topics.filter((t) =>
+                      t.title.toLowerCase().includes(q) ||
+                      t.searchText.toLowerCase().includes(q)
+                    )
+                  : topics;
+
+                if (filtered.length === 0) {
+                  return (
+                    <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
+                      <HelpCircle className="w-8 h-8 mb-3 opacity-40" />
+                      <p className="text-sm">No topics match <span className="font-medium text-foreground">"{helpSearch}"</span></p>
+                      <button onClick={() => setHelpSearch("")} className="mt-2 text-xs text-primary hover:underline">Clear search</button>
+                    </div>
+                  );
+                }
+
+                return filtered.map((item) => {
+                  const Icon = item.icon;
+                  const open = !!helpExpanded[item.id];
+                  return (
+                    <div key={item.id} className="border border-border rounded-xl overflow-hidden">
+                      <button
+                        className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-muted/60 transition-colors"
+                        onClick={() => setHelpExpanded((prev) => ({ ...prev, [item.id]: !prev[item.id] }))}
+                      >
+                        <div className="w-6 h-6 rounded-md bg-muted flex items-center justify-center flex-shrink-0">
+                          <Icon className="w-3.5 h-3.5 text-muted-foreground" />
+                        </div>
+                        <span className="flex-1 text-sm font-medium">{item.title}</span>
+                        {open
+                          ? <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                          : <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />}
+                      </button>
+                      {open && (
+                        <div className="px-4 pb-4 pt-3 text-sm text-muted-foreground leading-relaxed border-t border-border bg-muted/20">
+                          {item.body}
+                        </div>
+                      )}
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+
+            <div className="px-5 py-3 border-t border-border flex-shrink-0 text-xs text-muted-foreground">
+              {helpSearch ? (
+                <span>Showing results for "<span className="font-medium text-foreground">{helpSearch}</span>"</span>
+              ) : (
+                <span>9 topics · click any to expand</span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

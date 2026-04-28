@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Plus, BookOpen, Eye, EyeOff, Search } from "lucide-react";
+import { Plus, BookOpen, Eye, EyeOff, Search, HelpCircle, X, ChevronDown, ChevronRight, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
@@ -61,6 +61,10 @@ export default function ProgressPage() {
 
   const [selectedStudent, setSelectedStudent] = useState("");
   const [classFilter, setClassFilter] = useState("");
+
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [helpSearch, setHelpSearch] = useState("");
+  const [helpExpanded, setHelpExpanded] = useState<Record<string, boolean>>({});
   const [studentSearch, setStudentSearch] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState({
@@ -203,9 +207,15 @@ export default function ProgressPage() {
           <h1>Progress Tracking</h1>
           <p className="text-muted-foreground text-sm mt-1">Record and track student developmental progress</p>
         </div>
-        <Button onClick={openModal} disabled={students.length === 0}>
-          <Plus className="w-4 h-4" /> Record Observation
-        </Button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => { setHelpOpen(true); setHelpSearch(""); }}
+            className="flex items-center gap-1.5 px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors border border-border">
+            <HelpCircle className="w-4 h-4" /> Help
+          </button>
+          <Button onClick={openModal} disabled={students.length === 0}>
+            <Plus className="w-4 h-4" /> Record Observation
+          </Button>
+        </div>
       </div>
 
       {error && <ErrorAlert message={error} />}
@@ -334,6 +344,175 @@ export default function ProgressPage() {
       )}
 
       {/* Add Observation Modal */}
+      {/* ── Progress Help Drawer ── */}
+      {helpOpen && (
+        <div className="fixed inset-0 z-50 flex justify-end">
+          <div className="absolute inset-0 bg-black/30" onClick={() => { setHelpOpen(false); setHelpSearch(""); }} />
+          <div className="relative flex flex-col w-full max-w-md bg-card border-l border-border shadow-2xl h-full animate-in slide-in-from-right duration-200">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center"><BookOpen className="w-4 h-4 text-primary" /></div>
+                <h2 className="font-semibold text-base">Progress Tracking Help</h2>
+              </div>
+              <button onClick={() => { setHelpOpen(false); setHelpSearch(""); }} className="p-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="px-5 py-3 border-b border-border flex-shrink-0">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <input type="text" placeholder="Search topics..." value={helpSearch} onChange={(e) => setHelpSearch(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 text-sm bg-muted border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors" />
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-2 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full">
+              {(() => {
+                const Step = ({ n, text }: { n: number; text: React.ReactNode }) => (
+                  <div className="flex gap-2.5 items-start">
+                    <span className="flex-shrink-0 w-5 h-5 rounded-full bg-primary/15 text-primary text-[10px] font-bold flex items-center justify-center mt-0.5">{n}</span>
+                    <span>{text}</span>
+                  </div>
+                );
+                const Tip = ({ children }: { children: React.ReactNode }) => (
+                  <div className="mt-3 flex gap-2 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2 text-amber-800 dark:text-amber-300 text-xs">
+                    <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" /><span>{children}</span>
+                  </div>
+                );
+                const Note = ({ children }: { children: React.ReactNode }) => (
+                  <div className="mt-3 flex gap-2 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg px-3 py-2 text-blue-800 dark:text-blue-300 text-xs">
+                    <HelpCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" /><span>{children}</span>
+                  </div>
+                );
+                type HelpTopic = { id: string; icon: React.ElementType; title: string; searchText: string; body: React.ReactNode };
+                const topics: HelpTopic[] = [
+                  {
+                    id: "record-observation",
+                    icon: Plus,
+                    title: "Record an observation for a student",
+                    searchText: "record observation add student category rating note date",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Observations track how a student is developing across different skill areas. You can record as many as you like per student.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Click <strong>Record Observation</strong> (top right). The student pre-selects to whoever you have open in the panel.</span>} />
+                          <Step n={2} text={<span>Choose a <strong>category</strong> — these are the developmental areas set up for your school (Participation, Social Skills, etc.).</span>} />
+                          <Step n={3} text={<span>Select a <strong>rating</strong>: Emerging → Developing → Consistent → Advanced.</span>} />
+                          <Step n={4} text={<span>Optionally add a <strong>note</strong> with specific context: what you observed, during which activity.</span>} />
+                          <Step n={5} text={<span>Set the <strong>date observed</strong> — defaults to today but you can backdate it.</span>} />
+                          <Step n={6} text={<span>Choose <strong>visibility</strong>: Parent Visible (parents see it) or Internal Only (staff only).</span>} />
+                          <Step n={7} text={<span>Click <strong>Save Observation</strong>.</span>} />
+                        </div>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "ratings",
+                    icon: BookOpen,
+                    title: "What each rating means",
+                    searchText: "emerging developing consistent advanced rating level scale meaning",
+                    body: (
+                      <div className="space-y-2.5 mt-1">
+                        {[
+                          { label: "Emerging", color: "text-red-600", desc: "The student is just beginning to show this skill. Needs significant support and guidance." },
+                          { label: "Developing", color: "text-yellow-600", desc: "The student is working on this skill but is not yet consistent. Still needs teacher prompting." },
+                          { label: "Consistent", color: "text-blue-600", desc: "The student demonstrates this skill reliably across most situations with minimal prompting." },
+                          { label: "Advanced", color: "text-green-600", desc: "The student demonstrates this skill confidently and can often model it for peers." },
+                        ].map(({ label, color, desc }) => (
+                          <div key={label} className="flex gap-2.5 items-start">
+                            <span className={`font-semibold text-xs w-20 flex-shrink-0 mt-0.5 ${color}`}>{label}</span>
+                            <span className="text-xs">{desc}</span>
+                          </div>
+                        ))}
+                        <Note>Ratings are developmental checkpoints, not grades. Use them relative to expected milestones for the class level, not a universal standard.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "visibility",
+                    icon: Eye,
+                    title: "Parent Visible vs Internal Only",
+                    searchText: "visibility parent visible internal only private hidden share",
+                    body: (
+                      <div className="space-y-2">
+                        <div className="space-y-2.5 mt-1">
+                          {[
+                            { label: "Parent Visible", icon: "👁", desc: "Parents see this in the parent portal's Progress page. Only the most recent observation per category is shown to parents." },
+                            { label: "Internal Only", icon: "🔒", desc: "Staff-only. Use for sensitive notes, detailed observations, or flags you're not ready to share." },
+                          ].map(({ label, icon, desc }) => (
+                            <div key={label} className="flex gap-2.5 items-start">
+                              <span className="text-sm w-4 flex-shrink-0 mt-0.5">{icon}</span>
+                              <div><span className="font-semibold text-xs text-foreground">{label}</span><p className="text-xs mt-0.5">{desc}</p></div>
+                            </div>
+                          ))}
+                        </div>
+                        <Tip>If you record a new Parent Visible observation for a category, it replaces what parents currently see for that category in their portal.</Tip>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "view-student",
+                    icon: Search,
+                    title: "View a student's observation history",
+                    searchText: "view history student observations list timeline filter class search",
+                    body: (
+                      <div className="space-y-2">
+                        <div className="space-y-2 mt-1">
+                          <Step n={1} text={<span>Use the <strong>class filter</strong> and <strong>student search</strong> to find the student.</span>} />
+                          <Step n={2} text={<span>Click a student's name to load their observations. All observations appear in reverse chronological order.</span>} />
+                          <Step n={3} text={<span>Each row shows category, rating badge, note, date, who recorded it, and visibility (eye = parent visible, lock = internal).</span>} />
+                        </div>
+                        <Note>There's no cross-student view (e.g. "all students Emerging in Social Skills"). That reporting view is planned for a future version.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "categories",
+                    icon: BookOpen,
+                    title: "Progress categories — where they come from",
+                    searchText: "categories 7 default participation social skills add custom manage",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Categories are the developmental dimensions you evaluate — e.g. Participation, Social Skills, Fine Motor.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Your school starts with <strong>7 default categories</strong> seeded at setup.</span>} />
+                          <Step n={2} text={<span>There's no UI to add categories yet. To add a custom one, ask your Super Admin to insert a row into <code className="bg-muted px-1 rounded text-[11px]">progress_categories</code> with your school_id.</span>} />
+                        </div>
+                        <Note>Category management UI is planned for a future version of this page.</Note>
+                      </div>
+                    ),
+                  },
+                ];
+                const q = helpSearch.trim().toLowerCase();
+                const filtered = q ? topics.filter((t) => t.title.toLowerCase().includes(q) || t.searchText.toLowerCase().includes(q)) : topics;
+                if (filtered.length === 0) return (
+                  <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
+                    <HelpCircle className="w-8 h-8 mb-3 opacity-40" />
+                    <p className="text-sm">No topics match <span className="font-medium text-foreground">"{helpSearch}"</span></p>
+                    <button onClick={() => setHelpSearch("")} className="mt-2 text-xs text-primary hover:underline">Clear search</button>
+                  </div>
+                );
+                return filtered.map((item) => {
+                  const Icon = item.icon;
+                  const open = !!helpExpanded[item.id];
+                  return (
+                    <div key={item.id} className="border border-border rounded-xl overflow-hidden">
+                      <button className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-muted/60 transition-colors"
+                        onClick={() => setHelpExpanded((prev) => ({ ...prev, [item.id]: !prev[item.id] }))}>
+                        <div className="w-6 h-6 rounded-md bg-muted flex items-center justify-center flex-shrink-0"><Icon className="w-3.5 h-3.5 text-muted-foreground" /></div>
+                        <span className="flex-1 text-sm font-medium">{item.title}</span>
+                        {open ? <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0" /> : <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />}
+                      </button>
+                      {open && <div className="px-4 pb-4 pt-3 text-sm text-muted-foreground leading-relaxed border-t border-border bg-muted/20">{item.body}</div>}
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+            <div className="px-5 py-3 border-t border-border flex-shrink-0 text-xs text-muted-foreground">
+              {helpSearch ? <span>Showing results for "<span className="font-medium text-foreground">{helpSearch}</span>"</span> : <span>5 topics · click any to expand</span>}
+            </div>
+          </div>
+        </div>
+      )}
+
       <Modal open={modalOpen} onClose={() => setModalOpen(false)} title="Record Observation">
         <div className="space-y-4">
           {formError && <ErrorAlert message={formError} />}

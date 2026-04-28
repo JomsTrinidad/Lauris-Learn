@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
-import { MessageSquare, Save, Check, AlertTriangle, Search, CheckSquare, Bell } from "lucide-react";
+import { MessageSquare, Save, Check, AlertTriangle, Search, CheckSquare, Bell, BookOpen, HelpCircle, ChevronDown, ChevronRight, X, Calendar, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -60,6 +60,10 @@ export default function AttendancePage() {
   const [holiday, setHoliday] = useState<string | null>(null);
   const [absenceNotifs, setAbsenceNotifs] = useState<AbsenceNotif[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [helpSearch, setHelpSearch] = useState("");
+  const [helpExpanded, setHelpExpanded] = useState<Record<string, boolean>>({});
   const [loadingStudents, setLoadingStudents] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -222,9 +226,18 @@ export default function AttendancePage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1>Attendance</h1>
-        <p className="text-muted-foreground text-sm mt-1">Quick and easy daily attendance tracking</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1>Attendance</h1>
+          <p className="text-muted-foreground text-sm mt-1">Quick and easy daily attendance tracking</p>
+        </div>
+        <button
+          onClick={() => { setHelpOpen(true); setHelpSearch(""); }}
+          className="flex items-center gap-1.5 px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors border border-border"
+        >
+          <HelpCircle className="w-4 h-4" />
+          Help
+        </button>
       </div>
 
       {error && <ErrorAlert message={error} />}
@@ -416,6 +429,258 @@ export default function AttendancePage() {
           </Card>
         ))}
       </div>
+
+      {/* ── Attendance Help Drawer ── */}
+      {helpOpen && (
+        <div className="fixed inset-0 z-50 flex justify-end">
+          <div className="absolute inset-0 bg-black/30" onClick={() => { setHelpOpen(false); setHelpSearch(""); }} />
+          <div className="relative flex flex-col w-full max-w-md bg-card border-l border-border shadow-2xl h-full animate-in slide-in-from-right duration-200">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center">
+                  <BookOpen className="w-4 h-4 text-primary" />
+                </div>
+                <h2 className="font-semibold text-base">Attendance Help</h2>
+              </div>
+              <button onClick={() => { setHelpOpen(false); setHelpSearch(""); }} className="p-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="px-5 py-3 border-b border-border flex-shrink-0">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <input
+                  type="text"
+                  placeholder="Search topics..."
+                  value={helpSearch}
+                  onChange={(e) => setHelpSearch(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 text-sm bg-muted border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors"
+                />
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-2 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full">
+              {(() => {
+                const Step = ({ n, text }: { n: number; text: React.ReactNode }) => (
+                  <div className="flex gap-2.5 items-start">
+                    <span className="flex-shrink-0 w-5 h-5 rounded-full bg-primary/15 text-primary text-[10px] font-bold flex items-center justify-center mt-0.5">{n}</span>
+                    <span>{text}</span>
+                  </div>
+                );
+                const Tip = ({ children }: { children: React.ReactNode }) => (
+                  <div className="mt-3 flex gap-2 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2 text-amber-800 dark:text-amber-300 text-xs">
+                    <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                    <span>{children}</span>
+                  </div>
+                );
+                const Note = ({ children }: { children: React.ReactNode }) => (
+                  <div className="mt-3 flex gap-2 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg px-3 py-2 text-blue-800 dark:text-blue-300 text-xs">
+                    <HelpCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                    <span>{children}</span>
+                  </div>
+                );
+
+                type HelpTopic = { id: string; icon: React.ElementType; title: string; searchText: string; body: React.ReactNode };
+                const topics: HelpTopic[] = [
+                  {
+                    id: "daily-flow",
+                    icon: Calendar,
+                    title: "Take attendance for today",
+                    searchText: "daily attendance mark today class date present absent late excused save",
+                    body: (
+                      <div className="space-y-2">
+                        <p>The fastest way to complete attendance for a class session.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>The date defaults to today. Select the <strong>class</strong> from the dropdown — it preselects the first class if only one exists.</span>} />
+                          <Step n={2} text={<span>Click <strong>Mark All Present</strong> (top right of the list) to mark everyone present in one click. Adjust the exceptions individually after.</span>} />
+                          <Step n={3} text={<span>For each student who isn't present, click their status button: <strong>Late</strong>, <strong>Absent</strong>, or <strong>Excused</strong>.</span>} />
+                          <Step n={4} text={<span>Click <strong>Save Attendance</strong> (sticky button at the bottom of the page). The button turns green briefly to confirm it saved.</span>} />
+                        </div>
+                        <Note>You can save attendance multiple times for the same class and date — saving again overwrites the previous records. No need to worry about duplicates.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "statuses",
+                    icon: CheckSquare,
+                    title: "What each attendance status means",
+                    searchText: "present late absent excused status meaning definition",
+                    body: (
+                      <div className="space-y-2.5 mt-1">
+                        {[
+                          { label: "Present", color: "text-green-600", desc: "Student attended class on time." },
+                          { label: "Late", color: "text-yellow-600", desc: "Student arrived after class started. Still counts as attending." },
+                          { label: "Absent", color: "text-red-600", desc: "Student did not attend and no prior notice was given." },
+                          { label: "Excused", color: "text-gray-500", desc: "Student was absent but with an accepted reason (sick note, family emergency, etc.). Counts differently from unexcused absences in reports." },
+                        ].map(({ label, color, desc }) => (
+                          <div key={label} className="flex gap-2.5 items-start">
+                            <span className={`font-semibold text-xs w-16 flex-shrink-0 mt-0.5 ${color}`}>{label}</span>
+                            <span className="text-xs">{desc}</span>
+                          </div>
+                        ))}
+                        <Tip>Students with no status selected are shown with an "X unmarked" badge in the header. Saving without marking them leaves them with no attendance record for the day — not the same as absent.</Tip>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "add-note",
+                    icon: MessageSquare,
+                    title: "Add a note to a student's attendance",
+                    searchText: "note add comment student attendance reason detail message",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Use notes for details like "arrived 20 min late — traffic" or "parent emailed re: fever".</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Click the <strong>chat bubble icon</strong> on the right side of the student row.</span>} />
+                          <Step n={2} text={<span>Type the note in the text field that appears below the student row.</span>} />
+                          <Step n={3} text={<span>Click <strong>Save Attendance</strong> as usual — notes are saved together with statuses.</span>} />
+                        </div>
+                        <Note>The chat bubble turns blue when a note exists for that student. Notes are only visible to school staff — parents don't see them in the parent portal.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "past-date",
+                    icon: Calendar,
+                    title: "Take or edit attendance for a past date",
+                    searchText: "past date previous back correct edit history retroactive",
+                    body: (
+                      <div className="space-y-2">
+                        <p>You can record or correct attendance for any date, not just today.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Click the <strong>Date</strong> picker and select the date you need.</span>} />
+                          <Step n={2} text={<span>The student list loads, pre-filled with whatever was saved before (if anything). Unmarked students show no status selected.</span>} />
+                          <Step n={3} text={<span>Update the statuses, add notes if needed, then click <strong>Save Attendance</strong>.</span>} />
+                        </div>
+                        <Note>Saving a past date overwrites whatever was there before — it's safe to re-save to correct a mistake. The date picker doesn't restrict future dates either, so you can pre-fill expected classes if needed.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "holiday",
+                    icon: AlertTriangle,
+                    title: "Holiday warning appears — what to do",
+                    searchText: "holiday warning no class scheduled orange banner override record",
+                    body: (
+                      <div className="space-y-2">
+                        <p>When the selected date is marked as a no-class holiday in your school calendar, an orange warning appears at the top of the page.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>If you still held class that day (e.g. the holiday only applies to some classes), simply proceed and save attendance normally. The warning is informational only — it doesn't block saving.</span>} />
+                          <Step n={2} text={<span>If you didn't hold class, there's nothing to save — leave the page.</span>} />
+                          <Step n={3} text={<span>To remove or change the holiday, go to <strong>Settings → Holidays</strong>.</span>} />
+                        </div>
+                        <Note>Holidays are school-wide — they apply to all classes. If only some classes have the day off, either don't create a holiday entry, or simply record attendance for the classes that did meet.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "parent-notified",
+                    icon: Bell,
+                    title: "\"Parent notified\" badge on a student",
+                    searchText: "parent notified badge amber bell absence notification report",
+                    body: (
+                      <div className="space-y-2">
+                        <p>An amber "parent notified" badge appears next to a student's name when their parent pre-reported an absence from the parent portal.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>This means the parent sent a message through their portal saying the child won't be in class today, often with a reason.</span>} />
+                          <Step n={2} text={<span>The reason (if given) appears in the amber banner at the top of the attendance list.</span>} />
+                          <Step n={3} text={<span>Mark the student <strong>Absent</strong> or <strong>Excused</strong> as appropriate, then save.</span>} />
+                        </div>
+                        <Note>The parent notification badge is a heads-up only — it doesn't automatically set the student's status. You still need to manually select the status and save.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "class-not-showing",
+                    icon: Clock,
+                    title: "A class isn't showing in the dropdown",
+                    searchText: "class not showing dropdown missing invisible inactive school year",
+                    body: (
+                      <div className="space-y-2">
+                        <p>The class dropdown only shows <strong>active</strong> classes for the current active school year.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Check that the class exists: go to <strong>Classes</strong> and verify it's listed and shows an "Active" badge.</span>} />
+                          <Step n={2} text={<span>If the class is marked inactive, go to <strong>Classes → Edit class</strong> and check the <strong>Active class</strong> checkbox.</span>} />
+                          <Step n={3} text={<span>Check the active school year in <strong>Settings → School Years</strong> — if the class was created under a different year it won't appear here.</span>} />
+                        </div>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "no-students",
+                    icon: CheckSquare,
+                    title: "No students appear in the attendance list",
+                    searchText: "no students empty list not enrolled attendance blank",
+                    body: (
+                      <div className="space-y-2">
+                        <p>The attendance list only shows students who are <strong>enrolled</strong> (not waitlisted or inquiring) in the selected class.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Go to <strong>Students</strong> and check that students are enrolled in the class with <strong>Enrolled</strong> status — not Waitlisted or Inquiry.</span>} />
+                          <Step n={2} text={<span>If a student is missing from the list, open their profile and check their enrollment — the class and status must match.</span>} />
+                          <Step n={3} text={<span>If you just enrolled them, refresh the page and select the class again.</span>} />
+                        </div>
+                      </div>
+                    ),
+                  },
+                ];
+
+                const q = helpSearch.trim().toLowerCase();
+                const filtered = q
+                  ? topics.filter((t) =>
+                      t.title.toLowerCase().includes(q) ||
+                      t.searchText.toLowerCase().includes(q)
+                    )
+                  : topics;
+
+                if (filtered.length === 0) {
+                  return (
+                    <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
+                      <HelpCircle className="w-8 h-8 mb-3 opacity-40" />
+                      <p className="text-sm">No topics match <span className="font-medium text-foreground">"{helpSearch}"</span></p>
+                      <button onClick={() => setHelpSearch("")} className="mt-2 text-xs text-primary hover:underline">Clear search</button>
+                    </div>
+                  );
+                }
+
+                return filtered.map((item) => {
+                  const Icon = item.icon;
+                  const open = !!helpExpanded[item.id];
+                  return (
+                    <div key={item.id} className="border border-border rounded-xl overflow-hidden">
+                      <button
+                        className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-muted/60 transition-colors"
+                        onClick={() => setHelpExpanded((prev) => ({ ...prev, [item.id]: !prev[item.id] }))}
+                      >
+                        <div className="w-6 h-6 rounded-md bg-muted flex items-center justify-center flex-shrink-0">
+                          <Icon className="w-3.5 h-3.5 text-muted-foreground" />
+                        </div>
+                        <span className="flex-1 text-sm font-medium">{item.title}</span>
+                        {open
+                          ? <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                          : <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />}
+                      </button>
+                      {open && (
+                        <div className="px-4 pb-4 pt-3 text-sm text-muted-foreground leading-relaxed border-t border-border bg-muted/20">
+                          {item.body}
+                        </div>
+                      )}
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+
+            <div className="px-5 py-3 border-t border-border flex-shrink-0 text-xs text-muted-foreground">
+              {helpSearch ? (
+                <span>Showing results for "<span className="font-medium text-foreground">{helpSearch}</span>"</span>
+              ) : (
+                <span>8 topics · click any to expand</span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Sticky save */}
       <div className="sticky bottom-4 flex justify-end">

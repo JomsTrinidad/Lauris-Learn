@@ -1,6 +1,9 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Plus, ArrowRight, Search, TrendingUp, Pencil } from "lucide-react";
+import {
+  Plus, ArrowRight, Search, TrendingUp, Pencil,
+  X, BookOpen, HelpCircle, AlertTriangle, ChevronDown, ChevronRight, UserCheck, Tag,
+} from "lucide-react";
 import { DatePicker } from "@/components/ui/datepicker";
 import { formatTime } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -97,6 +100,10 @@ export default function EnrollmentPage() {
   const [statusFilter, setStatusFilter] = useState<InquiryStatus | "">("");
   const [levelFilter, setLevelFilter] = useState("");
   const [view, setView] = useState<"pipeline" | "table" | "funnel">("pipeline");
+
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [helpSearch, setHelpSearch] = useState("");
+  const [helpExpanded, setHelpExpanded] = useState<Record<string, boolean>>({});
 
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState<InquiryForm>(EMPTY_FORM);
@@ -356,9 +363,14 @@ export default function EnrollmentPage() {
           <h1>Enrollment</h1>
           <p className="text-muted-foreground text-sm mt-1">Manage inquiries, waitlist, and enrollment pipeline</p>
         </div>
-        <Button onClick={() => { setModalOpen(true); setForm(EMPTY_FORM); setFormError(null); }}>
-          <Plus className="w-4 h-4" /> Add Inquiry
-        </Button>
+        <div className="flex gap-2">
+          <button onClick={() => { setHelpOpen(true); setHelpSearch(""); }} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors px-2">
+            <HelpCircle className="w-4 h-4" /> Help
+          </button>
+          <Button onClick={() => { setModalOpen(true); setForm(EMPTY_FORM); setFormError(null); }}>
+            <Plus className="w-4 h-4" /> Add Inquiry
+          </Button>
+        </div>
       </div>
 
       {error && <ErrorAlert message={error} />}
@@ -855,6 +867,339 @@ export default function EnrollmentPage() {
           </div>
         )}
       </Modal>
+
+      {/* ── Enrollment Help Drawer ── */}
+      {helpOpen && (
+        <div className="fixed inset-0 z-50 flex justify-end">
+          <div className="absolute inset-0 bg-black/30" onClick={() => { setHelpOpen(false); setHelpSearch(""); }} />
+          <div className="relative flex flex-col w-full max-w-md bg-card border-l border-border shadow-2xl h-full animate-in slide-in-from-right duration-200">
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center">
+                  <BookOpen className="w-4 h-4 text-primary" />
+                </div>
+                <h2 className="font-semibold text-base">Enrollment Help</h2>
+              </div>
+              <button onClick={() => { setHelpOpen(false); setHelpSearch(""); }} className="p-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Search */}
+            <div className="px-5 py-3 border-b border-border flex-shrink-0">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <input
+                  type="text"
+                  placeholder="Search topics..."
+                  value={helpSearch}
+                  onChange={(e) => setHelpSearch(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 text-sm bg-muted border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors"
+                />
+              </div>
+            </div>
+
+            {/* Topics */}
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-2 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full">
+              {(() => {
+                const Step = ({ n, text }: { n: number; text: React.ReactNode }) => (
+                  <div className="flex gap-2.5 items-start">
+                    <span className="flex-shrink-0 w-5 h-5 rounded-full bg-primary/15 text-primary text-[10px] font-bold flex items-center justify-center mt-0.5">{n}</span>
+                    <span>{text}</span>
+                  </div>
+                );
+                const Tip = ({ children }: { children: React.ReactNode }) => (
+                  <div className="mt-3 flex gap-2 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2 text-amber-800 dark:text-amber-300 text-xs">
+                    <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                    <span>{children}</span>
+                  </div>
+                );
+                const Note = ({ children }: { children: React.ReactNode }) => (
+                  <div className="mt-3 flex gap-2 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg px-3 py-2 text-blue-800 dark:text-blue-300 text-xs">
+                    <HelpCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                    <span>{children}</span>
+                  </div>
+                );
+
+                type HelpTopic = { id: string; icon: React.ElementType; title: string; searchText: string; body: React.ReactNode };
+                const topics: HelpTopic[] = [
+                  {
+                    id: "add-inquiry",
+                    icon: Plus,
+                    title: "Log a new inquiry",
+                    searchText: "add inquiry new log walk-in facebook referral source parent child",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Do this the moment a parent expresses interest — by phone, walk-in, social media message, or referral.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Click <strong>Add Inquiry</strong> (top right).</span>} />
+                          <Step n={2} text={<span>Enter the <strong>child's name</strong> and <strong>parent/guardian name</strong> — these are required.</span>} />
+                          <Step n={3} text={<span>Add a <strong>contact number</strong> or email so you can follow up later.</span>} />
+                          <Step n={4} text={<span>Select the <strong>desired class</strong> if the parent has a preference. This feeds into the Analytics view's class demand table.</span>} />
+                          <Step n={5} text={<span>Select the <strong>inquiry source</strong> (Facebook, Referral, Walk-in, etc.). This powers the source breakdown in Analytics — fill it in consistently for useful data.</span>} />
+                          <Step n={6} text={<span>Set a <strong>follow-up date</strong> if you agreed to call them back on a specific day.</span>} />
+                          <Step n={7} text={<span>Click <strong>Save Inquiry</strong>. The card appears in the Inquiry column of the pipeline.</span>} />
+                        </div>
+                        <Note>You don't need all details upfront. You can log just name + contact now and fill in the rest later by clicking <strong>Details</strong> on the card.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "pipeline-stages",
+                    icon: Tag,
+                    title: "What each pipeline stage means",
+                    searchText: "stages inquiry assessment waitlisted offered slot enrolled not proceeding status meaning pipeline",
+                    body: (
+                      <div className="space-y-2.5 mt-1">
+                        {[
+                          { label: "Inquiry", color: "text-blue-600", desc: "Parent has expressed interest. Initial contact made, no commitment yet." },
+                          { label: "Assessment Sched.", color: "text-yellow-600", desc: "Assessment or visit has been scheduled. Waiting for it to happen." },
+                          { label: "Waitlisted", color: "text-orange-600", desc: "No slot available right now. Parent is waiting for a seat to open." },
+                          { label: "Offered Slot", color: "text-purple-600", desc: "A class slot has been offered. Waiting for the parent to confirm." },
+                          { label: "Enrolled", color: "text-green-600", desc: "Parent confirmed. Student record, guardian, and enrollment have been created in the system." },
+                          { label: "Not Proceeding", color: "text-red-600", desc: "Parent withdrew interest. Removed from the active pipeline but kept in records for analytics." },
+                        ].map(({ label, color, desc }) => (
+                          <div key={label} className="flex gap-2.5 items-start">
+                            <span className={`font-semibold text-xs w-28 flex-shrink-0 mt-0.5 ${color}`}>{label}</span>
+                            <span className="text-xs">{desc}</span>
+                          </div>
+                        ))}
+                        <Note>Not Proceeding is a terminal stage — there's no button to move it further. These entries are excluded from the Pipeline view but still visible in Table view and counted in Analytics drop-off rate.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "advance-stage",
+                    icon: ArrowRight,
+                    title: "Move an inquiry to the next stage",
+                    searchText: "advance move stage next progress pipeline card arrow",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Each inquiry moves forward one stage at a time — you can't skip stages.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Find the inquiry card in the <strong>Pipeline view</strong> (or the row in Table view).</span>} />
+                          <Step n={2} text={<span>Click the <strong>→ Move to [Next Stage]</strong> link at the bottom of the card.</span>} />
+                          <Step n={3} text={<span>The card moves to the next column immediately. No confirmation is needed until the final step (Enroll).</span>} />
+                        </div>
+                        <Tip>You can also advance from inside the Details edit modal — there's a Move button at the bottom left. This is handy when you need to update notes and advance in one go.</Tip>
+                        <Note>The pipeline flows: Inquiry → Assessment Scheduled → Waitlisted → Offered Slot → Enrolled. If a stage doesn't apply (e.g. you never waitlisted them), just advance through it — the stage history isn't tracked, only the current status matters.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "enroll-student",
+                    icon: UserCheck,
+                    title: "Formally enroll a student",
+                    searchText: "enroll student convert confirm enrollment class assign create student record",
+                    body: (
+                      <div className="space-y-2">
+                        <p>When a parent confirms and you're ready to create the student's official record, use the Enroll action — don't create the student manually in the Students page.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Find the inquiry at the <strong>Offered Slot</strong> stage and click <strong>Enroll Student →</strong>.</span>} />
+                          <Step n={2} text={<span>A confirmation modal opens. Optionally enter the child's <strong>date of birth</strong> and <strong>gender</strong> now (you can add more details from the Students page later).</span>} />
+                          <Step n={3} text={<span>Select the <strong>class</strong> to assign the student to. The dropdown shows current enrolment vs. capacity so you can see which classes have seats.</span>} />
+                          <Step n={4} text={<span>Click <strong>Confirm Enrollment</strong>. The system automatically creates: a student record, a guardian record using the parent info from the inquiry, and an enrollment linking the student to the class.</span>} />
+                        </div>
+                        <Note>After enrollment, go to <strong>Students</strong> to add the full student profile (address, additional guardians, medical notes, etc.) and to send the parent portal invite.</Note>
+                        <Tip>If you skip assigning a class during enrollment, the student is created without a class. You can assign them from the Students page later, but they won't appear in attendance or billing until enrolled in a class.</Tip>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "not-proceeding",
+                    icon: X,
+                    title: "Mark an inquiry as Not Proceeding",
+                    searchText: "not proceeding cancelled withdrew no longer interested remove drop off",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Use this when a parent confirms they're no longer interested, chose another school, or can't be reached after several follow-ups.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Switch to <strong>Table view</strong> (Pipeline view doesn't show a Not Proceeding button).</span>} />
+                          <Step n={2} text={<span>Find the row and click <strong>Not Proceeding</strong> on the right side.</span>} />
+                          <Step n={3} text={<span>The inquiry is removed from the active pipeline immediately. No confirmation prompt — it's instant.</span>} />
+                        </div>
+                        <Note>Not Proceeding inquiries are not deleted. They're counted in the Analytics view's drop-off rate and still appear in Table view when no status filter is applied. This preserves your historical data for source analysis.</Note>
+                        <Tip>There's no undo button — if you mark one by mistake, open the Details modal and you won't find a way to un-set it from the UI currently. Be deliberate before clicking.</Tip>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "edit-inquiry",
+                    icon: Pencil,
+                    title: "Update an inquiry's details or notes",
+                    searchText: "edit update details notes contact follow up class source change",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Use this any time you gather new information — a corrected contact number, a class preference change, notes from a call, or a new follow-up date.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>In <strong>Pipeline view</strong>, click <strong>Details</strong> at the bottom of the card. In <strong>Table view</strong>, click <strong>Edit</strong> on the right.</span>} />
+                          <Step n={2} text={<span>Update any fields — name, contact, class preference, source, notes, or follow-up date.</span>} />
+                          <Step n={3} text={<span>You can also <strong>advance the stage</strong> from this modal using the Move button at the bottom left — saves opening two things.</span>} />
+                          <Step n={4} text={<span>Click <strong>Save Changes</strong>.</span>} />
+                        </div>
+                        <Note>Notes are free-text and appear as italicised quotes on the pipeline card — keep them short and actionable (e.g. "Prefers morning class, will confirm by Friday").</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "follow-up",
+                    icon: Search,
+                    title: "Manage follow-up dates",
+                    searchText: "follow up date reminder orange overdue callback call back",
+                    body: (
+                      <div className="space-y-2">
+                        <p>A follow-up date is a reminder you set for yourself — when to call or message the parent next.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Set or update it in the <strong>Add Inquiry</strong> form or the <strong>Details / Edit modal</strong> using the Next Follow Up date picker.</span>} />
+                          <Step n={2} text={<span>When set, it shows in <strong>orange</strong> on the pipeline card ("Follow up: YYYY-MM-DD") as a visual cue.</span>} />
+                          <Step n={3} text={<span>In <strong>Table view</strong> the Follow Up column is sortable by eye — scan for today's or past dates to see who needs a call.</span>} />
+                        </div>
+                        <Tip>There's no automated notification for follow-ups — it's a visual flag only. Make it a habit to scan the Table view at the start of each day and filter by status to find pending follow-ups.</Tip>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "find-filter",
+                    icon: Search,
+                    title: "Find a specific inquiry or filter the list",
+                    searchText: "search filter find status level class look up narrow",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Several ways to narrow down what you're looking at:</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span><strong>Search bar</strong> — filters by child name or parent name across all statuses. Works in all three views.</span>} />
+                          <Step n={2} text={<span><strong>Status cards</strong> (the six count cards at the top) — click any card to filter to just that stage. Click again to clear. Useful for quickly seeing all Waitlisted or all Offered Slot inquiries.</span>} />
+                          <Step n={3} text={<span><strong>Level chips</strong> (below the search bar) — filter by the class level the child is interested in (Pre-Kinder, Kinder, etc.). Only appears if classes with levels exist.</span>} />
+                        </div>
+                        <Note>The status filter and level filter stack with the search bar — you can combine them. To see all Waitlisted inquiries for Kinder, click the Waitlisted card and the Kinder chip at the same time.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "views",
+                    icon: TrendingUp,
+                    title: "Pipeline vs Table vs Analytics — which to use",
+                    searchText: "pipeline table analytics funnel view switch kanban board column",
+                    body: (
+                      <div className="space-y-2.5 mt-1">
+                        {[
+                          {
+                            label: "Pipeline",
+                            desc: "Kanban-style columns — one column per stage. Best for day-to-day work: seeing where everything stands at a glance and moving cards forward. This is your default working view.",
+                          },
+                          {
+                            label: "Table",
+                            desc: "Flat list with all details in columns. Best when you need to scan follow-up dates, sort by class, or perform bulk actions like marking multiple inquiries as Not Proceeding. Also the only view that shows Not Proceeding entries in context.",
+                          },
+                          {
+                            label: "Analytics",
+                            desc: "Funnel chart, source breakdown, and class demand table. Use this for reporting to management, deciding whether to open an extra class, or reviewing which marketing channel is sending the most inquiries.",
+                          },
+                        ].map(({ label, desc }) => (
+                          <div key={label} className="flex gap-2.5 items-start">
+                            <span className="font-semibold text-xs w-16 flex-shrink-0 mt-0.5 text-foreground">{label}</span>
+                            <span className="text-xs">{desc}</span>
+                          </div>
+                        ))}
+                        <Note>Switching views preserves your active search and level filter. The status filter is respected in Pipeline and Table views but ignored in Analytics (which always counts all statuses for accurate funnel math).</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "analytics",
+                    icon: TrendingUp,
+                    title: "Reading the Analytics view",
+                    searchText: "analytics funnel conversion rate drop off source breakdown class demand seats",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Switch to <strong>Analytics</strong> (top right toggle) for a snapshot of how your enrollment pipeline is performing.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span><strong>Overall Conversion</strong> — percentage of all inquiries that reached Enrolled status. A healthy rate varies, but anything below 30% is worth investigating at each stage drop-off.</span>} />
+                          <Step n={2} text={<span><strong>Pipeline Funnel</strong> — bar chart per stage. The "↓ X% continue" label between bars tells you what percentage of inquiries at that stage made it to the next. A large drop between Offered Slot → Enrolled usually means pricing or timing friction.</span>} />
+                          <Step n={3} text={<span><strong>Inquiry Sources</strong> — which channel brought in the most leads. Use this to decide where to focus your marketing spend next enrolment season.</span>} />
+                          <Step n={4} text={<span><strong>Class Demand vs. Capacity</strong> — how many active inquiries are interested in each class vs. how many seats remain. Red "Full" means no seats — consider opening a new section or redirecting interest to another class.</span>} />
+                        </div>
+                        <Tip>The Analytics view uses your current <strong>level filter</strong> but ignores the status filter. To see funnel data for Kinder only, click the Kinder chip first, then switch to Analytics.</Tip>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "inquiry-source",
+                    icon: Tag,
+                    title: "Why inquiry source matters",
+                    searchText: "source facebook referral walk-in flyer instagram marketing analytics tracking",
+                    body: (
+                      <div className="space-y-2">
+                        <p>The inquiry source field is optional when logging an inquiry, but it's the only way to know which marketing channels are working.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>When adding or editing an inquiry, always select the <strong>Inquiry Source</strong> from the dropdown (Facebook, Instagram, Referral, Walk-in, Flyer, Other).</span>} />
+                          <Step n={2} text={<span>After a few weeks of data, go to <strong>Analytics view → Inquiry Sources</strong> to see the breakdown. The bar chart shows which source is sending the most leads.</span>} />
+                          <Step n={3} text={<span>Use this to make decisions: if Referral drives 60% of leads, invest in a referral reward program. If Facebook is low, revisit your ads targeting.</span>} />
+                        </div>
+                        <Note>Inquiries with no source selected are counted as "Unknown" in Analytics. Going back and filling in source on old inquiries will make your analytics more accurate.</Note>
+                      </div>
+                    ),
+                  },
+                ];
+
+                const q = helpSearch.trim().toLowerCase();
+                const filtered = q
+                  ? topics.filter((t) =>
+                      t.title.toLowerCase().includes(q) ||
+                      t.searchText.toLowerCase().includes(q)
+                    )
+                  : topics;
+
+                if (filtered.length === 0) {
+                  return (
+                    <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
+                      <HelpCircle className="w-8 h-8 mb-3 opacity-40" />
+                      <p className="text-sm">No topics match <span className="font-medium text-foreground">"{helpSearch}"</span></p>
+                      <button onClick={() => setHelpSearch("")} className="mt-2 text-xs text-primary hover:underline">Clear search</button>
+                    </div>
+                  );
+                }
+
+                return filtered.map((item) => {
+                  const Icon = item.icon;
+                  const open = !!helpExpanded[item.id];
+                  return (
+                    <div key={item.id} className="border border-border rounded-xl overflow-hidden">
+                      <button
+                        className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-muted/60 transition-colors"
+                        onClick={() => setHelpExpanded((prev) => ({ ...prev, [item.id]: !prev[item.id] }))}
+                      >
+                        <div className="w-6 h-6 rounded-md bg-muted flex items-center justify-center flex-shrink-0">
+                          <Icon className="w-3.5 h-3.5 text-muted-foreground" />
+                        </div>
+                        <span className="flex-1 text-sm font-medium">{item.title}</span>
+                        {open
+                          ? <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                          : <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />}
+                      </button>
+                      {open && (
+                        <div className="px-4 pb-4 pt-3 text-sm text-muted-foreground leading-relaxed border-t border-border bg-muted/20">
+                          {item.body}
+                        </div>
+                      )}
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+
+            {/* Footer */}
+            <div className="px-5 py-3 border-t border-border flex-shrink-0 text-xs text-muted-foreground">
+              {helpSearch ? (
+                <span>Showing results for "<span className="font-medium text-foreground">{helpSearch}</span>"</span>
+              ) : (
+                <span>11 topics · click any to expand</span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Add Inquiry Modal */}
       <Modal open={modalOpen} onClose={() => { setModalOpen(false); setForm(EMPTY_FORM); setFormError(null); }} title="Add Inquiry">

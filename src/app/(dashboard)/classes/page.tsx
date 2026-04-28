@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Plus, ExternalLink } from "lucide-react";
+import { Plus, ExternalLink, BookOpen, HelpCircle, AlertTriangle, ChevronDown, ChevronRight, Search, X, Users, Clock, Link2, GraduationCap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -117,6 +117,10 @@ export default function ClassesPage() {
   const [editingClass, setEditingClass] = useState<ClassRecord | null>(null);
   const [form, setForm] = useState<ClassForm>(EMPTY_FORM);
   const [formError, setFormError] = useState<string | null>(null);
+
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [helpSearch, setHelpSearch] = useState("");
+  const [helpExpanded, setHelpExpanded] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (!schoolId) { setLoading(false); return; }
@@ -310,9 +314,18 @@ export default function ClassesPage() {
           <h1>Classes</h1>
           <p className="text-muted-foreground text-sm mt-1">Configure class schedules and assignments</p>
         </div>
-        <Button onClick={openAdd} disabled={!activeYear}>
-          <Plus className="w-4 h-4" /> Add Class
-        </Button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => { setHelpOpen(true); setHelpSearch(""); }}
+            className="flex items-center gap-1.5 px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors border border-border"
+          >
+            <HelpCircle className="w-4 h-4" />
+            Help
+          </button>
+          <Button onClick={openAdd} disabled={!activeYear}>
+            <Plus className="w-4 h-4" /> Add Class
+          </Button>
+        </div>
       </div>
 
       {error && <ErrorAlert message={error} />}
@@ -455,6 +468,267 @@ export default function ClassesPage() {
             </table>
           </div>
         </Card>
+      )}
+
+      {/* ── Classes Help Drawer ── */}
+      {helpOpen && (
+        <div className="fixed inset-0 z-50 flex justify-end">
+          <div className="absolute inset-0 bg-black/30" onClick={() => { setHelpOpen(false); setHelpSearch(""); }} />
+          <div className="relative flex flex-col w-full max-w-md bg-card border-l border-border shadow-2xl h-full animate-in slide-in-from-right duration-200">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center">
+                  <BookOpen className="w-4 h-4 text-primary" />
+                </div>
+                <h2 className="font-semibold text-base">Classes Help</h2>
+              </div>
+              <button onClick={() => { setHelpOpen(false); setHelpSearch(""); }} className="p-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="px-5 py-3 border-b border-border flex-shrink-0">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <input
+                  type="text"
+                  placeholder="Search topics..."
+                  value={helpSearch}
+                  onChange={(e) => setHelpSearch(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 text-sm bg-muted border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors"
+                />
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-2 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full">
+              {(() => {
+                const Step = ({ n, text }: { n: number; text: React.ReactNode }) => (
+                  <div className="flex gap-2.5 items-start">
+                    <span className="flex-shrink-0 w-5 h-5 rounded-full bg-primary/15 text-primary text-[10px] font-bold flex items-center justify-center mt-0.5">{n}</span>
+                    <span>{text}</span>
+                  </div>
+                );
+                const Tip = ({ children }: { children: React.ReactNode }) => (
+                  <div className="mt-3 flex gap-2 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2 text-amber-800 dark:text-amber-300 text-xs">
+                    <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                    <span>{children}</span>
+                  </div>
+                );
+                const Note = ({ children }: { children: React.ReactNode }) => (
+                  <div className="mt-3 flex gap-2 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg px-3 py-2 text-blue-800 dark:text-blue-300 text-xs">
+                    <HelpCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                    <span>{children}</span>
+                  </div>
+                );
+
+                type HelpTopic = { id: string; icon: React.ElementType; title: string; searchText: string; body: React.ReactNode };
+                const topics: HelpTopic[] = [
+                  {
+                    id: "add-class",
+                    icon: Plus,
+                    title: "Create a new class",
+                    searchText: "add create new class name level time schedule capacity",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Do this before adding students or taking attendance. Each class belongs to the active school year.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Click <strong>Add Class</strong> (top right).</span>} />
+                          <Step n={2} text={<span>Enter a <strong>class name</strong> — it must be unique for the school year. Use descriptive names like "Toddlers AM" or "Kinder A" to avoid confusion.</span>} />
+                          <Step n={3} text={<span>Fill in <strong>Level / Age Group</strong> (e.g. "2–3 years" or "Pre-Kinder"). This shows up in enrollment, billing, and reports.</span>} />
+                          <Step n={4} text={<span>Set the <strong>start and end time</strong>. The time appears on attendance, online sessions, and parent-facing pages.</span>} />
+                          <Step n={5} text={<span>Set the <strong>capacity</strong> — the maximum number of students you'll accept. The enrollment bar turns red when the class is full.</span>} />
+                          <Step n={6} text={<span>Assign a <strong>teacher</strong> from the dropdown. Teachers listed here must first be added to the school as users.</span>} />
+                          <Step n={7} text={<span>Click <strong>Save Class</strong>.</span>} />
+                        </div>
+                        <Note>The class is tied to the currently active school year — it won't appear if you switch to a different year. Set the correct active year in Settings first.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "edit-class",
+                    icon: Clock,
+                    title: "Edit class details (name, time, teacher, capacity)",
+                    searchText: "edit update change class name time teacher capacity schedule",
+                    body: (
+                      <div className="space-y-2">
+                        <p>You can change any class detail at any time — it won't affect existing attendance or billing records.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Click <strong>Edit class →</strong> on the class card, or <strong>Edit</strong> in the table row below.</span>} />
+                          <Step n={2} text={<span>Update the fields you need — name, time, teacher, capacity, or links.</span>} />
+                          <Step n={3} text={<span>Click <strong>Save Class</strong>.</span>} />
+                        </div>
+                        <Tip>Changing the class name will update it everywhere — attendance logs, billing records, and student profiles — since they all reference the class ID, not the name text.</Tip>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "deactivate",
+                    icon: Users,
+                    title: "Deactivate a class (end-of-year or discontinued)",
+                    searchText: "deactivate inactive archive disable close class end year",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Inactive classes are hidden from attendance and enrollment dropdowns but remain in historical records.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Open the class by clicking <strong>Edit class →</strong>.</span>} />
+                          <Step n={2} text={<span>Uncheck <strong>Active class</strong> at the bottom of the form.</span>} />
+                          <Step n={3} text={<span>Click <strong>Save Class</strong>. The badge on the card changes to "Inactive".</span>} />
+                        </div>
+                        <Note>Deactivating a class doesn't withdraw its students. Their enrollment records remain. You'd need to manually change enrollment statuses from the Students page if needed.</Note>
+                        <Tip>At the start of a new school year, simply create new classes for that year rather than reactivating old ones. Old classes are kept for historical reference.</Tip>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "capacity",
+                    icon: Users,
+                    title: "Understanding the enrollment bar and capacity",
+                    searchText: "capacity enrollment full slots bar red progress enrolled",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Each class card shows a real-time count of how many students are enrolled vs. how many seats you set.</p>
+                        <div className="space-y-2.5 mt-2">
+                          {[
+                            { label: "Green bar", desc: "Class has available seats." },
+                            { label: "Red bar + \"Full\"", desc: "No seats remaining. The system doesn't block further enrollments — it just flags it visually. You can still add students manually." },
+                          ].map(({ label, desc }) => (
+                            <div key={label} className="flex gap-2.5 items-start">
+                              <span className="font-semibold text-xs w-28 flex-shrink-0 mt-0.5 text-foreground">{label}</span>
+                              <span className="text-xs">{desc}</span>
+                            </div>
+                          ))}
+                        </div>
+                        <Note>The enrolled count only includes students with <strong>Enrolled</strong> status. Waitlisted students are not counted against capacity here, but they are shown as demand in the Enrollment → Analytics view.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "links",
+                    icon: Link2,
+                    title: "Add Google Meet and Messenger chat links",
+                    searchText: "meeting link google meet messenger chat group link online class parent",
+                    body: (
+                      <div className="space-y-2">
+                        <p>These links appear on class cards and are surfaced to parents in the parent portal.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Open the class edit modal.</span>} />
+                          <Step n={2} text={<span>Paste the <strong>Google Meet link</strong> (e.g. <code className="bg-muted px-1 rounded text-[11px]">https://meet.google.com/xxx-xxxx-xxx</code>) — used for scheduled online sessions.</span>} />
+                          <Step n={3} text={<span>Paste the <strong>Messenger group chat link</strong> (e.g. <code className="bg-muted px-1 rounded text-[11px]">https://m.me/g/...</code>) — parents see a "Join Class Chat" button in the parent portal linking here.</span>} />
+                          <Step n={4} text={<span>Save. Both links appear as clickable items on the class card.</span>} />
+                        </div>
+                        <Tip>To get the Messenger group link: open the group chat on Messenger, click the group name at the top → <strong>Share Link</strong>. Copy and paste that URL here.</Tip>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "promotion-path",
+                    icon: GraduationCap,
+                    title: "Set the promotion path (next class)",
+                    searchText: "promotion path next class promote year end graduate suggest advance",
+                    body: (
+                      <div className="space-y-2">
+                        <p>The promotion path tells the system which class students in this class should move to next year. This drives the default suggestions in the Promote Students workflow.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Open the class edit modal.</span>} />
+                          <Step n={2} text={<span>In <strong>Promotion Path (Next Class)</strong>, select the class students will typically move to.</span>} />
+                          <Step n={3} text={<span>Save. The next year's classes must already exist for them to appear in this dropdown.</span>} />
+                        </div>
+                        <Note>During the Students → Promote Students workflow, the system pre-fills each student's next class based on this setting. You can still override it per student before confirming.</Note>
+                        <Tip>Set promotion paths at the start of the year once you've created the new year's classes. That way the Promote Students bulk action is mostly one click.</Tip>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "school-year",
+                    icon: BookOpen,
+                    title: "Classes are per school year — what that means",
+                    searchText: "school year active year class not showing missing previous year",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Every class belongs to one school year. This page only shows classes for the currently <strong>active</strong> school year.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>If you don't see a class you created before, check which year is active: go to <strong>Settings → School Years</strong> and confirm the correct year is set to Active.</span>} />
+                          <Step n={2} text={<span>Classes from previous years still exist in the database — they're used for historical attendance and billing — they just don't show on this page.</span>} />
+                          <Step n={3} text={<span>At the start of each new school year, create fresh classes for that year rather than reusing old ones.</span>} />
+                        </div>
+                        <Note>When you add a class, it's automatically assigned to the current active school year. You can't manually assign a class to a different year from this page.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "no-teacher",
+                    icon: Users,
+                    title: "Teacher isn't showing in the dropdown",
+                    searchText: "teacher not showing dropdown add teacher staff assign role",
+                    body: (
+                      <div className="space-y-2">
+                        <p>The teacher dropdown only lists users who have the <strong>Teacher</strong> role and are assigned to your school.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Ask the teacher to sign up at the login page, or have an admin create their account.</span>} />
+                          <Step n={2} text={<span>In Supabase (or your user management), set their profile's <code className="bg-muted px-1 rounded text-[11px]">role</code> to <strong>teacher</strong> and <code className="bg-muted px-1 rounded text-[11px]">school_id</code> to your school.</span>} />
+                          <Step n={3} text={<span>Return to Classes and their name will appear in the dropdown.</span>} />
+                        </div>
+                        <Note>Each class can only have one assigned teacher. If you need two teachers per class, assign the primary teacher here and use the notes field or an external roster for the secondary.</Note>
+                      </div>
+                    ),
+                  },
+                ];
+
+                const q = helpSearch.trim().toLowerCase();
+                const filtered = q
+                  ? topics.filter((t) =>
+                      t.title.toLowerCase().includes(q) ||
+                      t.searchText.toLowerCase().includes(q)
+                    )
+                  : topics;
+
+                if (filtered.length === 0) {
+                  return (
+                    <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
+                      <HelpCircle className="w-8 h-8 mb-3 opacity-40" />
+                      <p className="text-sm">No topics match <span className="font-medium text-foreground">"{helpSearch}"</span></p>
+                      <button onClick={() => setHelpSearch("")} className="mt-2 text-xs text-primary hover:underline">Clear search</button>
+                    </div>
+                  );
+                }
+
+                return filtered.map((item) => {
+                  const Icon = item.icon;
+                  const open = !!helpExpanded[item.id];
+                  return (
+                    <div key={item.id} className="border border-border rounded-xl overflow-hidden">
+                      <button
+                        className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-muted/60 transition-colors"
+                        onClick={() => setHelpExpanded((prev) => ({ ...prev, [item.id]: !prev[item.id] }))}
+                      >
+                        <div className="w-6 h-6 rounded-md bg-muted flex items-center justify-center flex-shrink-0">
+                          <Icon className="w-3.5 h-3.5 text-muted-foreground" />
+                        </div>
+                        <span className="flex-1 text-sm font-medium">{item.title}</span>
+                        {open
+                          ? <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                          : <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />}
+                      </button>
+                      {open && (
+                        <div className="px-4 pb-4 pt-3 text-sm text-muted-foreground leading-relaxed border-t border-border bg-muted/20">
+                          {item.body}
+                        </div>
+                      )}
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+
+            <div className="px-5 py-3 border-t border-border flex-shrink-0 text-xs text-muted-foreground">
+              {helpSearch ? (
+                <span>Showing results for "<span className="font-medium text-foreground">{helpSearch}</span>"</span>
+              ) : (
+                <span>8 topics · click any to expand</span>
+              )}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Add/Edit Modal */}

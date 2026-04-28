@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import {
   Search, Plus, Banknote, Pencil, CheckSquare, History,
   Printer, AlertTriangle, Wand2, Check, ImageIcon, HelpCircle,
-  ChevronDown, ChevronRight, BookOpen, Tag, FileText, Settings2,
+  ChevronDown, ChevronRight, BookOpen, Tag, FileText, Settings2, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -115,6 +115,7 @@ export default function BillingPage() {
 
   // Help drawer
   const [helpOpen, setHelpOpen] = useState(false);
+  const [helpSearch, setHelpSearch] = useState("");
   const [helpExpanded, setHelpExpanded] = useState<Record<string, boolean>>({});
 
   // Payment history modal
@@ -715,7 +716,7 @@ export default function BillingPage() {
           <p className="text-muted-foreground text-sm mt-1">Track tuition payments and billing setup</p>
         </div>
         <div className="flex gap-2">
-          <button onClick={() => setHelpOpen(true)} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors px-2">
+          <button onClick={() => { setHelpOpen(true); setHelpSearch(""); }} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors px-2">
             <HelpCircle className="w-4 h-4" /> Help
           </button>
           {mainTab === "bills" && (
@@ -1605,27 +1606,374 @@ export default function BillingPage() {
         )}
       </Modal>
 
-      {/* ── Help Drawer ── */}
-      <Modal open={helpOpen} onClose={() => setHelpOpen(false)} title="Billing Help">
-        <div className="space-y-3 text-sm">
-          {[
-            { id: "bills", title: "Bills Tab", body: "View and manage all billing records. Use filters to narrow by student, month, class, or status. Select records to bulk mark as paid. Click a student name to view their full billing statement." },
-            { id: "payments", title: "Payments Tab", body: 'View all payment transactions across all billing records. Click "Record Payment" to select an unpaid bill and record a payment against it.' },
-            { id: "setup", title: "Setup Tab", body: "Configure tuition rates per academic period and level, discounts, student credits, and fee types. Tuition rates are used by Generate Billing to pre-fill amounts." },
-            { id: "generate", title: "Generate Billing", body: "Bulk-create billing records for a month range. Choose 'Use tuition rates' to pull amounts from your tuition config, or 'Flat amount' to apply a single amount to selected classes." },
-            { id: "status", title: "Billing Statuses", body: "Unpaid: No payments. Partial: Some paid. Paid: Fully settled. Overdue: Past due date with balance. Waived: Excluded from totals. Cancelled: Voided. Refunded: Money returned." },
-          ].map((item) => (
-            <div key={item.id} className="border border-border rounded-lg overflow-hidden">
-              <button className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-muted transition-colors"
-                onClick={() => setHelpExpanded((prev) => ({ ...prev, [item.id]: !prev[item.id] }))}>
-                <span className="font-medium">{item.title}</span>
-                {helpExpanded[item.id] ? <ChevronDown className="w-4 h-4 text-muted-foreground" /> : <ChevronRight className="w-4 h-4 text-muted-foreground" />}
+      {/* ── Billing Help Drawer ── */}
+      {helpOpen && (
+        <div className="fixed inset-0 z-50 flex justify-end">
+          <div className="absolute inset-0 bg-black/30" onClick={() => { setHelpOpen(false); setHelpSearch(""); }} />
+          <div className="relative flex flex-col w-full max-w-md bg-card border-l border-border shadow-2xl h-full animate-in slide-in-from-right duration-200">
+            {/* Drawer header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center">
+                  <BookOpen className="w-4 h-4 text-primary" />
+                </div>
+                <h2 className="font-semibold text-base">Billing Help</h2>
+              </div>
+              <button onClick={() => { setHelpOpen(false); setHelpSearch(""); }} className="p-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground">
+                <X className="w-4 h-4" />
               </button>
-              {helpExpanded[item.id] && <div className="px-4 pb-3 text-muted-foreground text-sm border-t border-border pt-3">{item.body}</div>}
             </div>
-          ))}
+
+            {/* Search */}
+            <div className="px-5 py-3 border-b border-border flex-shrink-0">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <input
+                  type="text"
+                  placeholder="Search topics..."
+                  value={helpSearch}
+                  onChange={(e) => setHelpSearch(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 text-sm bg-muted border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors"
+                />
+              </div>
+            </div>
+
+            {/* Topics */}
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-2 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full">
+              {(() => {
+                const Step = ({ n, text }: { n: number; text: React.ReactNode }) => (
+                  <div className="flex gap-2.5 items-start">
+                    <span className="flex-shrink-0 w-5 h-5 rounded-full bg-primary/15 text-primary text-[10px] font-bold flex items-center justify-center mt-0.5">{n}</span>
+                    <span>{text}</span>
+                  </div>
+                );
+                const Tip = ({ children }: { children: React.ReactNode }) => (
+                  <div className="mt-3 flex gap-2 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2 text-amber-800 dark:text-amber-300 text-xs">
+                    <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                    <span>{children}</span>
+                  </div>
+                );
+                const Note = ({ children }: { children: React.ReactNode }) => (
+                  <div className="mt-3 flex gap-2 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg px-3 py-2 text-blue-800 dark:text-blue-300 text-xs">
+                    <HelpCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                    <span>{children}</span>
+                  </div>
+                );
+
+                type HelpTopic = { id: string; icon: React.ElementType; title: string; searchText: string; body: React.ReactNode };
+                const topics: HelpTopic[] = [
+                  {
+                    id: "first-setup",
+                    icon: Settings2,
+                    title: "Before you start billing — first-time setup",
+                    searchText: "setup fee types tuition config rates first time start",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Do this once per school year before generating any bills.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Go to the <strong>Setup tab</strong> → <strong>Fee Types</strong>. Create a "Tuition Fee" entry (and any others you charge, e.g. "Miscellaneous Fee").</span>} />
+                          <Step n={2} text={<span>Go to <strong>Tuition Setup</strong>. Select the academic period (e.g. "Regular Term"), then add a rate for each level your school has — Pre-Kinder, Kinder, etc.</span>} />
+                          <Step n={3} text={<span>Optionally go to <strong>Adjustments</strong> to set up school-wide discounts (sibling, early bird) or one-off student credits before generating.</span>} />
+                        </div>
+                        <Note>Once tuition rates are saved, Generate Billing will pull them automatically — you won't need to type amounts per student.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "generate",
+                    icon: Wand2,
+                    title: "Generate bills for a month (or range of months)",
+                    searchText: "generate billing bulk create month range tuition flat amount auto",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Use this at the start of each billing period to create records for all enrolled students at once.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Click <strong>Generate Billing</strong> (top right of the Bills tab).</span>} />
+                          <Step n={2} text={<span>Choose <strong>"Use tuition rates"</strong> if you've set up rates in Setup → Tuition. The amounts will fill in automatically per class level. Choose <strong>"Flat amount"</strong> if you want to apply the same figure to all selected classes.</span>} />
+                          <Step n={3} text={<span>Set the <strong>month range</strong> (From → To). Set From and To to the same month to generate for a single month only.</span>} />
+                          <Step n={4} text={<span>Select the <strong>classes</strong> to include. Deselect any classes you don't want billed this period.</span>} />
+                          <Step n={5} text={<span>Set a <strong>due date</strong> if needed — either a fixed date or an Nth weekday (e.g. "2nd Friday of the month").</span>} />
+                          <Step n={6} text={<span>Leave <strong>"Skip existing"</strong> checked to avoid duplicating bills already created for that month.</span>} />
+                          <Step n={7} text={<span>Click <strong>Generate</strong>. Bills appear immediately in the Bills tab.</span>} />
+                        </div>
+                        <Note>If a class shows "No config — enter manually", it means no tuition rate is set for that class's level. Add one in Setup → Tuition, or switch to Flat amount mode.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "add-record",
+                    icon: Plus,
+                    title: "Add a one-off or individual charge",
+                    searchText: "add record one off individual charge manual misc miscellaneous",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Use this when you need to bill a single student for something outside the normal monthly cycle — a field trip fee, a registration fee, a late charge, etc.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Click <strong>Add Record</strong> (top right of the Bills tab).</span>} />
+                          <Step n={2} text={<span>Search for the student, select the billing month, fee type, and enter the amount.</span>} />
+                          <Step n={3} text={<span>Add a description so the parent and your team can identify what this charge is for.</span>} />
+                          <Step n={4} text={<span>Set a due date if applicable, then click <strong>Add</strong>.</span>} />
+                        </div>
+                        <Tip>If a bill already exists for that student and month, you'll see a duplicate warning. You can still proceed by entering a reason — useful for adding a second fee type in the same month.</Tip>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "record-payment",
+                    icon: Banknote,
+                    title: "Record a payment from a parent",
+                    searchText: "record payment pay cash gcash bank transfer receipt OR number",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Do this every time a parent pays — whether in full or partially.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>In the <strong>Bills tab</strong>, find the student's bill and click the <strong>Pay</strong> button on that row.</span>} />
+                          <Step n={2} text={<span>Enter the <strong>amount received</strong>. If the parent paid less than the full balance, just enter what you received — the bill will move to "Partial" status automatically.</span>} />
+                          <Step n={3} text={<span>Select the <strong>payment method</strong> (Cash, GCash, Maya, Bank Transfer, Card, Other).</span>} />
+                          <Step n={4} text={<span>Enter the <strong>OR number</strong> if you issue official receipts. You can also attach a <strong>receipt photo</strong> (screenshot of a GCash confirmation, scanned receipt, etc.).</span>} />
+                          <Step n={5} text={<span>Set the <strong>payment date</strong> — this defaults to today but you can backdate it.</span>} />
+                          <Step n={6} text={<span>Click <strong>Save Payment</strong>. The bill status updates instantly.</span>} />
+                        </div>
+                        <Tip>If the student has earlier unpaid months, you'll see a warning. You don't have to follow billing order — you can still proceed — but it's good practice to clear older balances first.</Tip>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "partial-payment",
+                    icon: Banknote,
+                    title: "Parent paid only part of the amount",
+                    searchText: "partial payment installment part balance remaining",
+                    body: (
+                      <div className="space-y-2">
+                        <p>The system handles partial payments natively — no special mode needed.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Click <strong>Pay</strong> on the bill row as normal.</span>} />
+                          <Step n={2} text={<span>Enter only the <strong>amount the parent actually gave you</strong>, not the full balance.</span>} />
+                          <Step n={3} text={<span>Save. The bill status changes to <strong>Partial</strong> and the Balance column shows what remains.</span>} />
+                          <Step n={4} text={<span>When the parent pays the rest, click <strong>Pay</strong> again on the same bill and enter the remaining amount. You can record as many partial payments as needed.</span>} />
+                        </div>
+                        <Note>The balance shown in the Bills tab is always the remaining unpaid amount. The full payment history for a bill is always accessible via the clock icon on that row.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "bulk-paid",
+                    icon: CheckSquare,
+                    title: "Mark multiple bills paid at once",
+                    searchText: "bulk mark paid select multiple batch advance payment",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Useful when a parent pays several months in advance, or you're closing out the month and a group of students all paid in cash.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>In the <strong>Bills tab</strong>, use the checkboxes on the left to select the bills you want to mark.</span>} />
+                          <Step n={2} text={<span>A bar will appear at the top showing how many are selected. Click <strong>Mark as Paid</strong>.</span>} />
+                          <Step n={3} text={<span>A confirmation modal shows the list of students and total amount. Select the payment method and date, then confirm.</span>} />
+                        </div>
+                        <Tip>This records a single payment entry per bill with the same method and date. If you need to attach individual OR numbers or receipt photos, record each payment separately using the Pay button instead.</Tip>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "waive-cancel",
+                    icon: Tag,
+                    title: "Waive a fee or cancel a bill",
+                    searchText: "waive cancel void fee scholarship exemption remove bill",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Use <strong>Waived</strong> when a student is exempt from a charge (scholarship, goodwill gesture) — it hides the bill from outstanding totals without deleting the record. Use <strong>Cancelled</strong> when the bill was created by mistake.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>In the <strong>Bills tab</strong>, click the <strong>pencil icon</strong> on the bill row to open the edit modal.</span>} />
+                          <Step n={2} text={<span>Change the <strong>Status</strong> dropdown to <strong>Waived</strong> or <strong>Cancelled</strong>.</span>} />
+                          <Step n={3} text={<span>You'll be required to enter a <strong>reason</strong> — this is saved in the audit trail for reference.</span>} />
+                          <Step n={4} text={<span>Click <strong>Save</strong>. The bill disappears from the default Bills view (it's hidden unless you check "Show paid/settled").</span>} />
+                        </div>
+                        <Note>Waived and Cancelled bills are never deleted — they're just excluded from totals and the default list. You can always find them by checking "Show paid/settled" in the Bills tab filters.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "discounts",
+                    icon: Tag,
+                    title: "Apply a discount or student credit",
+                    searchText: "discount credit sibling promo scholarship deduction adjust",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Discounts reduce the billed amount at the time bills are generated. Credits are one-off deductions assigned to a specific student.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Go to <strong>Setup → Adjustments</strong>.</span>} />
+                          <Step n={2} text={<span>To create a school-wide discount (e.g. sibling discount, early enrolment promo), click <strong>Add Discount</strong>. Set the type (fixed ₱ amount or percentage) and scope.</span>} />
+                          <Step n={3} text={<span>To give a specific student a one-time credit, click <strong>Add Credit</strong> under Student Credits. Select the student and enter the amount.</span>} />
+                          <Step n={4} text={<span>Discounts and credits are applied the next time you use <strong>Generate Billing</strong> for those students.</span>} />
+                        </div>
+                        <Note>Discounts don't automatically retroactively adjust existing bills. If bills are already generated, you'll need to edit the amount on each record manually or regenerate after deleting the existing ones.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "fix-or",
+                    icon: Pencil,
+                    title: "Fix an OR number or replace a receipt photo",
+                    searchText: "edit OR number official receipt photo fix update change pencil",
+                    body: (
+                      <div className="space-y-2">
+                        <p>You saved a payment but the OR number was wrong, or you need to attach the receipt photo after the fact.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Go to the <strong>Payments tab</strong>.</span>} />
+                          <Step n={2} text={<span>Find the payment row and click the <strong>pencil icon</strong> on the right side of that row.</span>} />
+                          <Step n={3} text={<span>Update the <strong>OR number</strong> and/or upload a new <strong>receipt photo</strong>.</span>} />
+                          <Step n={4} text={<span>Click <strong>Save</strong>. The updated receipt will reflect next time you print it.</span>} />
+                        </div>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "print-receipt",
+                    icon: Printer,
+                    title: "Print a receipt or billing statement",
+                    searchText: "print receipt statement official receipt billing history pdf",
+                    body: (
+                      <div className="space-y-2">
+                        <p><strong>Payment receipt</strong> — for a single payment transaction (what parents bring to auditors or keep for their records).</p>
+                        <p className="mt-1"><strong>Billing statement</strong> — a full ledger for one student showing all bills and payments for the school year (useful for parent meetings or end-of-year reconciliation).</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>For a <strong>receipt</strong>: go to the <strong>Payments tab</strong> → click the <strong>printer icon</strong> on any payment row.</span>} />
+                          <Step n={2} text={<span>For a <strong>statement</strong>: go to the <strong>Bills tab</strong> → click the <strong>student's name</strong> to open the Statement modal → click <strong>Print</strong>.</span>} />
+                        </div>
+                        <Note>Both open a clean print window. Use your browser's print dialog to save as PDF or send to a printer. The layout is designed for A4.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "collected",
+                    icon: Banknote,
+                    title: "See what's been collected this month",
+                    searchText: "collected payments this month date range total revenue summary",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Go to the <strong>Payments tab</strong> — this shows every payment transaction recorded, not the bills themselves.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Use the <strong>From / To date pickers</strong> at the top of the Payments tab to filter by payment date range (e.g. first to last day of the month).</span>} />
+                          <Step n={2} text={<span>The list shows student, class, amount, method, OR number, and date for each transaction.</span>} />
+                        </div>
+                        <Note>The summary cards at the top of the Billing page (Total Collected, Outstanding, Collection Rate) reflect the current school year in full — not just the filtered date range.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "overdue",
+                    icon: AlertTriangle,
+                    title: "Track and follow up on overdue accounts",
+                    searchText: "overdue aging 30d 60d 90d follow up late unpaid past due",
+                    body: (
+                      <div className="space-y-2">
+                        <p>A bill becomes <strong>Overdue</strong> automatically once its due date has passed and a balance remains.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>In the <strong>Bills tab</strong>, use the Status filter and select <strong>Overdue</strong> to see all overdue records at a glance.</span>} />
+                          <Step n={2} text={<span>The coloured aging badge next to the status shows how long the account has been overdue: <strong className="text-amber-600">30d+</strong> (amber), <strong className="text-orange-600">60d+</strong> (orange), <strong className="text-red-600">90d+</strong> (red). Prioritise red-badge accounts.</span>} />
+                          <Step n={3} text={<span>Click a student's name to open their full statement — this shows all unpaid months in one view, useful when discussing the account with a parent.</span>} />
+                        </div>
+                        <Tip>If a due date was never set on a bill, it will never become Overdue automatically. Set due dates during Generate Billing or edit individual records to add them later.</Tip>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "student-history",
+                    icon: History,
+                    title: "View a student's full billing history",
+                    searchText: "history student statement all records year ledger balance",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Two levels of history are available depending on what you need.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span><strong>Payments per bill</strong> — click the <strong>clock icon</strong> on any bill row in the Bills tab. This shows all payments recorded against that specific bill (amounts, dates, methods, OR numbers, receipt photos).</span>} />
+                          <Step n={2} text={<span><strong>Full year ledger</strong> — click the <strong>student's name</strong> in the Bills tab. This opens a statement modal with every bill and every payment for the entire school year, with running totals.</span>} />
+                        </div>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "statuses",
+                    icon: Tag,
+                    title: "What each billing status means",
+                    searchText: "status unpaid partial paid overdue waived cancelled refunded meaning",
+                    body: (
+                      <div className="space-y-2.5 mt-1">
+                        {[
+                          { label: "Unpaid", color: "text-red-600", desc: "No payments recorded yet. Bill is active and counts toward outstanding balance." },
+                          { label: "Partial", color: "text-orange-600", desc: "Some amount has been paid but a balance remains. The Balance column shows what's still owed." },
+                          { label: "Paid", color: "text-green-600", desc: "Fully settled. Removed from the default Bills view — check 'Show paid/settled' to see these." },
+                          { label: "Overdue", color: "text-red-700", desc: "Past the due date with an outstanding balance. An aging badge shows how many days overdue." },
+                          { label: "Waived", color: "text-sky-600", desc: "Marked as exempt (scholarship, goodwill). Excluded from totals and outstanding balance. Not deleted." },
+                          { label: "Cancelled", color: "text-muted-foreground", desc: "Voided — created in error. Excluded from all totals. Not deleted; visible under 'Show paid/settled'." },
+                          { label: "Refunded", color: "text-purple-600", desc: "Payment was returned to the parent. Excluded from revenue totals." },
+                        ].map(({ label, color, desc }) => (
+                          <div key={label} className="flex gap-2.5 items-start">
+                            <span className={`font-semibold text-xs w-16 flex-shrink-0 mt-0.5 ${color}`}>{label}</span>
+                            <span className="text-xs">{desc}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ),
+                  },
+                ];
+
+                const q = helpSearch.trim().toLowerCase();
+                const filtered = q
+                  ? topics.filter((t) =>
+                      t.title.toLowerCase().includes(q) ||
+                      t.searchText.toLowerCase().includes(q)
+                    )
+                  : topics;
+
+                if (filtered.length === 0) {
+                  return (
+                    <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
+                      <HelpCircle className="w-8 h-8 mb-3 opacity-40" />
+                      <p className="text-sm">No topics match <span className="font-medium text-foreground">"{helpSearch}"</span></p>
+                      <button onClick={() => setHelpSearch("")} className="mt-2 text-xs text-primary hover:underline">Clear search</button>
+                    </div>
+                  );
+                }
+
+                return filtered.map((item) => {
+                  const Icon = item.icon;
+                  const open = !!helpExpanded[item.id];
+                  return (
+                    <div key={item.id} className="border border-border rounded-xl overflow-hidden">
+                      <button
+                        className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-muted/60 transition-colors"
+                        onClick={() => setHelpExpanded((prev) => ({ ...prev, [item.id]: !prev[item.id] }))}
+                      >
+                        <div className="w-6 h-6 rounded-md bg-muted flex items-center justify-center flex-shrink-0">
+                          <Icon className="w-3.5 h-3.5 text-muted-foreground" />
+                        </div>
+                        <span className="flex-1 text-sm font-medium">{item.title}</span>
+                        {open
+                          ? <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                          : <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />}
+                      </button>
+                      {open && (
+                        <div className="px-4 pb-4 pt-3 text-sm text-muted-foreground leading-relaxed border-t border-border bg-muted/20">
+                          {item.body}
+                        </div>
+                      )}
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+
+            {/* Footer */}
+            <div className="px-5 py-3 border-t border-border flex-shrink-0 text-xs text-muted-foreground">
+              {helpSearch ? (
+                <span>Showing results for "<span className="font-medium text-foreground">{helpSearch}</span>"</span>
+              ) : (
+                <span>14 topics · click any to expand</span>
+              )}
+            </div>
+          </div>
         </div>
-      </Modal>
+      )}
 
       {/* ── Toast ── */}
       {toast && (
