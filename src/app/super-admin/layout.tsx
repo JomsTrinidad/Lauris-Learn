@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter, usePathname } from "next/navigation";
-import { ShieldCheck, School, LogOut, ChevronDown } from "lucide-react";
+import { ShieldCheck, School, FlaskConical, BookOpen, LogOut, ChevronDown } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { Spinner } from "@/components/ui/spinner";
 import { getInitials } from "@/lib/utils";
@@ -17,7 +17,9 @@ interface AdminUser {
 }
 
 const navItems = [
-  { path: "/super-admin/schools", label: "Schools", icon: School },
+  { path: "/super-admin/schools",   label: "Schools",   icon: School },
+  { path: "/super-admin/demo-data", label: "Demo Data", icon: FlaskConical },
+  { path: "/super-admin/docs",      label: "Docs",      icon: BookOpen },
 ];
 
 export default function SuperAdminLayout({ children }: { children: React.ReactNode }) {
@@ -143,14 +145,6 @@ export default function SuperAdminLayout({ children }: { children: React.ReactNo
             {userMenuOpen && (
               <div className="absolute right-0 top-full mt-1 w-48 bg-card border border-border rounded-lg shadow-lg z-10">
                 <div className="p-2">
-                  <Link
-                    href="/dashboard"
-                    className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-accent rounded-lg transition-colors"
-                    onClick={() => setUserMenuOpen(false)}
-                  >
-                    <School className="w-4 h-4" />
-                    Go to Dashboard
-                  </Link>
                   <button
                     onClick={handleSignOut}
                     className="w-full flex items-center gap-2 px-3 py-2 text-sm text-destructive hover:bg-accent rounded-lg transition-colors"

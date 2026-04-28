@@ -18,6 +18,7 @@ import { formatCurrency } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { useSchoolContext } from "@/contexts/SchoolContext";
 import { validateUpload, contentTypeFromExt, RECEIPT_MAX_BYTES } from "@/lib/upload-validate";
+import { trackUpload } from "@/lib/track-upload";
 import {
   type MainTab, type SetupSubTab, type BillingStatus, type PaymentMethod,
   type BillingRecord, type StudentOption, type PaymentRecord, type AllPayment,
@@ -453,8 +454,15 @@ export default function BillingPage() {
           upsert: true,
           contentType: contentTypeFromExt(payment.receiptFile.name),
         });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      if (!uploadErr) await (supabase as any).from("payments").update({ receipt_photo_path: path }).eq("id", pResult.data.id);
+      if (!uploadErr) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (supabase as any).from("payments").update({ receipt_photo_path: path }).eq("id", pResult.data.id);
+        await trackUpload(supabase, {
+          schoolId, uploadedBy: userId, entityType: "payment_receipt", entityId: pResult.data.id,
+          bucket: "updates-media", storagePath: path,
+          fileSize: payment.receiptFile!.size, mimeType: contentTypeFromExt(payment.receiptFile!.name),
+        });
+      }
     }
     const newPaid = paymentModal.amountPaid + amount;
     const newStatus = computeStatus("unpaid", paymentModal.amountDue, newPaid, paymentModal.dueDate);
@@ -606,6 +614,11 @@ export default function BillingPage() {
       const { error: uploadErr } = await supabase.storage.from("updates-media").upload(path, editPaymentForm.receiptFile, { upsert: true, contentType: contentTypeFromExt(editPaymentForm.receiptFile.name) });
       if (uploadErr) { setEditPaymentError(uploadErr.message); setEditPaymentSaving(false); return; }
       update.receipt_photo_path = path;
+      await trackUpload(supabase, {
+        schoolId, uploadedBy: userId, entityType: "payment_receipt", entityId: editPaymentModal.id,
+        bucket: "updates-media", storagePath: path,
+        fileSize: editPaymentForm.receiptFile.size, mimeType: contentTypeFromExt(editPaymentForm.receiptFile.name),
+      });
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (supabase as any).from("payments").update(update).eq("id", editPaymentModal.id);

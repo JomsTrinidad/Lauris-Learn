@@ -17,6 +17,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { PageSpinner, ErrorAlert } from "@/components/ui/spinner";
 import { getInitials, cn } from "@/lib/utils";
 import { compressImage, PROFILE_PHOTO_MAX_W, PROFILE_PHOTO_MAX_BYTES } from "@/lib/image-compress";
+import { trackUpload } from "@/lib/track-upload";
 import { createClient } from "@/lib/supabase/client";
 import { useSchoolContext } from "@/contexts/SchoolContext";
 
@@ -159,7 +160,7 @@ interface SchoolCodeConfig { prefix: string; padding: number; includeYear: boole
 // ─── Page component ───────────────────────────────────────────────────────────
 
 export default function StudentsPage() {
-  const { schoolId, activeYear } = useSchoolContext();
+  const { schoolId, activeYear, userId } = useSchoolContext();
   const supabase = createClient();
 
   // Tab
@@ -270,9 +271,15 @@ export default function StudentsPage() {
 
   async function uploadProfilePhoto(studentId: string, file: File): Promise<string | null> {
     const compressed = await compressImage(file, PROFILE_PHOTO_MAX_W, PROFILE_PHOTO_MAX_BYTES);
-    const path = `students/${studentId}.jpg`;
+    // Include schoolId in the path so storage policies can scope access by tenant
+    const path = `students/${schoolId}/${studentId}.jpg`;
     const { error } = await supabase.storage.from("profile-photos").upload(path, compressed, { upsert: true, contentType: "image/jpeg" });
     if (error) return null;
+    await trackUpload(supabase, {
+      schoolId, uploadedBy: userId, entityType: "student", entityId: studentId,
+      bucket: "profile-photos", storagePath: path,
+      fileSize: compressed.size, mimeType: "image/jpeg",
+    });
     const { data } = supabase.storage.from("profile-photos").getPublicUrl(path);
     return `${data.publicUrl}?t=${Date.now()}`;
   }

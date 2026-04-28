@@ -12,6 +12,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { PageSpinner, ErrorAlert } from "@/components/ui/spinner";
 import { getInitials } from "@/lib/utils";
 import { compressImage, UPDATE_PHOTO_MAX_W, UPDATE_PHOTO_MAX_BYTES } from "@/lib/image-compress";
+import { validateUpload, UPDATE_PHOTO_RAW_MAX } from "@/lib/upload-validate";
+import { trackUpload, markUploadsHidden, markUploadsDeleted, markUploadsActive } from "@/lib/track-upload";
 import { createClient } from "@/lib/supabase/client";
 import { useSchoolContext } from "@/contexts/SchoolContext";
 
@@ -161,6 +163,10 @@ export default function ParentUpdatesPage() {
     if (!files.length) return;
     const remaining = 2 - broadcastPhotos.length;
     if (remaining <= 0) return;
+    for (const file of files.slice(0, remaining)) {
+      const validationErr = validateUpload(file, UPDATE_PHOTO_RAW_MAX);
+      if (validationErr) { setBroadcastError(validationErr); return; }
+    }
     setBroadcastPhotoLoading(true);
     const newItems: PhotoItem[] = [];
     for (const file of files.slice(0, remaining)) {
@@ -306,6 +312,12 @@ export default function ParentUpdatesPage() {
     const remaining = MAX_PHOTOS - photoItems.length;
     if (remaining <= 0) { setError(`Maximum ${MAX_PHOTOS} photos per update.`); return; }
 
+    // Validate MIME type and extension before compressing
+    for (const file of files.slice(0, remaining)) {
+      const validationErr = validateUpload(file, UPDATE_PHOTO_RAW_MAX);
+      if (validationErr) { setError(validationErr); return; }
+    }
+
     setAddingPhoto(true);
     setError(null);
     const newItems: PhotoItem[] = [];
@@ -360,7 +372,14 @@ export default function ParentUpdatesPage() {
       } else if (item.file) {
         const path = `updates/${updateId}/${newIndex++}.jpg`;
         const { error } = await supabase.storage.from("updates-media").upload(path, item.file, { upsert: true });
-        if (!error) paths.push(path);
+        if (!error) {
+          paths.push(path);
+          await trackUpload(supabase, {
+            schoolId, uploadedBy: userId, entityType: "parent_update", entityId: updateId,
+            bucket: "updates-media", storagePath: path,
+            fileSize: item.file.size, mimeType: "image/jpeg",
+          });
+        }
       }
     }
     return paths;
@@ -487,6 +506,16 @@ export default function ParentUpdatesPage() {
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (supabase as any).from("parent_updates").update(payload).eq("id", actionUpdate.id);
+
+    // Sync uploaded_files status to match the update's new status
+    if (actionType === "hide") {
+      await markUploadsHidden(supabase, "parent_update", actionUpdate.id);
+    } else if (actionType === "restore") {
+      await markUploadsActive(supabase, "parent_update", actionUpdate.id);
+    } else if (actionType === "delete") {
+      await markUploadsDeleted(supabase, "parent_update", actionUpdate.id);
+    }
+
     setActionUpdate(null);
     setActionType(null);
     setActionSaving(false);

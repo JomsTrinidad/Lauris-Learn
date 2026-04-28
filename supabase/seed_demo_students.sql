@@ -1,5 +1,5 @@
 -- ─────────────────────────────────────────────────────────────────────────────
--- Demo Student Seed — Bright Kids Learning and Tutorial Center
+-- Demo Student Seed — Pilot School (school ID: 00000000-0000-0000-0000-000000000001)
 -- Sets up: academic periods, SY 2026-2027, promotion paths, 24 students
 -- Run in: Supabase Dashboard → SQL Editor
 --
@@ -10,7 +10,7 @@
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- STEP 1: CLEANUP
--- Removes ALL students for the BK school (including any manually added ones),
+-- Removes ALL students for the pilot school (including any manually added ones),
 -- clears the SY 2026-2027 year and its classes, and resets the seed periods.
 -- ═══════════════════════════════════════════════════════════════════════════════
 
@@ -164,42 +164,42 @@ BEGIN
   -- ── TODDLERS (6 students) ───────────────────────────────────────────────────
 
   INSERT INTO students (school_id, first_name, last_name, date_of_birth, gender, student_code, is_active)
-    VALUES (_school, 'Sofia', 'Reyes', '2023-03-12', 'Female', 'BK-2025-001', TRUE) RETURNING id INTO _sid;
+    VALUES (_school, 'Sofia', 'Reyes', '2023-03-12', 'Female', 'STU-2025-001', TRUE) RETURNING id INTO _sid;
   INSERT INTO guardians (student_id, full_name, relationship, phone, email, is_primary, is_emergency_contact)
     VALUES (_sid, 'Maria Reyes', 'Mother', '0917-111-0001', 'maria.reyes@demo.com', TRUE, TRUE);
   INSERT INTO enrollments (student_id, class_id, school_year_id, academic_period_id, status, enrolled_at)
     VALUES (_sid, _toddler_curr, _year_curr, _period_curr, 'enrolled', NOW());
 
   INSERT INTO students (school_id, first_name, last_name, date_of_birth, gender, student_code, is_active)
-    VALUES (_school, 'Mateo', 'Santos', '2022-07-28', 'Male', 'BK-2025-002', TRUE) RETURNING id INTO _sid;
+    VALUES (_school, 'Mateo', 'Santos', '2022-07-28', 'Male', 'STU-2025-002', TRUE) RETURNING id INTO _sid;
   INSERT INTO guardians (student_id, full_name, relationship, phone, email, is_primary, is_emergency_contact)
     VALUES (_sid, 'Ana Santos', 'Mother', '0917-111-0002', 'ana.santos@demo.com', TRUE, TRUE);
   INSERT INTO enrollments (student_id, class_id, school_year_id, academic_period_id, status, enrolled_at)
     VALUES (_sid, _toddler_curr, _year_curr, _period_curr, 'enrolled', NOW());
 
   INSERT INTO students (school_id, first_name, last_name, date_of_birth, gender, student_code, is_active)
-    VALUES (_school, 'Isabella', 'Cruz', '2023-01-05', 'Female', 'BK-2025-003', TRUE) RETURNING id INTO _sid;
+    VALUES (_school, 'Isabella', 'Cruz', '2023-01-05', 'Female', 'STU-2025-003', TRUE) RETURNING id INTO _sid;
   INSERT INTO guardians (student_id, full_name, relationship, phone, email, is_primary, is_emergency_contact)
     VALUES (_sid, 'Rosa Cruz', 'Mother', '0917-111-0003', 'rosa.cruz@demo.com', TRUE, TRUE);
   INSERT INTO enrollments (student_id, class_id, school_year_id, academic_period_id, status, enrolled_at)
     VALUES (_sid, _toddler_curr, _year_curr, _period_curr, 'enrolled', NOW());
 
   INSERT INTO students (school_id, first_name, last_name, date_of_birth, gender, student_code, is_active)
-    VALUES (_school, 'Elijah', 'Garcia', '2022-11-19', 'Male', 'BK-2025-004', TRUE) RETURNING id INTO _sid;
+    VALUES (_school, 'Elijah', 'Garcia', '2022-11-19', 'Male', 'STU-2025-004', TRUE) RETURNING id INTO _sid;
   INSERT INTO guardians (student_id, full_name, relationship, phone, email, is_primary, is_emergency_contact)
     VALUES (_sid, 'Carlos Garcia', 'Father', '0917-111-0004', 'carlos.garcia@demo.com', TRUE, TRUE);
   INSERT INTO enrollments (student_id, class_id, school_year_id, academic_period_id, status, enrolled_at)
     VALUES (_sid, _toddler_curr, _year_curr, _period_curr, 'enrolled', NOW());
 
   INSERT INTO students (school_id, first_name, last_name, date_of_birth, gender, student_code, is_active)
-    VALUES (_school, 'Mia', 'Torres', '2023-05-22', 'Female', 'BK-2025-005', TRUE) RETURNING id INTO _sid;
+    VALUES (_school, 'Mia', 'Torres', '2023-05-22', 'Female', 'STU-2025-005', TRUE) RETURNING id INTO _sid;
   INSERT INTO guardians (student_id, full_name, relationship, phone, email, is_primary, is_emergency_contact)
     VALUES (_sid, 'Elena Torres', 'Mother', '0917-111-0005', 'elena.torres@demo.com', TRUE, TRUE);
   INSERT INTO enrollments (student_id, class_id, school_year_id, academic_period_id, status, enrolled_at)
     VALUES (_sid, _toddler_curr, _year_curr, _period_curr, 'enrolled', NOW());
 
   INSERT INTO students (school_id, first_name, last_name, date_of_birth, gender, student_code, is_active)
-    VALUES (_school, 'Lucas', 'Flores', '2022-09-14', 'Male', 'BK-2025-006', TRUE) RETURNING id INTO _sid;
+    VALUES (_school, 'Lucas', 'Flores', '2022-09-14', 'Male', 'STU-2025-006', TRUE) RETURNING id INTO _sid;
   INSERT INTO guardians (student_id, full_name, relationship, phone, email, is_primary, is_emergency_contact)
     VALUES (_sid, 'Gloria Flores', 'Mother', '0917-111-0006', 'gloria.flores@demo.com', TRUE, TRUE);
   INSERT INTO enrollments (student_id, class_id, school_year_id, academic_period_id, status, enrolled_at)
@@ -209,56 +209,56 @@ BEGIN
   -- ── PRE-KINDER (8 students) ─────────────────────────────────────────────────
 
   INSERT INTO students (school_id, first_name, last_name, date_of_birth, gender, student_code, is_active)
-    VALUES (_school, 'Chloe', 'Mendoza', '2021-02-18', 'Female', 'BK-2025-007', TRUE) RETURNING id INTO _sid;
+    VALUES (_school, 'Chloe', 'Mendoza', '2021-02-18', 'Female', 'STU-2025-007', TRUE) RETURNING id INTO _sid;
   INSERT INTO guardians (student_id, full_name, relationship, phone, email, is_primary, is_emergency_contact)
     VALUES (_sid, 'Jasmine Mendoza', 'Mother', '0917-222-0001', 'jasmine.mendoza@demo.com', TRUE, TRUE);
   INSERT INTO enrollments (student_id, class_id, school_year_id, academic_period_id, status, enrolled_at)
     VALUES (_sid, _pk_curr, _year_curr, _period_curr, 'enrolled', NOW());
 
   INSERT INTO students (school_id, first_name, last_name, date_of_birth, gender, student_code, is_active)
-    VALUES (_school, 'Nathan', 'Ramos', '2020-08-30', 'Male', 'BK-2025-008', TRUE) RETURNING id INTO _sid;
+    VALUES (_school, 'Nathan', 'Ramos', '2020-08-30', 'Male', 'STU-2025-008', TRUE) RETURNING id INTO _sid;
   INSERT INTO guardians (student_id, full_name, relationship, phone, email, is_primary, is_emergency_contact)
     VALUES (_sid, 'Lily Ramos', 'Mother', '0917-222-0002', 'lily.ramos@demo.com', TRUE, TRUE);
   INSERT INTO enrollments (student_id, class_id, school_year_id, academic_period_id, status, enrolled_at)
     VALUES (_sid, _pk_curr, _year_curr, _period_curr, 'enrolled', NOW());
 
   INSERT INTO students (school_id, first_name, last_name, date_of_birth, gender, student_code, is_active)
-    VALUES (_school, 'Gabriela', 'Aquino', '2021-04-07', 'Female', 'BK-2025-009', TRUE) RETURNING id INTO _sid;
+    VALUES (_school, 'Gabriela', 'Aquino', '2021-04-07', 'Female', 'STU-2025-009', TRUE) RETURNING id INTO _sid;
   INSERT INTO guardians (student_id, full_name, relationship, phone, email, is_primary, is_emergency_contact)
     VALUES (_sid, 'Christine Aquino', 'Mother', '0917-222-0003', 'christine.aquino@demo.com', TRUE, TRUE);
   INSERT INTO enrollments (student_id, class_id, school_year_id, academic_period_id, status, enrolled_at)
     VALUES (_sid, _pk_curr, _year_curr, _period_curr, 'enrolled', NOW());
 
   INSERT INTO students (school_id, first_name, last_name, date_of_birth, gender, student_code, is_active)
-    VALUES (_school, 'Ethan', 'Villanueva', '2020-12-25', 'Male', 'BK-2025-010', TRUE) RETURNING id INTO _sid;
+    VALUES (_school, 'Ethan', 'Villanueva', '2020-12-25', 'Male', 'STU-2025-010', TRUE) RETURNING id INTO _sid;
   INSERT INTO guardians (student_id, full_name, relationship, phone, email, is_primary, is_emergency_contact)
     VALUES (_sid, 'Marco Villanueva', 'Father', '0917-222-0004', 'marco.villanueva@demo.com', TRUE, TRUE);
   INSERT INTO enrollments (student_id, class_id, school_year_id, academic_period_id, status, enrolled_at)
     VALUES (_sid, _pk_curr, _year_curr, _period_curr, 'enrolled', NOW());
 
   INSERT INTO students (school_id, first_name, last_name, date_of_birth, gender, student_code, is_active)
-    VALUES (_school, 'Zoe', 'Bautista', '2021-06-15', 'Female', 'BK-2025-011', TRUE) RETURNING id INTO _sid;
+    VALUES (_school, 'Zoe', 'Bautista', '2021-06-15', 'Female', 'STU-2025-011', TRUE) RETURNING id INTO _sid;
   INSERT INTO guardians (student_id, full_name, relationship, phone, email, is_primary, is_emergency_contact)
     VALUES (_sid, 'Rachel Bautista', 'Mother', '0917-222-0005', 'rachel.bautista@demo.com', TRUE, TRUE);
   INSERT INTO enrollments (student_id, class_id, school_year_id, academic_period_id, status, enrolled_at)
     VALUES (_sid, _pk_curr, _year_curr, _period_curr, 'enrolled', NOW());
 
   INSERT INTO students (school_id, first_name, last_name, date_of_birth, gender, student_code, is_active)
-    VALUES (_school, 'Diego', 'Lim', '2020-10-03', 'Male', 'BK-2025-012', TRUE) RETURNING id INTO _sid;
+    VALUES (_school, 'Diego', 'Lim', '2020-10-03', 'Male', 'STU-2025-012', TRUE) RETURNING id INTO _sid;
   INSERT INTO guardians (student_id, full_name, relationship, phone, email, is_primary, is_emergency_contact)
     VALUES (_sid, 'Patricia Lim', 'Mother', '0917-222-0006', 'patricia.lim@demo.com', TRUE, TRUE);
   INSERT INTO enrollments (student_id, class_id, school_year_id, academic_period_id, status, enrolled_at)
     VALUES (_sid, _pk_curr, _year_curr, _period_curr, 'enrolled', NOW());
 
   INSERT INTO students (school_id, first_name, last_name, date_of_birth, gender, student_code, is_active)
-    VALUES (_school, 'Emma', 'Gonzalez', '2021-03-21', 'Female', 'BK-2025-013', TRUE) RETURNING id INTO _sid;
+    VALUES (_school, 'Emma', 'Gonzalez', '2021-03-21', 'Female', 'STU-2025-013', TRUE) RETURNING id INTO _sid;
   INSERT INTO guardians (student_id, full_name, relationship, phone, email, is_primary, is_emergency_contact)
     VALUES (_sid, 'Sandra Gonzalez', 'Mother', '0917-222-0007', 'sandra.gonzalez@demo.com', TRUE, TRUE);
   INSERT INTO enrollments (student_id, class_id, school_year_id, academic_period_id, status, enrolled_at)
     VALUES (_sid, _pk_curr, _year_curr, _period_curr, 'enrolled', NOW());
 
   INSERT INTO students (school_id, first_name, last_name, date_of_birth, gender, student_code, is_active)
-    VALUES (_school, 'Liam', 'Dela Cruz', '2020-07-11', 'Male', 'BK-2025-014', TRUE) RETURNING id INTO _sid;
+    VALUES (_school, 'Liam', 'Dela Cruz', '2020-07-11', 'Male', 'STU-2025-014', TRUE) RETURNING id INTO _sid;
   INSERT INTO guardians (student_id, full_name, relationship, phone, email, is_primary, is_emergency_contact)
     VALUES (_sid, 'Bernard Dela Cruz', 'Father', '0917-222-0008', 'bernard.delacruz@demo.com', TRUE, TRUE);
   INSERT INTO enrollments (student_id, class_id, school_year_id, academic_period_id, status, enrolled_at)
@@ -268,70 +268,70 @@ BEGIN
   -- ── KINDER (10 students) ────────────────────────────────────────────────────
 
   INSERT INTO students (school_id, first_name, last_name, date_of_birth, gender, student_code, is_active)
-    VALUES (_school, 'Andrea', 'Castro', '2019-08-09', 'Female', 'BK-2025-015', TRUE) RETURNING id INTO _sid;
+    VALUES (_school, 'Andrea', 'Castro', '2019-08-09', 'Female', 'STU-2025-015', TRUE) RETURNING id INTO _sid;
   INSERT INTO guardians (student_id, full_name, relationship, phone, email, is_primary, is_emergency_contact)
     VALUES (_sid, 'Maricel Castro', 'Mother', '0917-333-0001', 'maricel.castro@demo.com', TRUE, TRUE);
   INSERT INTO enrollments (student_id, class_id, school_year_id, academic_period_id, status, enrolled_at)
     VALUES (_sid, _kinder_curr, _year_curr, _period_curr, 'enrolled', NOW());
 
   INSERT INTO students (school_id, first_name, last_name, date_of_birth, gender, student_code, is_active)
-    VALUES (_school, 'Raphael', 'Rivera', '2019-04-17', 'Male', 'BK-2025-016', TRUE) RETURNING id INTO _sid;
+    VALUES (_school, 'Raphael', 'Rivera', '2019-04-17', 'Male', 'STU-2025-016', TRUE) RETURNING id INTO _sid;
   INSERT INTO guardians (student_id, full_name, relationship, phone, email, is_primary, is_emergency_contact)
     VALUES (_sid, 'Jose Rivera', 'Father', '0917-333-0002', 'jose.rivera@demo.com', TRUE, TRUE);
   INSERT INTO enrollments (student_id, class_id, school_year_id, academic_period_id, status, enrolled_at)
     VALUES (_sid, _kinder_curr, _year_curr, _period_curr, 'enrolled', NOW());
 
   INSERT INTO students (school_id, first_name, last_name, date_of_birth, gender, student_code, is_active)
-    VALUES (_school, 'Bianca', 'Morales', '2020-01-30', 'Female', 'BK-2025-017', TRUE) RETURNING id INTO _sid;
+    VALUES (_school, 'Bianca', 'Morales', '2020-01-30', 'Female', 'STU-2025-017', TRUE) RETURNING id INTO _sid;
   INSERT INTO guardians (student_id, full_name, relationship, phone, email, is_primary, is_emergency_contact)
     VALUES (_sid, 'Theresa Morales', 'Mother', '0917-333-0003', 'theresa.morales@demo.com', TRUE, TRUE);
   INSERT INTO enrollments (student_id, class_id, school_year_id, academic_period_id, status, enrolled_at)
     VALUES (_sid, _kinder_curr, _year_curr, _period_curr, 'enrolled', NOW());
 
   INSERT INTO students (school_id, first_name, last_name, date_of_birth, gender, student_code, is_active)
-    VALUES (_school, 'Carlos', 'Vergara', '2019-11-23', 'Male', 'BK-2025-018', TRUE) RETURNING id INTO _sid;
+    VALUES (_school, 'Carlos', 'Vergara', '2019-11-23', 'Male', 'STU-2025-018', TRUE) RETURNING id INTO _sid;
   INSERT INTO guardians (student_id, full_name, relationship, phone, email, is_primary, is_emergency_contact)
     VALUES (_sid, 'Luisa Vergara', 'Mother', '0917-333-0004', 'luisa.vergara@demo.com', TRUE, TRUE);
   INSERT INTO enrollments (student_id, class_id, school_year_id, academic_period_id, status, enrolled_at)
     VALUES (_sid, _kinder_curr, _year_curr, _period_curr, 'enrolled', NOW());
 
   INSERT INTO students (school_id, first_name, last_name, date_of_birth, gender, student_code, is_active)
-    VALUES (_school, 'Camille', 'Tan', '2019-06-04', 'Female', 'BK-2025-019', TRUE) RETURNING id INTO _sid;
+    VALUES (_school, 'Camille', 'Tan', '2019-06-04', 'Female', 'STU-2025-019', TRUE) RETURNING id INTO _sid;
   INSERT INTO guardians (student_id, full_name, relationship, phone, email, is_primary, is_emergency_contact)
     VALUES (_sid, 'Grace Tan', 'Mother', '0917-333-0005', 'grace.tan@demo.com', TRUE, TRUE);
   INSERT INTO enrollments (student_id, class_id, school_year_id, academic_period_id, status, enrolled_at)
     VALUES (_sid, _kinder_curr, _year_curr, _period_curr, 'enrolled', NOW());
 
   INSERT INTO students (school_id, first_name, last_name, date_of_birth, gender, student_code, is_active)
-    VALUES (_school, 'Miguel', 'Go', '2020-03-16', 'Male', 'BK-2025-020', TRUE) RETURNING id INTO _sid;
+    VALUES (_school, 'Miguel', 'Go', '2020-03-16', 'Male', 'STU-2025-020', TRUE) RETURNING id INTO _sid;
   INSERT INTO guardians (student_id, full_name, relationship, phone, email, is_primary, is_emergency_contact)
     VALUES (_sid, 'Henry Go', 'Father', '0917-333-0006', 'henry.go@demo.com', TRUE, TRUE);
   INSERT INTO enrollments (student_id, class_id, school_year_id, academic_period_id, status, enrolled_at)
     VALUES (_sid, _kinder_curr, _year_curr, _period_curr, 'enrolled', NOW());
 
   INSERT INTO students (school_id, first_name, last_name, date_of_birth, gender, student_code, is_active)
-    VALUES (_school, 'Isabelle', 'Navarro', '2019-09-02', 'Female', 'BK-2025-021', TRUE) RETURNING id INTO _sid;
+    VALUES (_school, 'Isabelle', 'Navarro', '2019-09-02', 'Female', 'STU-2025-021', TRUE) RETURNING id INTO _sid;
   INSERT INTO guardians (student_id, full_name, relationship, phone, email, is_primary, is_emergency_contact)
     VALUES (_sid, 'Carmen Navarro', 'Mother', '0917-333-0007', 'carmen.navarro@demo.com', TRUE, TRUE);
   INSERT INTO enrollments (student_id, class_id, school_year_id, academic_period_id, status, enrolled_at)
     VALUES (_sid, _kinder_curr, _year_curr, _period_curr, 'enrolled', NOW());
 
   INSERT INTO students (school_id, first_name, last_name, date_of_birth, gender, student_code, is_active)
-    VALUES (_school, 'Paolo', 'Soriano', '2019-12-10', 'Male', 'BK-2025-022', TRUE) RETURNING id INTO _sid;
+    VALUES (_school, 'Paolo', 'Soriano', '2019-12-10', 'Male', 'STU-2025-022', TRUE) RETURNING id INTO _sid;
   INSERT INTO guardians (student_id, full_name, relationship, phone, email, is_primary, is_emergency_contact)
     VALUES (_sid, 'Maribel Soriano', 'Mother', '0917-333-0008', 'maribel.soriano@demo.com', TRUE, TRUE);
   INSERT INTO enrollments (student_id, class_id, school_year_id, academic_period_id, status, enrolled_at)
     VALUES (_sid, _kinder_curr, _year_curr, _period_curr, 'enrolled', NOW());
 
   INSERT INTO students (school_id, first_name, last_name, date_of_birth, gender, student_code, is_active)
-    VALUES (_school, 'Daniela', 'Ocampo', '2020-02-25', 'Female', 'BK-2025-023', TRUE) RETURNING id INTO _sid;
+    VALUES (_school, 'Daniela', 'Ocampo', '2020-02-25', 'Female', 'STU-2025-023', TRUE) RETURNING id INTO _sid;
   INSERT INTO guardians (student_id, full_name, relationship, phone, email, is_primary, is_emergency_contact)
     VALUES (_sid, 'Rowena Ocampo', 'Mother', '0917-333-0009', 'rowena.ocampo@demo.com', TRUE, TRUE);
   INSERT INTO enrollments (student_id, class_id, school_year_id, academic_period_id, status, enrolled_at)
     VALUES (_sid, _kinder_curr, _year_curr, _period_curr, 'enrolled', NOW());
 
   INSERT INTO students (school_id, first_name, last_name, date_of_birth, gender, student_code, is_active)
-    VALUES (_school, 'Joshua', 'Pascual', '2019-07-18', 'Male', 'BK-2025-024', TRUE) RETURNING id INTO _sid;
+    VALUES (_school, 'Joshua', 'Pascual', '2019-07-18', 'Male', 'STU-2025-024', TRUE) RETURNING id INTO _sid;
   INSERT INTO guardians (student_id, full_name, relationship, phone, email, is_primary, is_emergency_contact)
     VALUES (_sid, 'Irene Pascual', 'Mother', '0917-333-0010', 'irene.pascual@demo.com', TRUE, TRUE);
   INSERT INTO enrollments (student_id, class_id, school_year_id, academic_period_id, status, enrolled_at)

@@ -1,14 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient as createServerClient } from "@/lib/supabase/server";
-import { createClient } from "@supabase/supabase-js";
-
-function createAdminClient() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } }
-  );
-}
+import { createAdminClient, insertAuditLog } from "@/lib/supabase/admin";
 
 const VALID_EVENT_TYPES = ["impersonation_started", "impersonation_ended"] as const;
 type EventType = (typeof VALID_EVENT_TYPES)[number];
@@ -64,6 +56,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "School not found." }, { status: 404 });
   }
 
+  // Write to impersonation_audit_log (operational log, never deleted).
   // Use the school name from the database, not from the client, so logs are trustworthy.
   const { error: insertErr } = await admin.from("impersonation_audit_log").insert({
     actor_id:           user.id,
@@ -74,9 +67,21 @@ export async function POST(req: NextRequest) {
   });
 
   if (insertErr) {
-    console.error("[impersonation-log] Insert failed:", insertErr);
+    console.error("[impersonation-log] impersonation_audit_log insert failed:", insertErr);
     return NextResponse.json({ error: insertErr.message }, { status: 500 });
   }
+
+  // Also write to audit_logs with actor_role = 'super_admin_impersonating' so any
+  // writes that happen during the session are attributable to the correct context.
+  await insertAuditLog(admin, {
+    schoolId:    school.id,
+    actorUserId: user.id,
+    actorRole:   "super_admin_impersonating",
+    tableName:   "impersonation_audit_log",
+    recordId:    null,
+    action:      "INSERT",
+    newValues:   { event_type: eventType, target_school_id: school.id, target_school_name: school.name },
+  });
 
   return NextResponse.json({ ok: true });
 }

@@ -43,6 +43,8 @@ export interface SchoolContextValue {
   trialStatus: "active" | "expired" | "converted" | null;
   trialDaysLeft: number | null;
   isTrialExpired: boolean;
+  subscriptionStatus: "trial" | "active" | "past_due" | "suspended" | "cancelled" | null;
+  isDemo: boolean;
   isReadOnly: boolean;
   isImpersonating: boolean;
   branding: BrandingConfig;
@@ -80,6 +82,8 @@ const SchoolContext = createContext<SchoolContextValue>({
   trialStatus: null,
   trialDaysLeft: null,
   isTrialExpired: false,
+  subscriptionStatus: null,
+  isDemo: false,
   isReadOnly: false,
   isImpersonating: false,
   branding: DEFAULT_BRANDING,
@@ -112,6 +116,8 @@ export function SchoolProvider({ children }: { children: ReactNode }) {
     trialStatus: null,
     trialDaysLeft: null,
     isTrialExpired: false,
+    subscriptionStatus: null,
+    isDemo: false,
     isReadOnly: false,
     isImpersonating: false,
     branding: DEFAULT_BRANDING,
@@ -161,7 +167,7 @@ export function SchoolProvider({ children }: { children: ReactNode }) {
     const [{ data: school }, { data: schoolYears }] = await Promise.all([
       supabase
         .from("schools")
-        .select("name, trial_start_date, trial_end_date, trial_status, logo_url, primary_color, accent_color, text_size_scale, spacing_scale")
+        .select("name, trial_start_date, trial_end_date, trial_status, subscription_status, is_demo, logo_url, primary_color, accent_color, text_size_scale, spacing_scale")
         .eq("id", effectiveSchoolId)
         .single(),
       supabase
@@ -183,7 +189,12 @@ export function SchoolProvider({ children }: { children: ReactNode }) {
     const trialStatus = (school?.trial_status as "active" | "expired" | "converted") ?? null;
     const trialDaysLeft = calcTrialDaysLeft(school?.trial_end_date ?? null);
     const isTrialExpired = trialStatus === "expired" || (trialStatus === "active" && (trialDaysLeft ?? 1) <= 0);
+    const subscriptionStatus = ((school as any)?.subscription_status as SchoolContextValue["subscriptionStatus"]) ?? null;
+    const isDemo = ((school as any)?.is_demo as boolean) ?? false;
     const isImpersonating = !!impersonating;
+
+    // Read-only when: trial expired OR subscription suspended/cancelled; always bypass for impersonating super admin
+    const isHardBlocked = isTrialExpired || subscriptionStatus === "suspended" || subscriptionStatus === "cancelled";
 
     setValue({
       schoolId: effectiveSchoolId,
@@ -198,7 +209,9 @@ export function SchoolProvider({ children }: { children: ReactNode }) {
       trialStatus,
       trialDaysLeft,
       isTrialExpired,
-      isReadOnly: isTrialExpired && !isImpersonating,
+      subscriptionStatus,
+      isDemo,
+      isReadOnly: isHardBlocked && !isImpersonating,
       isImpersonating,
       branding: {
         logoUrl: (school as any)?.logo_url ?? null,

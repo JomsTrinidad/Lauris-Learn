@@ -1,14 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient as createServerClient } from "@/lib/supabase/server";
-import { createClient } from "@supabase/supabase-js";
-
-function createAdminClient() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } }
-  );
-}
+import { createAdminClient, insertAuditLog } from "@/lib/supabase/admin";
 
 const VALID_STATUSES = ["enrolled", "waitlisted", "inquiry", "withdrawn", "completed"] as const;
 type EnrollStatus = (typeof VALID_STATUSES)[number];
@@ -89,8 +81,8 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Insert the enrollment
-  const { error: insertErr } = await admin.from("enrollments").insert({
+  // Insert the enrollment — return id for audit log
+  const { data: inserted, error: insertErr } = await admin.from("enrollments").insert({
     student_id: studentId,
     class_id: classId,
     school_year_id: schoolYearId,
@@ -98,7 +90,7 @@ export async function POST(req: NextRequest) {
     status,
     start_date: startDate,
     end_date: endDate,
-  });
+  }).select("id").single();
 
   if (insertErr) {
     // Surface duplicate-key as a friendlier message
@@ -111,6 +103,17 @@ export async function POST(req: NextRequest) {
     console.error("[students/enroll] Insert failed:", insertErr);
     return NextResponse.json({ error: insertErr.message }, { status: 500 });
   }
+
+  // Audit — service-role bypasses auth.uid() so triggers can't fire; write manually
+  await insertAuditLog(admin, {
+    schoolId:    schoolId,
+    actorUserId: user.id,
+    actorRole:   caller.role,
+    tableName:   "enrollments",
+    recordId:    inserted?.id ?? null,
+    action:      "INSERT",
+    newValues:   { student_id: studentId, class_id: classId, school_year_id: schoolYearId, status },
+  });
 
   return NextResponse.json({ ok: true });
 }

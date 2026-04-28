@@ -1,14 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient as createServerClient } from "@/lib/supabase/server";
-import { createClient } from "@supabase/supabase-js";
-
-function createAdminClient() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } }
-  );
-}
+import { createAdminClient, insertAuditLog } from "@/lib/supabase/admin";
 
 interface EnrollRow {
   studentId: string;
@@ -181,17 +173,26 @@ export async function POST(req: NextRequest) {
 
     if (existing) { result.skipped++; continue; }
 
-    const { error: insErr } = await admin.from("enrollments").insert({
+    const { data: insData, error: insErr } = await admin.from("enrollments").insert({
       student_id: row.studentId,
       class_id: row.classId,
       school_year_id: targetSchoolYearId,
       status: "enrolled",
-    });
+    }).select("id").single();
 
     if (insErr) {
       result.errors.push(`${row.studentName}: ${insErr.message}`);
     } else {
       result.created++;
+      await insertAuditLog(admin, {
+        schoolId:    schoolId,
+        actorUserId: user.id,
+        actorRole:   caller.role,
+        tableName:   "enrollments",
+        recordId:    insData?.id ?? null,
+        action:      "INSERT",
+        newValues:   { student_id: row.studentId, class_id: row.classId, school_year_id: targetSchoolYearId, status: "enrolled", source: "promote" },
+      });
     }
   }
 
@@ -205,6 +206,15 @@ export async function POST(req: NextRequest) {
       result.errors.push(`${row.studentName}: ${updErr.message}`);
     } else {
       result.graduated++;
+      await insertAuditLog(admin, {
+        schoolId:    schoolId,
+        actorUserId: user.id,
+        actorRole:   caller.role,
+        tableName:   "enrollments",
+        recordId:    row.enrollmentId,
+        action:      "UPDATE",
+        newValues:   { status: "completed", source: "promote_graduate" },
+      });
     }
   }
 

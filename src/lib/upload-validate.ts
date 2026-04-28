@@ -16,8 +16,10 @@ export const MIME_BY_EXT: Record<string, string> = {
   ".webp": "image/webp",
 };
 
-export const RECEIPT_MAX_BYTES = 5 * 1024 * 1024;  // 5 MB
-export const LOGO_MAX_BYTES    = 2 * 1024 * 1024;  // 2 MB
+export const RECEIPT_MAX_BYTES    = 3 * 1024 * 1024;  // 3 MB
+export const LOGO_MAX_BYTES       = 1 * 1024 * 1024;  // 1 MB
+// Raw file limit checked before compression (compressImage handles final output size)
+export const UPDATE_PHOTO_RAW_MAX = 20 * 1024 * 1024; // 20 MB
 
 /**
  * Validate a file for upload. Returns an error string, or null if valid.

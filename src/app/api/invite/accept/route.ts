@@ -1,14 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient as createServerClient } from "@/lib/supabase/server";
-import { createClient } from "@supabase/supabase-js";
-
-function createAdminClient() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } }
-  );
-}
+import { createAdminClient, insertAuditLog } from "@/lib/supabase/admin";
 
 export async function POST(req: NextRequest) {
   // Parse request body
@@ -87,6 +79,17 @@ export async function POST(req: NextRequest) {
     console.error("[invite/accept] Failed to set parent role:", profileError);
     return NextResponse.json({ error: "server_error" }, { status: 500 });
   }
+
+  // Audit — record the role assignment that service-role triggers cannot capture
+  await insertAuditLog(admin, {
+    schoolId:    invite.school_id ?? null,
+    actorUserId: user.id,
+    actorRole:   null,
+    tableName:   "profiles",
+    recordId:    user.id,
+    action:      "UPDATE",
+    newValues:   { role: "parent", invite_id: invite.id, student_id: invite.student_id },
+  });
 
   return NextResponse.json({ ok: true });
 }

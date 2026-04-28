@@ -1,6 +1,7 @@
 "use client";
-import { Menu, ChevronDown, LogOut, Check } from "lucide-react";
+import { Menu, ChevronDown, LogOut, Check, ChevronLeft } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
+import Link from "next/link";
 import { getInitials } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
@@ -17,6 +18,7 @@ interface HeaderProps {
   allSchoolYears?: ActiveYear[];
   viewingYear?: ActiveYear | null;
   onSelectYear?: (year: ActiveYear) => void;
+  showBackToDashboard?: boolean;
 }
 
 export function Header({
@@ -30,6 +32,7 @@ export function Header({
   allSchoolYears = [],
   viewingYear,
   onSelectYear,
+  showBackToDashboard = false,
 }: HeaderProps) {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [yearMenuOpen, setYearMenuOpen] = useState(false);
@@ -58,7 +61,7 @@ export function Header({
 
   return (
     <header className="bg-card border-b border-border px-4 py-3 flex items-center justify-between flex-shrink-0">
-      {/* Left: hamburger toggle + school name when sidebar is collapsed */}
+      {/* Left: hamburger toggle + back link or school name */}
       <div className="flex items-center gap-2">
         <button
           onClick={onToggleSidebar}
@@ -67,8 +70,18 @@ export function Header({
         >
           <Menu className="w-5 h-5" />
         </button>
-        {!sidebarOpen && schoolName && (
-          <span className="hidden sm:block text-sm font-semibold text-foreground">{schoolName}</span>
+        {showBackToDashboard ? (
+          <Link
+            href="/dashboard"
+            className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <ChevronLeft className="w-4 h-4" />
+            Dashboard
+          </Link>
+        ) : (
+          !sidebarOpen && schoolName && (
+            <span className="hidden sm:block text-sm font-semibold text-foreground">{schoolName}</span>
+          )
         )}
       </div>
 

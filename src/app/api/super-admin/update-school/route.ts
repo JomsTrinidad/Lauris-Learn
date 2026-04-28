@@ -1,20 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient as createServerClient } from "@/lib/supabase/server";
-import { createClient } from "@supabase/supabase-js";
-
-// NOTE: No audit log table exists yet. When audit infrastructure is added (Phase 2),
-// insert a row here recording: actor_id, action='update_school', target_school_id, changes, timestamp.
-
-function createAdminClient() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } }
-  );
-}
+import { createAdminClient, insertAuditLog } from "@/lib/supabase/admin";
 
 const VALID_TRIAL_STATUSES = ["active", "expired", "converted"] as const;
 type TrialStatus = (typeof VALID_TRIAL_STATUSES)[number];
+
+const VALID_SUB_STATUSES = ["trial", "active", "past_due", "suspended", "cancelled"] as const;
+type SubscriptionStatus = (typeof VALID_SUB_STATUSES)[number];
+
+const VALID_BILLING_CYCLES = ["monthly", "annual"] as const;
+type BillingCycle = (typeof VALID_BILLING_CYCLES)[number];
 
 export async function POST(req: NextRequest) {
   // Parse body
@@ -32,6 +27,16 @@ export async function POST(req: NextRequest) {
   const trialStatus: TrialStatus = VALID_TRIAL_STATUSES.includes(body.trialStatus as TrialStatus)
     ? (body.trialStatus as TrialStatus)
     : "active";
+  const subscriptionStatus: SubscriptionStatus = VALID_SUB_STATUSES.includes(body.subscriptionStatus as SubscriptionStatus)
+    ? (body.subscriptionStatus as SubscriptionStatus)
+    : "trial";
+  const billingPlan = typeof body.billingPlan === "string" ? body.billingPlan.trim() || null : null;
+  const billingCycle: BillingCycle = VALID_BILLING_CYCLES.includes(body.billingCycle as BillingCycle)
+    ? (body.billingCycle as BillingCycle)
+    : "monthly";
+  const isDemo = typeof body.isDemo === "boolean" ? body.isDemo : false;
+  const subscriptionStartedAt = typeof body.subscriptionStartedAt === "string" ? body.subscriptionStartedAt : null;
+  const subscriptionCancelledAt = typeof body.subscriptionCancelledAt === "string" ? body.subscriptionCancelledAt : null;
 
   if (!schoolId) {
     return NextResponse.json({ error: "schoolId is required." }, { status: 400 });
@@ -59,10 +64,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
-  // Verify the target school actually exists
+  // Fetch current values for audit old_values (also verifies the school exists)
   const { data: targetSchool } = await admin
     .from("schools")
-    .select("id")
+    .select("id, name, trial_start_date, trial_end_date, trial_status, subscription_status, billing_plan, billing_cycle, is_demo")
     .eq("id", schoolId)
     .maybeSingle();
   if (!targetSchool) {
@@ -77,6 +82,12 @@ export async function POST(req: NextRequest) {
       trial_start_date: trialStartDate || null,
       trial_end_date: trialEndDate || null,
       trial_status: trialStatus,
+      subscription_status: subscriptionStatus,
+      billing_plan: billingPlan,
+      billing_cycle: billingCycle,
+      is_demo: isDemo,
+      ...(subscriptionStartedAt !== null ? { subscription_started_at: subscriptionStartedAt } : {}),
+      ...(subscriptionCancelledAt !== null ? { subscription_cancelled_at: subscriptionCancelledAt } : {}),
     })
     .eq("id", schoolId);
 
@@ -84,6 +95,36 @@ export async function POST(req: NextRequest) {
     console.error("[update-school] Update failed:", updateErr);
     return NextResponse.json({ error: "Failed to update school." }, { status: 500 });
   }
+
+  // Audit
+  await insertAuditLog(admin, {
+    schoolId:    schoolId,
+    actorUserId: user.id,
+    actorRole:   "super_admin",
+    tableName:   "schools",
+    recordId:    schoolId,
+    action:      "UPDATE",
+    oldValues:   {
+      name: (targetSchool as any).name,
+      trial_start_date: (targetSchool as any).trial_start_date,
+      trial_end_date: (targetSchool as any).trial_end_date,
+      trial_status: (targetSchool as any).trial_status,
+      subscription_status: (targetSchool as any).subscription_status,
+      billing_plan: (targetSchool as any).billing_plan,
+      billing_cycle: (targetSchool as any).billing_cycle,
+      is_demo: (targetSchool as any).is_demo,
+    },
+    newValues:   {
+      name,
+      trial_start_date: trialStartDate || null,
+      trial_end_date: trialEndDate || null,
+      trial_status: trialStatus,
+      subscription_status: subscriptionStatus,
+      billing_plan: billingPlan,
+      billing_cycle: billingCycle,
+      is_demo: isDemo,
+    },
+  });
 
   return NextResponse.json({ ok: true });
 }

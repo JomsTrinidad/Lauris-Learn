@@ -5,6 +5,7 @@ import { GradingTemplate, GRADING_TEMPLATES } from "@/lib/grading-templates";
 import { AvatarUpload } from "@/components/ui/avatar-upload";
 import { compressImage, PROFILE_PHOTO_MAX_W, PROFILE_PHOTO_MAX_BYTES } from "@/lib/image-compress";
 import { validateUpload, contentTypeFromExt, LOGO_MAX_BYTES } from "@/lib/upload-validate";
+import { trackUpload } from "@/lib/track-upload";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -391,11 +392,21 @@ export default function SettingsPage() {
   useEffect(() => { load(); }, [load]);
 
 
-  async function uploadProfilePhoto(folder: string, id: string, file: File): Promise<string | null> {
+  async function uploadProfilePhoto(
+    folder: string, id: string, file: File,
+    tracking?: { entityType: string; entityId: string | null },
+  ): Promise<string | null> {
     const compressed = await compressImage(file, PROFILE_PHOTO_MAX_W, PROFILE_PHOTO_MAX_BYTES);
     const path = `${folder}/${id}.jpg`;
     const { error } = await supabase.storage.from("profile-photos").upload(path, compressed, { upsert: true, contentType: "image/jpeg" });
     if (error) return null;
+    if (tracking) {
+      await trackUpload(supabase, {
+        schoolId, uploadedBy: userId, entityType: tracking.entityType, entityId: tracking.entityId,
+        bucket: "profile-photos", storagePath: path,
+        fileSize: compressed.size, mimeType: "image/jpeg",
+      });
+    }
     const { data } = supabase.storage.from("profile-photos").getPublicUrl(path);
     return `${data.publicUrl}?t=${Date.now()}`;
   }
@@ -404,7 +415,7 @@ export default function SettingsPage() {
     if (!adminPhotoFile || !userId) return;
     setAdminPhotoSaving(true);
     setAdminPhotoError(null);
-    const url = await uploadProfilePhoto("admins", userId, adminPhotoFile);
+    const url = await uploadProfilePhoto(`admins/${schoolId}`, userId, adminPhotoFile, { entityType: "admin", entityId: userId });
     if (url) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await (supabase as any).from("profiles").update({ avatar_url: url }).eq("id", userId);
@@ -628,7 +639,7 @@ export default function SettingsPage() {
     }
 
     if (teacherPhotoFile && savedId) {
-      const url = await uploadProfilePhoto("teachers", savedId, teacherPhotoFile);
+      const url = await uploadProfilePhoto(`teachers/${schoolId}`, savedId, teacherPhotoFile, { entityType: "teacher", entityId: savedId });
       if (url) {
         await sb.from("teacher_profiles").update({ avatar_url: url }).eq("id", savedId);
       }
@@ -861,6 +872,11 @@ export default function SettingsPage() {
           setBrandingError("Logo upload failed: " + uploadErr.message);
           return;
         }
+        await trackUpload(supabase, {
+          schoolId, uploadedBy: userId, entityType: "school_logo", entityId: schoolId,
+          bucket: "profile-photos", storagePath: path,
+          fileSize: logoFile.size, mimeType: contentTypeFromExt(logoFile.name),
+        });
         const { data: urlData } = supabase.storage.from("profile-photos").getPublicUrl(path);
         newLogoUrl = `${urlData.publicUrl}?t=${Date.now()}`;
         setLogoUrl(newLogoUrl);
@@ -1523,7 +1539,7 @@ export default function SettingsPage() {
                     <Input
                       value={brandingForm.reportFooterText}
                       onChange={(e) => setBrandingForm({ ...brandingForm, reportFooterText: e.target.value })}
-                      placeholder="e.g. Bright Kids Learning and Tutorial Center · Tel: 09XXXXXXXXX"
+                      placeholder="e.g. Sunshine Learning Center · Tel: 09XXXXXXXXX"
                     />
                     <p className="text-xs text-muted-foreground mt-1">Printed at the bottom of billing statements and progress reports.</p>
                   </div>

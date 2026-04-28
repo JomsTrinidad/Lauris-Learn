@@ -40,6 +40,7 @@ interface ProudMoment {
   category: string;
   note: string | null;
   createdAt: string;
+  createdBy: string | null;
   createdByName: string | null;
   reactionCounts: Record<string, number>;
 }
@@ -62,7 +63,7 @@ function timeAgo(dateStr: string) {
 }
 
 export default function ProudMomentsPage() {
-  const { schoolId, userId } = useSchoolContext();
+  const { schoolId, userId, userRole } = useSchoolContext();
   const supabase = createClient();
 
   const [moments, setMoments] = useState<ProudMoment[]>([]);
@@ -110,12 +111,13 @@ export default function ProudMomentsPage() {
     const { data, error: err } = await (supabase as any)
       .from("proud_moments")
       .select(`
-        id, student_id, category, note, created_at,
+        id, student_id, category, note, created_at, created_by,
         students(first_name, last_name),
         created_by_profile:profiles!created_by(full_name),
         proud_moment_reactions(reaction_type)
       `)
       .eq("school_id", schoolId)
+      .is("deleted_at", null)
       .order("created_at", { ascending: false })
       .limit(100);
     if (err) { setError("Could not load proud moments."); return; }
@@ -134,6 +136,7 @@ export default function ProudMomentsPage() {
         category: m.category,
         note: m.note ?? null,
         createdAt: m.created_at,
+        createdBy: m.created_by ?? null,
         createdByName: m.created_by_profile?.full_name ?? null,
         reactionCounts: counts,
       };
@@ -163,9 +166,14 @@ export default function ProudMomentsPage() {
   }
 
   async function handleDelete(momentId: string) {
+    // Soft-delete: set deleted_at so parents immediately lose visibility.
+    // RLS UPDATE policy allows creator and school_admin to perform this update.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (supabase as any).from("proud_moments").delete().eq("id", momentId);
-    setMoments((prev) => prev.filter((m) => m.id !== momentId));
+    const { error: err } = await (supabase as any)
+      .from("proud_moments")
+      .update({ deleted_at: new Date().toISOString(), deleted_by: userId })
+      .eq("id", momentId);
+    if (!err) setMoments((prev) => prev.filter((m) => m.id !== momentId));
   }
 
   const filtered = moments.filter((m) =>
@@ -240,13 +248,15 @@ export default function ProudMomentsPage() {
                         )}
                       </div>
                     </div>
-                    <button
-                      onClick={() => handleDelete(m.id)}
-                      className="text-muted-foreground hover:text-red-500 transition-colors flex-shrink-0 p-1"
-                      title="Delete moment"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    {(m.createdBy === userId || userRole === "school_admin" || userRole === "super_admin") && (
+                      <button
+                        onClick={() => handleDelete(m.id)}
+                        className="text-muted-foreground hover:text-red-500 transition-colors flex-shrink-0 p-1"
+                        title="Remove moment"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                 </CardContent>
               </Card>

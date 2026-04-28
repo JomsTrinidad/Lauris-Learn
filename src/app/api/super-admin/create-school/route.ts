@@ -1,17 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient as createServerClient } from "@/lib/supabase/server";
-import { createClient } from "@supabase/supabase-js";
-
-// NOTE: No audit log table exists yet. When audit infrastructure is added (Phase 2),
-// insert a row here recording: actor_id, action='create_school', target_school_id, timestamp.
-
-function createAdminClient() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } }
-  );
-}
+import { createAdminClient, insertAuditLog } from "@/lib/supabase/admin";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const VALID_TRIAL_STATUSES = ["active", "expired", "converted"] as const;
@@ -147,6 +136,17 @@ export async function POST(req: NextRequest) {
       );
     }
   }
+
+  // Audit — service-role bypasses auth.uid() so triggers can't fire; write manually
+  await insertAuditLog(admin, {
+    schoolId:    newSchool.id,
+    actorUserId: user.id,
+    actorRole:   "super_admin",
+    tableName:   "schools",
+    recordId:    newSchool.id,
+    action:      "INSERT",
+    newValues:   { name, trial_status: trialStatus, trial_start_date: trialStartDate, trial_end_date: trialEndDate, admin_email: adminEmail || null },
+  });
 
   return NextResponse.json({ ok: true, schoolId: newSchool.id });
 }
