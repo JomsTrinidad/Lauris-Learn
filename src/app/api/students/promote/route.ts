@@ -2,21 +2,24 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient as createServerClient } from "@/lib/supabase/server";
 import { createAdminClient, insertAuditLog } from "@/lib/supabase/admin";
 
-interface EnrollRow {
-  studentId: string;
-  studentName: string;
-  classId: string;
-}
+const VALID_CLASSIFICATIONS = [
+  "eligible",
+  "not_eligible_retained",
+  "not_eligible_other",
+  "graduated",
+  "not_continuing",
+] as const;
+type ClassificationStatus = (typeof VALID_CLASSIFICATIONS)[number];
 
-interface GraduateRow {
+interface ClassifyRow {
   enrollmentId: string;
   studentName: string;
+  classificationStatus: ClassificationStatus;
+  notes: string;
 }
 
-interface PromoteResult {
-  created: number;
-  graduated: number;
-  skipped: number;
+interface ClassifyResult {
+  classified: number;
   errors: string[];
 }
 
@@ -28,42 +31,31 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "invalid_request" }, { status: 400 });
   }
 
-  const targetSchoolYearId = typeof body.targetSchoolYearId === "string" ? body.targetSchoolYearId : null;
-  const enrollRows  = Array.isArray(body.enroll)   ? (body.enroll   as unknown[]) : [];
-  const graduateRows = Array.isArray(body.graduate) ? (body.graduate as unknown[]) : [];
+  const classifyRows = Array.isArray(body.classify) ? (body.classify as unknown[]) : [];
 
-  if (!targetSchoolYearId) {
-    return NextResponse.json({ error: "targetSchoolYearId is required." }, { status: 400 });
-  }
-  if (enrollRows.length === 0 && graduateRows.length === 0) {
-    return NextResponse.json({ error: "No rows to process." }, { status: 400 });
+  if (classifyRows.length === 0) {
+    return NextResponse.json({ error: "No rows to classify." }, { status: 400 });
   }
 
-  // Parse and type-check row arrays
-  const parsedEnroll: EnrollRow[] = [];
-  for (const r of enrollRows) {
-    if (
-      typeof (r as Record<string, unknown>).studentId !== "string" ||
-      typeof (r as Record<string, unknown>).classId   !== "string"
-    ) {
-      return NextResponse.json({ error: "Invalid enroll row shape." }, { status: 400 });
-    }
+  // Parse and validate classify rows
+  const parsedClassify: ClassifyRow[] = [];
+  for (const r of classifyRows) {
     const row = r as Record<string, unknown>;
-    parsedEnroll.push({
-      studentId:   row.studentId   as string,
-      studentName: typeof row.studentName === "string" ? row.studentName : "",
-      classId:     row.classId     as string,
-    });
-  }
-  const parsedGraduate: GraduateRow[] = [];
-  for (const r of graduateRows) {
-    if (typeof (r as Record<string, unknown>).enrollmentId !== "string") {
-      return NextResponse.json({ error: "Invalid graduate row shape." }, { status: 400 });
+    if (typeof row.enrollmentId !== "string") {
+      return NextResponse.json({ error: "Invalid classify row: enrollmentId missing." }, { status: 400 });
     }
-    const row = r as Record<string, unknown>;
-    parsedGraduate.push({
-      enrollmentId: row.enrollmentId as string,
-      studentName:  typeof row.studentName === "string" ? row.studentName : "",
+    const status = row.classificationStatus;
+    if (!VALID_CLASSIFICATIONS.includes(status as ClassificationStatus)) {
+      return NextResponse.json(
+        { error: `Invalid classificationStatus "${status}".` },
+        { status: 400 }
+      );
+    }
+    parsedClassify.push({
+      enrollmentId:         row.enrollmentId as string,
+      studentName:          typeof row.studentName === "string" ? row.studentName : "",
+      classificationStatus: status as ClassificationStatus,
+      notes:                typeof row.notes === "string" ? row.notes : "",
     });
   }
 
@@ -76,7 +68,7 @@ export async function POST(req: NextRequest) {
 
   const admin = createAdminClient();
 
-  // Verify caller role and school_id
+  // Verify caller role and school membership
   const { data: caller } = await admin
     .from("profiles")
     .select("role, school_id")
@@ -92,128 +84,58 @@ export async function POST(req: NextRequest) {
 
   const schoolId = caller.school_id;
 
-  // Verify the target school year belongs to this school
-  const { data: yearRow } = await admin
-    .from("school_years")
-    .select("school_id")
-    .eq("id", targetSchoolYearId)
-    .maybeSingle();
-  if (!yearRow || yearRow.school_id !== schoolId) {
-    return NextResponse.json({ error: "Target school year does not belong to your school." }, { status: 403 });
-  }
+  // Batch-verify all enrollment IDs belong to this school
+  const uniqueEnrollmentIds = [...new Set(parsedClassify.map((r) => r.enrollmentId))];
+  const { data: validEnrollments } = await admin
+    .from("enrollments")
+    .select("id, students!inner(school_id)")
+    .in("id", uniqueEnrollmentIds) as {
+      data: Array<{ id: string; students: { school_id: string } }> | null;
+    };
 
-  // Batch-verify all student IDs belong to this school
-  if (parsedEnroll.length > 0) {
-    const uniqueStudentIds = [...new Set(parsedEnroll.map((r) => r.studentId))];
-    const { data: validStudents } = await admin
-      .from("students")
-      .select("id")
-      .eq("school_id", schoolId)
-      .in("id", uniqueStudentIds);
-    const validStudentSet = new Set((validStudents ?? []).map((s) => s.id));
-    const invalidStudent = parsedEnroll.find((r) => !validStudentSet.has(r.studentId));
-    if (invalidStudent) {
-      return NextResponse.json(
-        { error: `Student "${invalidStudent.studentName}" does not belong to your school.` },
-        { status: 403 }
-      );
-    }
-
-    // Batch-verify all class IDs belong to this school
-    const uniqueClassIds = [...new Set(parsedEnroll.map((r) => r.classId))];
-    const { data: validClasses } = await admin
-      .from("classes")
-      .select("id")
-      .eq("school_id", schoolId)
-      .in("id", uniqueClassIds);
-    const validClassSet = new Set((validClasses ?? []).map((c) => c.id));
-    const invalidClass = parsedEnroll.find((r) => !validClassSet.has(r.classId));
-    if (invalidClass) {
-      return NextResponse.json(
-        { error: `Class for "${invalidClass.studentName}" does not belong to your school.` },
-        { status: 403 }
-      );
-    }
-  }
-
-  // Batch-verify all enrollment IDs (for graduate) link back to this school's students
-  if (parsedGraduate.length > 0) {
-    const uniqueEnrollmentIds = [...new Set(parsedGraduate.map((r) => r.enrollmentId))];
-    const { data: validEnrollments } = await admin
-      .from("enrollments")
-      .select("id, students!inner(school_id)")
-      .in("id", uniqueEnrollmentIds) as { data: Array<{ id: string; students: { school_id: string } }> | null };
-    const validEnrollSet = new Set(
-      (validEnrollments ?? [])
-        .filter((e) => e.students?.school_id === schoolId)
-        .map((e) => e.id)
+  const validEnrollSet = new Set(
+    (validEnrollments ?? [])
+      .filter((e) => e.students?.school_id === schoolId)
+      .map((e) => e.id)
+  );
+  const invalidEnroll = parsedClassify.find((r) => !validEnrollSet.has(r.enrollmentId));
+  if (invalidEnroll) {
+    return NextResponse.json(
+      { error: `Enrollment for "${invalidEnroll.studentName}" does not belong to your school.` },
+      { status: 403 }
     );
-    const invalidEnroll = parsedGraduate.find((r) => !validEnrollSet.has(r.enrollmentId));
-    if (invalidEnroll) {
-      return NextResponse.json(
-        { error: `Enrollment for "${invalidEnroll.studentName}" does not belong to your school.` },
-        { status: 403 }
-      );
-    }
   }
 
-  // --- All validation passed — now process ---
+  // --- All validation passed — process classifications ---
 
-  const result: PromoteResult = { created: 0, graduated: 0, skipped: 0, errors: [] };
+  const result: ClassifyResult = { classified: 0, errors: [] };
 
-  for (const row of parsedEnroll) {
-    // Duplicate check
-    const { data: existing } = await admin
-      .from("enrollments")
-      .select("id")
-      .eq("student_id", row.studentId)
-      .eq("class_id", row.classId)
-      .eq("school_year_id", targetSchoolYearId)
-      .maybeSingle();
-
-    if (existing) { result.skipped++; continue; }
-
-    const { data: insData, error: insErr } = await admin.from("enrollments").insert({
-      student_id: row.studentId,
-      class_id: row.classId,
-      school_year_id: targetSchoolYearId,
-      status: "enrolled",
-    }).select("id").single();
-
-    if (insErr) {
-      result.errors.push(`${row.studentName}: ${insErr.message}`);
-    } else {
-      result.created++;
-      await insertAuditLog(admin, {
-        schoolId:    schoolId,
-        actorUserId: user.id,
-        actorRole:   caller.role,
-        tableName:   "enrollments",
-        recordId:    insData?.id ?? null,
-        action:      "INSERT",
-        newValues:   { student_id: row.studentId, class_id: row.classId, school_year_id: targetSchoolYearId, status: "enrolled", source: "promote" },
-      });
-    }
-  }
-
-  for (const row of parsedGraduate) {
+  for (const row of parsedClassify) {
     const { error: updErr } = await admin
       .from("enrollments")
-      .update({ status: "completed" })
+      .update({
+        status:             "completed",
+        progression_status: row.classificationStatus,
+        progression_notes:  row.notes || null,
+      })
       .eq("id", row.enrollmentId);
 
     if (updErr) {
       result.errors.push(`${row.studentName}: ${updErr.message}`);
     } else {
-      result.graduated++;
+      result.classified++;
       await insertAuditLog(admin, {
-        schoolId:    schoolId,
+        schoolId,
         actorUserId: user.id,
         actorRole:   caller.role,
         tableName:   "enrollments",
         recordId:    row.enrollmentId,
         action:      "UPDATE",
-        newValues:   { status: "completed", source: "promote_graduate" },
+        newValues:   {
+          status:             "completed",
+          progression_status: row.classificationStatus,
+          source:             "year_end_classification",
+        },
       });
     }
   }

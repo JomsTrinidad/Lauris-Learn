@@ -1,8 +1,10 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
+import { useRouter } from "next/navigation";
 import {
   Plus, ArrowRight, Search, TrendingUp, Pencil,
   X, BookOpen, HelpCircle, AlertTriangle, ChevronDown, ChevronRight, UserCheck, Tag,
+  RefreshCw, Check, Users,
 } from "lucide-react";
 import { DatePicker } from "@/components/ui/datepicker";
 import { formatTime } from "@/lib/utils";
@@ -67,6 +69,32 @@ const EMPTY_FORM: InquiryForm = {
   desiredClassId: "", inquirySource: "", notes: "", nextFollowUp: "",
 };
 
+// ── Returning student types ────────────────────────────────────────────────
+
+type ReturnDerivedStatus =
+  | "eligible_not_enrolled"   // eligible + no active-year enrollment  ← primary happy path
+  | "already_enrolled"        // any enrollment exists in active year
+  | "not_eligible_retained"
+  | "not_eligible_other"
+  | "graduated"
+  | "not_continuing"
+  | "no_classification";       // progression_status is null
+
+interface ReturnStudent {
+  id: string;
+  firstName: string; lastName: string;
+  preferredName: string | null;
+  studentCode: string | null;
+  guardianName: string; guardianPhone: string;
+  lastSchoolYearName: string;
+  lastClassName: string; lastClassLevel: string;
+  progressionStatus: string | null;
+  progressionNotes: string | null;
+  recommendedNextLevel: string | null;
+  derivedStatus: ReturnDerivedStatus;
+  activeYearClassName: string | null;
+}
+
 const PIPELINE: { status: InquiryStatus; label: string; badge: Parameters<typeof Badge>[0]["variant"] }[] = [
   { status: "inquiry",              label: "Inquiry",           badge: "inquiry" },
   { status: "assessment_scheduled", label: "Assessment Sched.", badge: "default" },
@@ -86,8 +114,9 @@ const STATUS_FLOW: Record<InquiryStatus, InquiryStatus | null> = {
 };
 
 export default function EnrollmentPage() {
-  const { schoolId, activeYear } = useSchoolContext();
+  const { schoolId, activeYear, userRole } = useSchoolContext();
   const supabase = createClient();
+  const router = useRouter();
 
   const [inquiries, setInquiries] = useState<Inquiry[]>([]);
   const [classOptions, setClassOptions] = useState<ClassOption[]>([]);
@@ -118,11 +147,33 @@ export default function EnrollmentPage() {
   const [convertDob, setConvertDob] = useState("");
   const [convertGender, setConvertGender] = useState("");
 
+  // ── Fork picker + returning student flow ──────────────────────────────────
+  const [forkOpen, setForkOpen] = useState(false);
+  const [returningOpen, setReturningOpen] = useState(false);
+  const [returningSearch, setReturningSearch] = useState("");
+  const [returningResults, setReturningResults] = useState<ReturnStudent[]>([]);
+  const [returningSearching, setReturningSearching] = useState(false);
+  const [returningSelected, setReturningSelected] = useState<ReturnStudent | null>(null);
+  const [returningClassId, setReturningClassId] = useState("");
+  const [returningOverride, setReturningOverride] = useState("");
+  const [returningSaving, setReturningSaving] = useState(false);
+  const [returningError, setReturningError] = useState<string | null>(null);
+  const [returningSuccess, setReturningSuccess] = useState<{ studentId: string; studentName: string } | null>(null);
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     if (!schoolId) { setLoading(false); return; }
     loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [schoolId, activeYear?.id]);
+
+  useEffect(() => {
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    if (returningSearch.trim().length < 2) { setReturningResults([]); return; }
+    searchDebounceRef.current = setTimeout(() => { searchReturningStudents(returningSearch); }, 350);
+    return () => { if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [returningSearch, schoolId]);
 
   async function loadAll() {
     setLoading(true);
@@ -289,6 +340,220 @@ export default function EnrollmentPage() {
     await loadAll();
   }
 
+  // ── Returning student search ───────────────────────────────────────────────
+
+  async function searchReturningStudents(q: string) {
+    if (!schoolId || q.trim().length < 2) { setReturningResults([]); return; }
+    setReturningSearching(true);
+
+    const like = `%${q.trim()}%`;
+
+    // Query 1: match on student name / preferred name / student code
+    const [directRes, guardianRes] = await Promise.all([
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (supabase as any)
+        .from("students")
+        .select(`
+          id, first_name, last_name, preferred_name, student_code,
+          guardians(full_name, phone, is_primary),
+          enrollments(
+            id, status, progression_status, progression_notes, school_year_id,
+            classes(name, level, next_class:classes!next_class_id(level)),
+            school_years(name)
+          )
+        `)
+        .eq("school_id", schoolId)
+        .eq("is_active", true)
+        .or(`first_name.ilike.${like},last_name.ilike.${like},preferred_name.ilike.${like},student_code.ilike.${like}`)
+        .limit(15),
+
+      // Query 2: match on guardian name / phone
+      supabase
+        .from("guardians")
+        .select("student_id, full_name, phone")
+        .or(`full_name.ilike.${like},phone.ilike.${like}`)
+        .limit(15),
+    ]);
+
+    // Collect student IDs found via guardian match, then fetch those students
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const guardianStudentIds: string[] = ((guardianRes.data ?? []) as any[]).map((g: any) => g.student_id);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let guardianStudents: any[] = [];
+    if (guardianStudentIds.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data } = await (supabase as any)
+        .from("students")
+        .select(`
+          id, first_name, last_name, preferred_name, student_code,
+          guardians(full_name, phone, is_primary),
+          enrollments(
+            id, status, progression_status, progression_notes, school_year_id,
+            classes(name, level, next_class:classes!next_class_id(level)),
+            school_years(name)
+          )
+        `)
+        .eq("school_id", schoolId)
+        .eq("is_active", true)
+        .in("id", guardianStudentIds);
+      guardianStudents = data ?? [];
+    }
+
+    // Merge + deduplicate by student id
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const seen = new Set<string>();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const merged: any[] = [];
+    for (const s of [...(directRes.data ?? []), ...guardianStudents]) {
+      if (!seen.has(s.id)) { seen.add(s.id); merged.push(s); }
+    }
+
+    const results: ReturnStudent[] = merged.slice(0, 15).map((s) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const guardians: any[] = s.guardians ?? [];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const enrollments: any[] = s.enrollments ?? [];
+      const primaryG = guardians.find((g) => g.is_primary) ?? guardians[0] ?? null;
+
+      // Most recent completed enrollment (year-end classified)
+      const classifiedEnroll = enrollments
+        .filter((e) => e.status === "completed" && e.progression_status)
+        .sort((a, b) => (b.school_years?.name ?? "").localeCompare(a.school_years?.name ?? ""))
+      [0] ?? null;
+
+      // Fallback: most recent enrollment of any status for display
+      const latestEnroll = enrollments
+        .sort((a, b) => (b.school_years?.name ?? "").localeCompare(a.school_years?.name ?? ""))
+      [0] ?? null;
+
+      const displayEnroll = classifiedEnroll ?? latestEnroll;
+
+      const progressionStatus: string | null = classifiedEnroll?.progression_status ?? null;
+      const progressionNotes: string | null = classifiedEnroll?.progression_notes ?? null;
+      const recommendedNextLevel: string | null = displayEnroll?.classes?.next_class?.level ?? null;
+
+      // Check for active-year enrollment
+      const activeYearEnroll = activeYear?.id
+        ? enrollments.find((e) => e.school_year_id === activeYear.id && e.status !== "withdrawn" && e.status !== "completed")
+        : null;
+      const alreadyEnrolled = !!activeYearEnroll;
+      const activeYearClassName: string | null = activeYearEnroll?.classes?.name ?? null;
+
+      // Derive status
+      let derivedStatus: ReturnDerivedStatus;
+      if (alreadyEnrolled) {
+        derivedStatus = "already_enrolled";
+      } else if (progressionStatus === "eligible") {
+        derivedStatus = "eligible_not_enrolled";
+      } else if (progressionStatus === "not_eligible_retained") {
+        derivedStatus = "not_eligible_retained";
+      } else if (progressionStatus === "not_eligible_other") {
+        derivedStatus = "not_eligible_other";
+      } else if (progressionStatus === "graduated") {
+        derivedStatus = "graduated";
+      } else if (progressionStatus === "not_continuing") {
+        derivedStatus = "not_continuing";
+      } else {
+        derivedStatus = "no_classification";
+      }
+
+      return {
+        id: s.id,
+        firstName: s.first_name,
+        lastName: s.last_name,
+        preferredName: s.preferred_name ?? null,
+        studentCode: s.student_code ?? null,
+        guardianName: primaryG?.full_name ?? "—",
+        guardianPhone: primaryG?.phone ?? "—",
+        lastSchoolYearName: displayEnroll?.school_years?.name ?? "—",
+        lastClassName: displayEnroll?.classes?.name ?? "—",
+        lastClassLevel: displayEnroll?.classes?.level ?? "—",
+        progressionStatus,
+        progressionNotes,
+        recommendedNextLevel,
+        derivedStatus,
+        activeYearClassName,
+      };
+    });
+
+    // Sort: eligible_not_enrolled first, then already_enrolled (to show block clearly), rest alphabetically
+    results.sort((a, b) => {
+      const rank = (r: ReturnStudent) =>
+        r.derivedStatus === "eligible_not_enrolled" ? 0 :
+        r.derivedStatus === "no_classification" ? 1 : 2;
+      const d = rank(a) - rank(b);
+      if (d !== 0) return d;
+      return `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`);
+    });
+
+    setReturningResults(results);
+    setReturningSearching(false);
+  }
+
+  function openReturning() {
+    setForkOpen(false);
+    setReturningOpen(true);
+    setReturningSearch("");
+    setReturningResults([]);
+    setReturningSelected(null);
+    setReturningClassId("");
+    setReturningOverride("");
+    setReturningError(null);
+    setReturningSuccess(null);
+  }
+
+  function selectReturning(student: ReturnStudent) {
+    setReturningSelected(student);
+    setReturningError(null);
+    setReturningOverride("");
+    // Default class: first class whose level matches the recommended next level
+    const match = classOptions.find((c) => student.recommendedNextLevel && c.level === student.recommendedNextLevel);
+    setReturningClassId(match?.id ?? "");
+  }
+
+  async function handleReturningEnroll() {
+    if (!returningSelected || !activeYear?.id) return;
+    if (!returningClassId) { setReturningError("Please select a class."); return; }
+
+    const needsOverride =
+      returningSelected.derivedStatus === "not_eligible_retained" ||
+      returningSelected.derivedStatus === "not_eligible_other" ||
+      returningSelected.derivedStatus === "graduated" ||
+      returningSelected.derivedStatus === "not_continuing";
+    if (needsOverride && !returningOverride.trim()) {
+      setReturningError("An override reason is required for this student.");
+      return;
+    }
+
+    setReturningSaving(true);
+    setReturningError(null);
+
+    const res = await fetch("/api/students/enroll", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        studentId: returningSelected.id,
+        classId: returningClassId,
+        schoolYearId: activeYear.id,
+        status: "enrolled",
+      }),
+    });
+
+    const j = await res.json();
+    if (!res.ok) {
+      setReturningError(j.error ?? "Enrollment failed.");
+      setReturningSaving(false);
+      return;
+    }
+
+    setReturningSuccess({
+      studentId: returningSelected.id,
+      studentName: `${returningSelected.firstName} ${returningSelected.lastName}`,
+    });
+    setReturningSaving(false);
+    await loadAll();
+  }
+
   async function markNotProceeding(id: string) {
     await supabase.from("enrollment_inquiries").update({ status: "not_proceeding" }).eq("id", id);
     await loadInquiries();
@@ -367,8 +632,8 @@ export default function EnrollmentPage() {
           <button onClick={() => { setHelpOpen(true); setHelpSearch(""); }} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors px-2">
             <HelpCircle className="w-4 h-4" /> Help
           </button>
-          <Button onClick={() => { setModalOpen(true); setForm(EMPTY_FORM); setFormError(null); }}>
-            <Plus className="w-4 h-4" /> Add Inquiry
+          <Button onClick={() => setForkOpen(true)}>
+            <Plus className="w-4 h-4" /> Start Enrollment
           </Button>
         </div>
       </div>
@@ -1125,6 +1390,26 @@ export default function EnrollmentPage() {
                     ),
                   },
                   {
+                    id: "returning-student",
+                    icon: UserCheck,
+                    title: "Enroll a returning student",
+                    searchText: "returning student re-enroll eligible classification year-end existing",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Use <strong>Enroll Returning Student</strong> when a student from a previous year is coming back — this reuses their existing profile and avoids creating a duplicate.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Click <strong>Start Enrollment</strong> → <strong>Enroll Returning Student</strong>.</span>} />
+                          <Step n={2} text={<span>Search by student name, nickname, student code, or parent name. Results appear after 2 characters.</span>} />
+                          <Step n={3} text={<span>Students tagged as <strong>Eligible — ready to enroll</strong> (green) are cleared from Year-End Classification. These are your primary targets.</span>} />
+                          <Step n={4} text={<span>Select a student to proceed. The class selector defaults to classes matching the <strong>recommended next level</strong> but you can choose any class.</span>} />
+                          <Step n={5} text={<span>Click <strong>Confirm Enrollment</strong>. After success, use <strong>Proceed to Billing</strong> to record a registration fee if needed.</span>} />
+                        </div>
+                        <Tip>Students with non-eligible classifications (Retained, Graduated, etc.) show a warning and require an override reason from a school admin before enrolling.</Tip>
+                        <Note>If a student is <strong>already enrolled</strong> in the active year, enrollment is blocked outright — no override is possible. Check the Students page to view their current enrollment.</Note>
+                      </div>
+                    ),
+                  },
+                  {
                     id: "inquiry-source",
                     icon: Tag,
                     title: "Why inquiry source matters",
@@ -1194,12 +1479,302 @@ export default function EnrollmentPage() {
               {helpSearch ? (
                 <span>Showing results for "<span className="font-medium text-foreground">{helpSearch}</span>"</span>
               ) : (
-                <span>11 topics · click any to expand</span>
+                <span>12 topics · click any to expand</span>
               )}
             </div>
           </div>
         </div>
       )}
+
+      {/* ── Fork Picker Modal ─────────────────────────────────────────────── */}
+      <Modal open={forkOpen} onClose={() => setForkOpen(false)} title="Start Enrollment" className="max-w-sm">
+        <div className="space-y-3 pt-1">
+          <button
+            onClick={openReturning}
+            className="w-full flex items-start gap-4 p-4 rounded-xl border-2 border-border hover:border-primary hover:bg-primary/5 transition-colors text-left group"
+          >
+            <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0 group-hover:bg-primary/20 transition-colors mt-0.5">
+              <UserCheck className="w-5 h-5 text-primary" />
+            </div>
+            <div>
+              <p className="font-semibold text-sm">Enroll Returning Student</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Search for an existing student and create a new enrollment for this school year.</p>
+            </div>
+          </button>
+
+          <button
+            onClick={() => { setForkOpen(false); setModalOpen(true); setForm(EMPTY_FORM); setFormError(null); }}
+            className="w-full flex items-start gap-4 p-4 rounded-xl border-2 border-border hover:border-primary hover:bg-primary/5 transition-colors text-left group"
+          >
+            <div className="w-9 h-9 rounded-lg bg-muted flex items-center justify-center flex-shrink-0 group-hover:bg-accent transition-colors mt-0.5">
+              <Plus className="w-5 h-5 text-muted-foreground" />
+            </div>
+            <div>
+              <p className="font-semibold text-sm">Add New Inquiry</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Log a new inquiry for a child who is not yet in the system.</p>
+            </div>
+          </button>
+        </div>
+      </Modal>
+
+      {/* ── Returning Student Modal ────────────────────────────────────────── */}
+      <Modal
+        open={returningOpen}
+        onClose={() => { setReturningOpen(false); setReturningSelected(null); setReturningSuccess(null); }}
+        title="Enroll Returning Student"
+        className="max-w-2xl"
+      >
+        <div className="space-y-4">
+          {/* ── Success state ── */}
+          {returningSuccess && (
+            <div className="space-y-4">
+              <div className="flex items-start gap-3 p-4 bg-green-50 border border-green-200 rounded-xl">
+                <Check className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-semibold text-sm text-green-800">{returningSuccess.studentName} enrolled successfully</p>
+                  <p className="text-xs text-green-700 mt-0.5">A new enrollment has been created for {activeYear?.name ?? "the active year"}.</p>
+                </div>
+              </div>
+              <div className="flex gap-2 pt-1">
+                <Button
+                  variant="outline"
+                  onClick={() => router.push("/billing")}
+                  className="flex-1"
+                >
+                  <ArrowRight className="w-4 h-4" /> Proceed to Billing
+                </Button>
+                <Button
+                  onClick={() => { setReturningOpen(false); setReturningSuccess(null); }}
+                  className="flex-1"
+                >
+                  Done
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground text-center">To record a registration fee or payment, use the Billing page.</p>
+            </div>
+          )}
+
+          {/* ── Search + results step ── */}
+          {!returningSuccess && !returningSelected && (
+            <>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  autoFocus
+                  placeholder="Search by student name, student code, or parent name…"
+                  value={returningSearch}
+                  onChange={(e) => setReturningSearch(e.target.value)}
+                  className="pl-9"
+                />
+              </div>
+              {returningSearch.trim().length > 0 && returningSearch.trim().length < 2 && (
+                <p className="text-xs text-muted-foreground px-1">Type at least 2 characters to search.</p>
+              )}
+              {returningSearching && (
+                <div className="flex items-center gap-2 py-6 justify-center text-sm text-muted-foreground">
+                  <RefreshCw className="w-4 h-4 animate-spin" /> Searching…
+                </div>
+              )}
+              {!returningSearching && returningSearch.trim().length >= 2 && returningResults.length === 0 && (
+                <div className="text-center py-8 text-sm text-muted-foreground">
+                  <Users className="w-8 h-8 mx-auto mb-2 opacity-40" />
+                  No students found. Try a different name or student code.
+                </div>
+              )}
+              {returningResults.length > 0 && (
+                <div className="divide-y divide-border border border-border rounded-xl overflow-hidden">
+                  {returningResults.map((s) => {
+                    const statusBadge = (() => {
+                      switch (s.derivedStatus) {
+                        case "eligible_not_enrolled":  return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-xs font-medium"><Check className="w-3 h-3" /> Eligible — ready to enroll</span>;
+                        case "already_enrolled":       return <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-xs font-medium">Already enrolled · {s.activeYearClassName}</span>;
+                        case "not_eligible_retained":  return <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-xs font-medium">Retained</span>;
+                        case "not_eligible_other":     return <span className="px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 text-xs font-medium">Not eligible — other</span>;
+                        case "graduated":              return <span className="px-2 py-0.5 rounded-full bg-muted text-muted-foreground text-xs font-medium">Graduated</span>;
+                        case "not_continuing":         return <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-700 text-xs font-medium">Not continuing</span>;
+                        default:                       return <span className="px-2 py-0.5 rounded-full bg-muted text-muted-foreground text-xs font-medium">No classification</span>;
+                      }
+                    })();
+                    return (
+                      <button
+                        key={s.id}
+                        onClick={() => selectReturning(s)}
+                        className="w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-muted/50 transition-colors"
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-medium text-sm">
+                              {s.firstName} {s.lastName}
+                              {s.preferredName && <span className="text-muted-foreground font-normal"> "{s.preferredName}"</span>}
+                            </span>
+                            {s.studentCode && <span className="font-mono text-xs text-muted-foreground">{s.studentCode}</span>}
+                            {statusBadge}
+                          </div>
+                          <div className="text-xs text-muted-foreground mt-0.5 space-y-0.5">
+                            <p>{s.guardianName} · {s.guardianPhone}</p>
+                            <p>Last: {s.lastSchoolYearName} · {s.lastClassName}{s.lastClassLevel && s.lastClassLevel !== "—" ? ` (${s.lastClassLevel})` : ""}</p>
+                            {s.recommendedNextLevel && <p className="text-primary">→ Recommended next: {s.recommendedNextLevel}</p>}
+                          </div>
+                        </div>
+                        <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0 mt-1" />
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              {!returningSearching && returningSearch.trim().length === 0 && (
+                <p className="text-xs text-muted-foreground text-center py-4">Search for a student to begin. Results show year-end classification status.</p>
+              )}
+            </>
+          )}
+
+          {/* ── Enrollment confirmation step ── */}
+          {!returningSuccess && returningSelected && (() => {
+            const s = returningSelected;
+            const isBlocked = s.derivedStatus === "already_enrolled";
+            const needsOverride =
+              s.derivedStatus === "not_eligible_retained" ||
+              s.derivedStatus === "not_eligible_other" ||
+              s.derivedStatus === "graduated" ||
+              s.derivedStatus === "not_continuing";
+            const canOverride = userRole === "school_admin" || userRole === "super_admin";
+
+            // Build sorted class list: recommended level first, then rest
+            const sortedClasses = [...classOptions].sort((a, b) => {
+              const aMatch = s.recommendedNextLevel && a.level === s.recommendedNextLevel ? 0 : 1;
+              const bMatch = s.recommendedNextLevel && b.level === s.recommendedNextLevel ? 0 : 1;
+              return aMatch - bMatch || a.name.localeCompare(b.name);
+            });
+
+            return (
+              <div className="space-y-4">
+                <button
+                  onClick={() => { setReturningSelected(null); setReturningError(null); }}
+                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  ← Back to search
+                </button>
+
+                {/* Student info summary */}
+                <div className="p-4 bg-muted/50 rounded-xl space-y-1 text-sm">
+                  <p className="font-semibold">
+                    {s.firstName} {s.lastName}
+                    {s.preferredName && <span className="font-normal text-muted-foreground ml-1">"{s.preferredName}"</span>}
+                    {s.studentCode && <span className="font-mono text-xs text-muted-foreground ml-2">{s.studentCode}</span>}
+                  </p>
+                  <p className="text-muted-foreground text-xs">{s.guardianName} · {s.guardianPhone}</p>
+                  <p className="text-muted-foreground text-xs">Last enrolled: {s.lastSchoolYearName} · {s.lastClassName}</p>
+                  {s.recommendedNextLevel && (
+                    <p className="text-xs text-primary font-medium">→ Recommended next level: {s.recommendedNextLevel}</p>
+                  )}
+                </div>
+
+                {/* Derived status banners */}
+                {s.derivedStatus === "eligible_not_enrolled" && (
+                  <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
+                    <Check className="w-4 h-4 flex-shrink-0" />
+                    <span>This student is <strong>eligible for next level</strong>. {s.progressionNotes && `(${s.progressionNotes})`}</span>
+                  </div>
+                )}
+                {s.derivedStatus === "no_classification" && (
+                  <div className="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700">
+                    <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                    No year-end classification found for this student. You may still proceed with enrollment.
+                  </div>
+                )}
+                {isBlocked && (
+                  <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                    <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-semibold">Already enrolled this year</p>
+                      <p className="text-xs mt-0.5">{s.firstName} is already enrolled in <strong>{s.activeYearClassName}</strong> for {activeYear?.name}. Duplicate enrollments are not allowed.</p>
+                    </div>
+                  </div>
+                )}
+                {needsOverride && (
+                  <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700">
+                    <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-semibold">
+                        {s.derivedStatus === "not_eligible_retained" && "Student is marked as retained"}
+                        {s.derivedStatus === "not_eligible_other" && "Student is not eligible — other reason"}
+                        {s.derivedStatus === "graduated" && "Student is marked as graduated"}
+                        {s.derivedStatus === "not_continuing" && "Student is not continuing"}
+                      </p>
+                      {s.progressionNotes && <p className="text-xs mt-0.5">{s.progressionNotes}</p>}
+                      {canOverride
+                        ? <p className="text-xs mt-1">You can override this as school admin. An override reason is required.</p>
+                        : <p className="text-xs mt-1">Only a school admin can override this classification to proceed with enrollment.</p>
+                      }
+                    </div>
+                  </div>
+                )}
+
+                {/* Override reason (non-eligible, admin only) */}
+                {needsOverride && canOverride && !isBlocked && (
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Override Reason *</label>
+                    <Textarea
+                      value={returningOverride}
+                      onChange={(e) => setReturningOverride(e.target.value)}
+                      placeholder="Required — explain why you are enrolling despite the classification…"
+                      rows={2}
+                    />
+                  </div>
+                )}
+
+                {/* Class selector — not shown if blocked */}
+                {!isBlocked && (
+                  <div>
+                    <label className="block text-sm font-medium mb-1">
+                      Assign to Class *
+                      {s.recommendedNextLevel && (
+                        <span className="ml-1.5 text-xs font-normal text-muted-foreground">({s.recommendedNextLevel} classes listed first)</span>
+                      )}
+                    </label>
+                    <Select
+                      value={returningClassId}
+                      onChange={(e) => setReturningClassId(e.target.value)}
+                    >
+                      <option value="">— Select class —</option>
+                      {s.recommendedNextLevel && (
+                        <optgroup label={`${s.recommendedNextLevel} (recommended)`}>
+                          {sortedClasses.filter((c) => c.level === s.recommendedNextLevel).map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name}{c.startTime ? ` · ${formatTime(c.startTime)}` : ""} — {c.enrolled}/{c.capacity} enrolled
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
+                      <optgroup label={s.recommendedNextLevel ? "Other classes" : "All classes"}>
+                        {sortedClasses.filter((c) => !s.recommendedNextLevel || c.level !== s.recommendedNextLevel).map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}{c.startTime ? ` · ${formatTime(c.startTime)}` : ""}{c.level ? ` (${c.level})` : ""} — {c.enrolled}/{c.capacity} enrolled
+                          </option>
+                        ))}
+                      </optgroup>
+                    </Select>
+                  </div>
+                )}
+
+                {returningError && <ErrorAlert message={returningError} />}
+
+                <div className="flex justify-end gap-2 pt-1 border-t border-border">
+                  <Button variant="outline" onClick={() => { setReturningSelected(null); setReturningError(null); }}>Back</Button>
+                  {!isBlocked && !(needsOverride && !canOverride) && (
+                    <Button
+                      onClick={handleReturningEnroll}
+                      disabled={returningSaving || !returningClassId || (needsOverride && canOverride && !returningOverride.trim())}
+                    >
+                      {returningSaving ? <><RefreshCw className="w-4 h-4 animate-spin" /> Enrolling…</> : <><Check className="w-4 h-4" /> Confirm Enrollment</>}
+                    </Button>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      </Modal>
 
       {/* Add Inquiry Modal */}
       <Modal open={modalOpen} onClose={() => { setModalOpen(false); setForm(EMPTY_FORM); setFormError(null); }} title="Add Inquiry">

@@ -121,6 +121,28 @@ const UPDATE_CONTENTS = [
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+// All scenario dates are anchored to this base start. When the active school
+// year starts on a different month, shiftDate() slides every date forward/back
+// by the same number of months so the data always lands inside the correct year.
+const BASE_START = "2025-06-01";
+
+function monthsBetween(from: string, to: string): number {
+  const fy = parseInt(from.slice(0, 4)), fm = parseInt(from.slice(5, 7));
+  const ty = parseInt(to.slice(0, 4)), tm = parseInt(to.slice(5, 7));
+  return (ty - fy) * 12 + (tm - fm);
+}
+
+function shiftDate(dateStr: string, months: number): string {
+  if (months === 0) return dateStr;
+  const y = parseInt(dateStr.slice(0, 4));
+  const m = parseInt(dateStr.slice(5, 7)) - 1; // 0-indexed
+  const d = parseInt(dateStr.slice(8, 10));
+  const raw = m + months;
+  const newY = y + Math.floor(raw / 12);
+  const newM = ((raw % 12) + 12) % 12;
+  return `${newY}-${String(newM + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+
 function schoolDays(startIso: string, endIso: string): string[] {
   const days: string[] = [];
   const cur = new Date(startIso + "T00:00:00Z");
@@ -347,22 +369,30 @@ export async function generateDemoData(
   // (create-school seeds one automatically; we must not insert a duplicate).
   const { data: existingSy } = await (admin as any)
     .from("school_years")
-    .select("id")
+    .select("id, start_date")
     .eq("school_id", schoolId)
     .eq("status", "active")
     .maybeSingle();
 
   let schoolYearId: string;
+  let yearStartDate: string;
   if (existingSy?.id) {
-    schoolYearId = existingSy.id;
+    schoolYearId  = existingSy.id;
+    yearStartDate = existingSy.start_date ?? BASE_START;
   } else {
     const { data: syData, error: syErr } = await (admin as any)
       .from("school_years")
       .insert({ school_id: schoolId, name: "SY 2025–2026", start_date: "2025-06-01", end_date: "2026-03-31", status: "active" })
-      .select("id").single();
+      .select("id, start_date").single();
     if (syErr) throw new Error(`school_years insert: ${syErr.message}`);
-    schoolYearId = syData.id;
+    schoolYearId  = syData.id;
+    yearStartDate = syData.start_date ?? BASE_START;
   }
+
+  // Compute how many months the active year is offset from the base scenario dates.
+  // All hardcoded 2025-XX dates in the scenario are shifted by this amount so the
+  // demo data always lands inside the correct school year.
+  const mo = monthsBetween(BASE_START, yearStartDate);
 
   // Academic periods — insert only if none exist for this school year
   const { data: existingAp } = await (admin as any)
@@ -375,8 +405,8 @@ export async function generateDemoData(
     const { data: newAp } = await (admin as any)
       .from("academic_periods")
       .insert([
-        { school_id: schoolId, school_year_id: schoolYearId, name: "Regular Term", start_date: "2025-06-01", end_date: "2026-03-31", is_active: true },
-        ...(scenario !== "trial_new" ? [{ school_id: schoolId, school_year_id: schoolYearId, name: "Summer Term", start_date: "2026-04-01", end_date: "2026-05-31", is_active: false }] : []),
+        { school_id: schoolId, school_year_id: schoolYearId, name: "Regular Term", start_date: shiftDate("2025-06-01", mo), end_date: shiftDate("2026-03-31", mo), is_active: true },
+        ...(scenario !== "trial_new" ? [{ school_id: schoolId, school_year_id: schoolYearId, name: "Summer Term", start_date: shiftDate("2026-04-01", mo), end_date: shiftDate("2026-05-31", mo), is_active: false }] : []),
       ])
       .select("id, name");
     apData = newAp;
@@ -472,14 +502,14 @@ export async function generateDemoData(
       enrollRows.push({
         student_id: studentIds[eIdx], class_id: classIds[classIdx],
         school_year_id: schoolYearId, academic_period_id: regularPeriodId,
-        status: "enrolled", enrolled_at: "2025-06-01",
+        status: "enrolled", enrolled_at: shiftDate("2025-06-01", mo),
       });
     }
   });
   await batchInsert(admin, "enrollments", enrollRows);
 
   // ── 12. Attendance records ──────────────────────────────────────────────────
-  const days = schoolDays(cfg.attendStart, cfg.attendEnd);
+  const days = schoolDays(shiftDate(cfg.attendStart, mo), shiftDate(cfg.attendEnd, mo));
   const attendRows: Record<string, unknown>[] = [];
   let studentClassOffset = 0;
   cfg.studentsPerClass.forEach((count, classIdx) => {
@@ -498,8 +528,9 @@ export async function generateDemoData(
   await batchInsert(admin, "attendance_records", attendRows, 200);
 
   // ── 13. Billing records + payments ─────────────────────────────────────────
+  const shiftedBillingMonths = cfg.billingMonths.map((m) => shiftDate(m, mo));
   const billingRows: Record<string, unknown>[] = [];
-  cfg.billingMonths.forEach((month, monthIdx) => {
+  shiftedBillingMonths.forEach((month, monthIdx) => {
     studentIds.forEach((sid, studentIdx) => {
       const classIdxFinal = cfg.studentsPerClass.reduce<number>((cls, cnt, ci) => {
         let running = 0;
@@ -512,7 +543,7 @@ export async function generateDemoData(
       const amountDue = tuition + misc;
       const bs        = cfg.trialNewMode
         ? (monthIdx === 0 ? (studentIdx % 3 === 0 ? "paid" : "unpaid") : "unpaid")
-        : billingStatus(monthIdx, cfg.billingMonths.length, studentIdx);
+        : billingStatus(monthIdx, shiftedBillingMonths.length, studentIdx);
       const dueDate   = `${month.slice(0, 7)}-15`;
       billingRows.push({
         school_id: schoolId, student_id: sid, school_year_id: schoolYearId,
@@ -535,7 +566,7 @@ export async function generateDemoData(
       payRows.push({
         billing_record_id: br.id, amount: br.amount_due,
         payment_method: METHODS[i % METHODS.length],
-        payment_date: cfg.billingMonths[Math.min(i % cfg.billingMonths.length, cfg.billingMonths.length - 1)].slice(0, 7) + "-05",
+        payment_date: shiftedBillingMonths[Math.min(i % shiftedBillingMonths.length, shiftedBillingMonths.length - 1)].slice(0, 7) + "-05",
         status: "confirmed",
         or_number: `OR-${batchId.toUpperCase()}-${String(i + 1).padStart(4, "0")}`,
         recorded_by: actorUserId,
@@ -544,7 +575,7 @@ export async function generateDemoData(
       payRows.push({
         billing_record_id: br.id, amount: Math.floor(br.amount_due * 0.5),
         payment_method: METHODS[(i * 3) % METHODS.length],
-        payment_date: cfg.billingMonths[Math.min(i % cfg.billingMonths.length, cfg.billingMonths.length - 1)].slice(0, 7) + "-10",
+        payment_date: shiftedBillingMonths[Math.min(i % shiftedBillingMonths.length, shiftedBillingMonths.length - 1)].slice(0, 7) + "-10",
         status: "confirmed",
         or_number: `OR-${batchId.toUpperCase()}-${String(1000 + i).padStart(4, "0")}`,
         recorded_by: actorUserId,
@@ -576,16 +607,16 @@ export async function generateDemoData(
 
   // ── 15. Events ──────────────────────────────────────────────────────────────
   const eventRows: Record<string, unknown>[] = [
-    { school_id: schoolId, title: "Opening Day Ceremony", event_date: "2025-06-02", applies_to: "all", requires_rsvp: false, all_day: true },
-    { school_id: schoolId, title: "National Heroes Day Celebration", event_date: "2025-08-25", applies_to: "all", requires_rsvp: false, all_day: true },
-    { school_id: schoolId, title: "Family Fun Day", event_date: "2025-10-18", applies_to: "all", requires_rsvp: true, all_day: true, description: "Join us for a day of games, food, and family bonding!" },
-    { school_id: schoolId, title: "Christmas Program", event_date: "2025-12-12", applies_to: "all", requires_rsvp: true, all_day: false, start_time: "09:00", end_time: "12:00", description: "Our annual Christmas celebration with performances from each class." },
-    { school_id: schoolId, title: "Graduation Day", event_date: "2026-03-27", applies_to: "all", requires_rsvp: true, all_day: false, start_time: "09:00", end_time: "12:00" },
+    { school_id: schoolId, title: "Opening Day Ceremony", event_date: shiftDate("2025-06-02", mo), applies_to: "all", requires_rsvp: false, all_day: true },
+    { school_id: schoolId, title: "National Heroes Day Celebration", event_date: shiftDate("2025-08-25", mo), applies_to: "all", requires_rsvp: false, all_day: true },
+    { school_id: schoolId, title: "Family Fun Day", event_date: shiftDate("2025-10-18", mo), applies_to: "all", requires_rsvp: true, all_day: true, description: "Join us for a day of games, food, and family bonding!" },
+    { school_id: schoolId, title: "Christmas Program", event_date: shiftDate("2025-12-12", mo), applies_to: "all", requires_rsvp: true, all_day: false, start_time: "09:00", end_time: "12:00", description: "Our annual Christmas celebration with performances from each class." },
+    { school_id: schoolId, title: "Graduation Day", event_date: shiftDate("2026-03-27", mo), applies_to: "all", requires_rsvp: true, all_day: false, start_time: "09:00", end_time: "12:00" },
   ];
   if (scenario !== "trial_new") {
     eventRows.push(
-      { school_id: schoolId, title: "Nutrition Month Activity", event_date: "2025-07-15", applies_to: "all", requires_rsvp: false, all_day: true },
-      { school_id: schoolId, title: "Foundation Day", event_date: "2025-09-05", applies_to: "all", requires_rsvp: false, all_day: true },
+      { school_id: schoolId, title: "Nutrition Month Activity", event_date: shiftDate("2025-07-15", mo), applies_to: "all", requires_rsvp: false, all_day: true },
+      { school_id: schoolId, title: "Foundation Day", event_date: shiftDate("2025-09-05", mo), applies_to: "all", requires_rsvp: false, all_day: true },
     );
   }
   await batchInsert(admin, "events", eventRows);
@@ -595,7 +626,7 @@ export async function generateDemoData(
   for (let i = 0; i < cfg.proudCount; i++) {
     const sid  = studentIds[i % studentIds.length];
     const tid  = teacherIds[i % teacherIds.length];
-    const date = new Date("2025-09-01");
+    const date = new Date(shiftDate("2025-09-01", mo) + "T00:00:00Z");
     date.setUTCDate(date.getUTCDate() + (i * 3) % 45);
     pmRows.push({
       school_id: schoolId, student_id: sid,
@@ -615,7 +646,7 @@ export async function generateDemoData(
     // 2–3 observations per observed student (different categories)
     const catSample = categoryIds.slice(0, Math.min(3, categoryIds.length));
     catSample.forEach((catId, ci) => {
-      const date = new Date("2025-10-01");
+      const date = new Date(shiftDate("2025-10-01", mo) + "T00:00:00Z");
       date.setUTCDate(date.getUTCDate() + (si + ci * 5) % 14);
       obsRows.push({
         student_id: sid, category_id: catId,
@@ -649,13 +680,13 @@ export async function generateDemoData(
 
   // ── 19. Holidays ────────────────────────────────────────────────────────────
   await batchInsert(admin, "holidays", [
-    { school_id: schoolId, name: "National Heroes Day",   date: "2025-08-25", applies_to_all: true, is_no_class: true },
-    { school_id: schoolId, name: "All Saints Day",        date: "2025-11-01", applies_to_all: true, is_no_class: true },
-    { school_id: schoolId, name: "All Souls Day",         date: "2025-11-02", applies_to_all: true, is_no_class: true },
-    { school_id: schoolId, name: "Bonifacio Day",         date: "2025-11-30", applies_to_all: true, is_no_class: true },
-    { school_id: schoolId, name: "Immaculate Conception", date: "2025-12-08", applies_to_all: true, is_no_class: true },
-    { school_id: schoolId, name: "Christmas Break",       date: "2025-12-20", applies_to_all: true, is_no_class: true },
-    { school_id: schoolId, name: "New Year Holiday",      date: "2026-01-01", applies_to_all: true, is_no_class: true },
+    { school_id: schoolId, name: "National Heroes Day",   date: shiftDate("2025-08-25", mo), applies_to_all: true, is_no_class: true },
+    { school_id: schoolId, name: "All Saints Day",        date: shiftDate("2025-11-01", mo), applies_to_all: true, is_no_class: true },
+    { school_id: schoolId, name: "All Souls Day",         date: shiftDate("2025-11-02", mo), applies_to_all: true, is_no_class: true },
+    { school_id: schoolId, name: "Bonifacio Day",         date: shiftDate("2025-11-30", mo), applies_to_all: true, is_no_class: true },
+    { school_id: schoolId, name: "Immaculate Conception", date: shiftDate("2025-12-08", mo), applies_to_all: true, is_no_class: true },
+    { school_id: schoolId, name: "Christmas Break",       date: shiftDate("2025-12-20", mo), applies_to_all: true, is_no_class: true },
+    { school_id: schoolId, name: "New Year Holiday",      date: shiftDate("2026-01-01", mo), applies_to_all: true, is_no_class: true },
   ]);
 
   // ── 20. Uploaded files (placeholder rows — no real storage uploads) ─────────

@@ -26,7 +26,8 @@ import { useSchoolContext } from "@/contexts/SchoolContext";
 
 type EnrollmentStatus = "enrolled" | "waitlisted" | "inquiry" | "withdrawn" | "completed";
 type CommPref = "app" | "sms_phone" | "printed_note" | "in_person" | "assisted_by_school";
-type PromoteAction = "promote" | "repeat" | "skip" | "graduate";
+type ClassificationAction = "eligible" | "not_eligible_retained" | "not_eligible_other" | "graduated" | "not_continuing" | "unset";
+type StudentsTab = "students" | "promote";
 
 const COMM_PREF_LABELS: Record<CommPref, string> = {
   app: "App",
@@ -88,16 +89,26 @@ interface StudentForm {
   progressionStatus: string; progressionNotes: string; photoUrl: string;
 }
 
-// Promote tab types
+// Pending placement tab types
+interface PendingPlacementRow {
+  enrollmentId: string;
+  studentId: string;
+  studentName: string;
+  currentLevel: string;
+  progressionNotes: string | null;
+  sourceYearName: string;
+  sourceClassName: string;
+}
+
+// Year-End Classification tab types
 interface PromoteYear { id: string; name: string; }
-interface PromoteClassOption { id: string; name: string; level: string; schoolYearId: string; }
 interface PromoteRow {
   studentId: string; studentName: string;
   currentEnrollmentId: string; currentClassId: string; currentClassName: string; currentClassLevel: string;
-  suggestedClassId: string | null; suggestedClassName: string | null;
-  selectedClassId: string; action: PromoteAction;
+  nextLevel: string;
+  classification: ClassificationAction;
 }
-interface PromoteResult { created: number; graduated: number; skipped: number; errors: string[]; }
+interface ClassifyResult { classified: number; errors: string[]; }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -161,11 +172,11 @@ interface SchoolCodeConfig { prefix: string; padding: number; includeYear: boole
 // ─── Page component ───────────────────────────────────────────────────────────
 
 export default function StudentsPage() {
-  const { schoolId, activeYear, userId } = useSchoolContext();
+  const { schoolId, activeYear, userId, isReadOnly } = useSchoolContext();
   const supabase = createClient();
 
   // Tab
-  const [activeTab, setActiveTab] = useState<"students" | "promote">("students");
+  const [activeTab, setActiveTab] = useState<StudentsTab>("students");
 
   // Students tab state
   const [students, setStudents] = useState<Student[]>([]);
@@ -206,12 +217,21 @@ export default function StudentsPage() {
   const [helpSearch, setHelpSearch] = useState("");
   const [helpExpanded, setHelpExpanded] = useState<Record<string, boolean>>({});
 
+  // Pending placement tab state
+  const [pendingRows, setPendingRows] = useState<PendingPlacementRow[]>([]);
+  const [pendingLoading, setPendingLoading] = useState(false);
+  const [pendingError, setPendingError] = useState<string | null>(null);
+  const [pendingLevelFilter, setPendingLevelFilter] = useState("all");
+  const [placementClassId, setPlacementClassId] = useState<Record<string, string>>({});
+  const [placementSaving, setPlacementSaving] = useState<Record<string, boolean>>({});
+  const [placementDone, setPlacementDone] = useState<Record<string, boolean>>({});
+  const [placementError, setPlacementError] = useState<Record<string, string | null>>({});
+
   // Promote tab state
   const [promoteInitialized, setPromoteInitialized] = useState(false);
   const [promoteLoading, setPromoteLoading] = useState(false);
   const [promoteError, setPromoteError] = useState<string | null>(null);
   const [allSchoolYears, setAllSchoolYears] = useState<PromoteYear[]>([]);
-  const [allPromoteClasses, setAllPromoteClasses] = useState<PromoteClassOption[]>([]);
   const [sourceYearId, setSourceYearId] = useState("");
   const [targetYearId, setTargetYearId] = useState("");
   const [promoteLevel, setPromoteLevel] = useState("all");
@@ -220,7 +240,7 @@ export default function StudentsPage() {
   const [promoteRowsLoading, setPromoteRowsLoading] = useState(false);
   const [promoteRowsError, setPromoteRowsError] = useState<string | null>(null);
   const [promoteSaving, setPromoteSaving] = useState(false);
-  const [promoteResult, setPromoteResult] = useState<PromoteResult | null>(null);
+  const [promoteResult, setPromoteResult] = useState<ClassifyResult | null>(null);
 
   // ─── Effects ───────────────────────────────────────────────────────────────
 
@@ -236,6 +256,7 @@ export default function StudentsPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, promoteInitialized, schoolId]);
+
 
   // ─── Students tab functions ────────────────────────────────────────────────
 
@@ -662,43 +683,129 @@ export default function StudentsPage() {
     setTimeout(() => setInviteCopied(false), 2000);
   }
 
+  // ─── Pending Placement tab functions ──────────────────────────────────────
+
+  async function loadPendingPlacements() {
+    if (!schoolId || !activeYear?.id) return;
+    setPendingLoading(true);
+    setPendingError(null);
+    setPendingRows([]);
+    setPlacementDone({});
+    setPlacementError({});
+    setPlacementClassId({});
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: enrollments, error } = await (supabase as any)
+      .from("enrollments")
+      .select(`
+        id, student_id, progression_notes,
+        students(first_name, last_name, school_id),
+        classes(name, level),
+        school_years(name)
+      `)
+      .eq("status", "completed")
+      .eq("progression_status", "promoted_pending_placement");
+
+    if (error) { setPendingError(error.message); setPendingLoading(false); return; }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const schoolEnrollments = ((enrollments ?? []) as any[]).filter(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (e: any) => e.students?.school_id === schoolId
+    );
+
+    if (schoolEnrollments.length === 0) { setPendingRows([]); setPendingLoading(false); return; }
+
+    // Filter out students already enrolled in the active year
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const studentIds = [...new Set(schoolEnrollments.map((e: any) => e.student_id as string))];
+    const { data: activeEnrollments } = await supabase
+      .from("enrollments")
+      .select("student_id")
+      .eq("school_year_id", activeYear.id)
+      .in("student_id", studentIds);
+
+    const alreadyPlacedIds = new Set((activeEnrollments ?? []).map((e) => e.student_id));
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows: PendingPlacementRow[] = schoolEnrollments
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .filter((e: any) => !alreadyPlacedIds.has(e.student_id))
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .map((e: any) => ({
+        enrollmentId: e.id,
+        studentId: e.student_id,
+        studentName: e.students ? `${e.students.first_name} ${e.students.last_name}` : e.student_id,
+        currentLevel: e.classes?.level ?? "",
+        progressionNotes: e.progression_notes ?? null,
+        sourceYearName: e.school_years?.name ?? "—",
+        sourceClassName: e.classes?.name ?? "—",
+      }));
+
+    rows.sort((a, b) => a.studentName.localeCompare(b.studentName));
+    setPendingRows(rows);
+    setPendingLoading(false);
+  }
+
+  async function handlePlace(row: PendingPlacementRow) {
+    const classId = placementClassId[row.studentId];
+    if (!classId || !activeYear?.id) return;
+
+    setPlacementSaving((prev) => ({ ...prev, [row.studentId]: true }));
+    setPlacementError((prev) => ({ ...prev, [row.studentId]: null }));
+
+    try {
+      const res = await fetch("/api/students/enroll", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          studentId: row.studentId,
+          classId,
+          schoolYearId: activeYear.id,
+          status: "enrolled",
+          sourceEnrollmentId: row.enrollmentId,
+        }),
+      });
+
+      const j = await res.json();
+      if (!res.ok) {
+        setPlacementError((prev) => ({ ...prev, [row.studentId]: j.error ?? "Enrollment failed." }));
+        setPlacementSaving((prev) => ({ ...prev, [row.studentId]: false }));
+        return;
+      }
+
+      setPlacementDone((prev) => ({ ...prev, [row.studentId]: true }));
+    } catch {
+      setPlacementError((prev) => ({ ...prev, [row.studentId]: "Network error. Please try again." }));
+    }
+
+    setPlacementSaving((prev) => ({ ...prev, [row.studentId]: false }));
+  }
+
   // ─── Promote tab functions ─────────────────────────────────────────────────
 
   async function loadPromoteSetup() {
     setPromoteLoading(true);
     setPromoteError(null);
-    const [yearsRes, classesRes] = await Promise.all([
-      supabase
-        .from("school_years")
-        .select("id, name, start_date")
-        .eq("school_id", schoolId!)
-        .order("start_date", { ascending: false }),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (supabase as any)
-        .from("classes")
-        .select("id, name, level, school_year_id")
-        .eq("school_id", schoolId!)
-        .eq("is_active", true)
-        .order("name"),
-    ]);
+    const yearsRes = await supabase
+      .from("school_years")
+      .select("id, name, start_date")
+      .eq("school_id", schoolId!)
+      .order("start_date", { ascending: false });
     if (yearsRes.error) { setPromoteError(yearsRes.error.message); setPromoteLoading(false); return; }
     const seen = new Set<string>();
     const years = (yearsRes.data ?? [])
       .filter((y) => { if (seen.has(y.id)) return false; seen.add(y.id); return true; })
       .map((y) => ({ id: y.id, name: y.name }));
     setAllSchoolYears(years);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    setAllPromoteClasses(((classesRes.data ?? []) as any[]).map((c: any) => ({
-      id: c.id, name: c.name, level: c.level ?? "", schoolYearId: c.school_year_id,
-    })));
-    // Auto-detect: years are sorted desc by start_date — index 0 = most recent (target), index 1 = second most recent (source)
-    const autoSrcId = years.length >= 2 ? years[1].id : "";
-    const autoTgtId = years.length >= 1 ? years[0].id : "";
+    // Auto-detect: years sorted desc — index 0 = most recent (target context), index 1 = source to classify
+    const autoSrcId = years.length >= 2 ? years[1].id : years.length === 1 ? years[0].id : "";
+    const autoTgtId = years.length >= 2 ? years[0].id : "";
     setSourceYearId(autoSrcId);
     setTargetYearId(autoTgtId);
     setPromoteInitialized(true);
     setPromoteLoading(false);
-    if (autoSrcId && autoTgtId) {
+    if (autoSrcId) {
       await loadStudentsForPromote(autoSrcId, autoTgtId);
     }
   }
@@ -706,7 +813,8 @@ export default function StudentsPage() {
   async function loadStudentsForPromote(srcId?: string, tgtId?: string) {
     const src = srcId ?? sourceYearId;
     const tgt = tgtId ?? targetYearId;
-    if (!src || !tgt || src === tgt) return;
+    if (!src) return;
+    void tgt; // target is informational only in classification flow
     setPromoteRowsLoading(true);
     setPromoteRowsError(null);
     setPromoteRows([]);
@@ -719,7 +827,7 @@ export default function StudentsPage() {
       .select(`
         id, student_id, class_id,
         students(first_name, last_name),
-        classes(id, name, level, next_class_id, next_class:classes!next_class_id(id, name))
+        classes(id, name, level, next_class_id, next_class:classes!next_class_id(id, name, level))
       `)
       .eq("school_year_id", src)
       .eq("status", "enrolled");
@@ -732,8 +840,6 @@ export default function StudentsPage() {
       const cls = e.classes;
       const nextCls = cls?.next_class;
       const studentName = student ? `${student.first_name} ${student.last_name}` : e.student_id;
-      const suggestedClassId = nextCls?.id ?? null;
-      const suggestedClassName = nextCls?.name ?? null;
       return {
         studentId: e.student_id,
         studentName,
@@ -741,10 +847,8 @@ export default function StudentsPage() {
         currentClassId: e.class_id,
         currentClassName: cls?.name ?? "—",
         currentClassLevel: cls?.level ?? "",
-        suggestedClassId,
-        suggestedClassName,
-        selectedClassId: suggestedClassId ?? "",
-        action: "promote" as PromoteAction,
+        nextLevel: (nextCls?.level ?? cls?.level ?? "") as string,
+        classification: "unset" as ClassificationAction,
       };
     });
 
@@ -753,80 +857,67 @@ export default function StudentsPage() {
     setPromoteRowsLoading(false);
   }
 
-  function setPromoteRowAction(studentId: string, action: PromoteAction) {
-    setPromoteRows((prev) => prev.map((r) => {
-      if (r.studentId !== studentId) return r;
-      return {
-        ...r, action,
-        selectedClassId:
-          action === "repeat" ? r.currentClassId :
-          action === "skip" || action === "graduate" ? "" :
-          r.suggestedClassId ?? "",
-      };
-    }));
+  function setRowClassification(studentId: string, classification: ClassificationAction) {
+    setPromoteRows((prev) => prev.map((r) =>
+      r.studentId === studentId ? { ...r, classification } : r
+    ));
   }
 
-  function setPromoteRowClass(studentId: string, classId: string) {
-    setPromoteRows((prev) => prev.map((r) => r.studentId === studentId ? { ...r, selectedClassId: classId } : r));
+  function applyBulkClassification(currentClassId: string, value: ClassificationAction | "") {
+    if (value === "") return; // "varied" — no-op
+    setPromoteRows((prev) => prev.map((r) =>
+      r.currentClassId === currentClassId ? { ...r, classification: value } : r
+    ));
   }
 
-  function setPromoteBulkAction(action: PromoteAction) {
+  function setClassificationBulkAction(classification: ClassificationAction) {
     setPromoteRows((prev) => prev.map((r) => {
       if (promoteLevel !== "all" && r.currentClassLevel !== promoteLevel) return r;
-      return {
-        ...r, action,
-        selectedClassId:
-          action === "repeat" ? r.currentClassId :
-          action === "skip" || action === "graduate" ? "" :
-          r.suggestedClassId ?? r.selectedClassId,
-      };
+      return { ...r, classification };
     }));
   }
 
-  function applyBulkNextClass(currentClassId: string, value: string) {
-    setPromoteRows((prev) => prev.map((r) => {
-      if (r.currentClassId !== currentClassId) return r;
-      if (value === "__graduate__") return { ...r, selectedClassId: "", action: "graduate" as PromoteAction };
-      return { ...r, selectedClassId: value, action: (value ? "promote" : "skip") as PromoteAction };
-    }));
-  }
+  async function handleClassifyConfirm() {
+    if (!schoolId) return;
 
-  async function handlePromoteConfirm() {
-    if (!schoolId || !targetYearId) return;
-
-    const inScope = filteredPromoteRows;
-    const toEnroll = inScope.filter((r) => (r.action === "promote" || r.action === "repeat") && r.selectedClassId);
-    const toGraduate = inScope.filter((r) => r.action === "graduate");
-
-    if (toEnroll.length === 0 && toGraduate.length === 0) {
-      setPromoteRowsError("No students selected for promotion or graduation.");
+    const toClassify = filteredPromoteRows.filter((r) => r.classification !== "unset");
+    if (toClassify.length === 0) {
+      setPromoteRowsError("No students classified yet. Use the buttons to set each student's outcome.");
       return;
     }
 
     setPromoteSaving(true);
     setPromoteRowsError(null);
 
+    // Auto-populate notes from classification + level context
+    function autoNotes(r: PromoteRow): string {
+      switch (r.classification) {
+        case "eligible":             return r.nextLevel ? `Eligible for ${r.nextLevel}` : "Eligible for next level";
+        case "not_eligible_retained": return `Retained in ${r.currentClassLevel || "current level"}`;
+        case "not_eligible_other":   return "Not eligible — other reason";
+        case "graduated":            return `Graduated from ${r.currentClassLevel || "current level"}`;
+        case "not_continuing":       return "Not continuing / transferred";
+        default: return "";
+      }
+    }
+
     try {
       const res = await fetch("/api/students/promote", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          targetSchoolYearId: targetYearId,
-          enroll: toEnroll.map((r) => ({
-            studentId: r.studentId,
-            studentName: r.studentName,
-            classId: r.selectedClassId,
-          })),
-          graduate: toGraduate.map((r) => ({
-            enrollmentId: r.currentEnrollmentId,
-            studentName: r.studentName,
+          classify: toClassify.map((r) => ({
+            enrollmentId:         r.currentEnrollmentId,
+            studentName:          r.studentName,
+            classificationStatus: r.classification,
+            notes:                autoNotes(r),
           })),
         }),
       });
 
       const j = await res.json();
       if (!res.ok) {
-        setPromoteRowsError(j.error ?? "Promotion failed.");
+        setPromoteRowsError(j.error ?? "Classification failed.");
         setPromoteSaving(false);
         return;
       }
@@ -862,26 +953,29 @@ export default function StudentsPage() {
     return matchLevel && matchSearch;
   });
 
-  // One entry per unique current class — used for the bulk next-class assignment panel
+  // One entry per unique current class — used for the bulk classification panel
   const classBulkGroups = promoteRows.reduce<Array<{
     currentClassId: string; currentClassName: string; currentClassLevel: string;
-    studentCount: number; bulkClassId: string;
+    studentCount: number; bulkClassification: ClassificationAction | "";
   }>>((acc, r) => {
-    const effectiveId = r.action === "graduate" ? "__graduate__" : r.selectedClassId;
     const g = acc.find((x) => x.currentClassId === r.currentClassId);
     if (g) {
       g.studentCount++;
-      if (g.bulkClassId !== effectiveId) g.bulkClassId = ""; // varied — show placeholder
+      if (g.bulkClassification !== r.classification) g.bulkClassification = ""; // varied
     } else {
       acc.push({ currentClassId: r.currentClassId, currentClassName: r.currentClassName,
-        currentClassLevel: r.currentClassLevel, studentCount: 1, bulkClassId: effectiveId });
+        currentClassLevel: r.currentClassLevel, studentCount: 1, bulkClassification: r.classification });
     }
     return acc;
   }, []).sort((a, b) => a.currentClassName.localeCompare(b.currentClassName));
 
-  const promoteCount = filteredPromoteRows.filter((r) => (r.action === "promote" || r.action === "repeat") && r.selectedClassId).length;
-  const graduateCount = filteredPromoteRows.filter((r) => r.action === "graduate").length;
-  const skipCount = filteredPromoteRows.filter((r) => r.action === "skip").length;
+  const eligibleCount   = filteredPromoteRows.filter((r) => r.classification === "eligible").length;
+  const retainedCount   = filteredPromoteRows.filter((r) => r.classification === "not_eligible_retained").length;
+  const otherCount      = filteredPromoteRows.filter((r) => r.classification === "not_eligible_other").length;
+  const graduatedCount  = filteredPromoteRows.filter((r) => r.classification === "graduated").length;
+  const notContCount    = filteredPromoteRows.filter((r) => r.classification === "not_continuing").length;
+  const unsetCount      = filteredPromoteRows.filter((r) => r.classification === "unset").length;
+  const classifiedCount = filteredPromoteRows.length - unsetCount;
 
   if (loading) return <PageSpinner />;
 
@@ -935,7 +1029,7 @@ export default function StudentsPage() {
           )}
         >
           <GraduationCap className="w-4 h-4" />
-          Promote Students
+          Year-End Classification
         </button>
       </div>
 
@@ -1033,7 +1127,7 @@ export default function StudentsPage() {
         </>
       )}
 
-      {/* ── Promote tab ──────────────────────────────────────────────────── */}
+      {/* ── Year-End Classification tab ───────────────────────────────────── */}
       {activeTab === "promote" && (
         <div className="space-y-6">
           {promoteLoading && <PageSpinner />}
@@ -1041,15 +1135,15 @@ export default function StudentsPage() {
 
           {!promoteLoading && (
             <>
-              {/* School year progression banner */}
+              {/* Banner */}
               <Card>
                 <CardContent className="p-5 space-y-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <GraduationCap className="w-4 h-4 text-primary" />
-                      <p className="text-sm font-semibold">School Year Progression</p>
+                      <p className="text-sm font-semibold">Year-End Classification</p>
                     </div>
-                    {sourceYearId && targetYearId && (
+                    {sourceYearId && (
                       <button
                         onClick={() => loadStudentsForPromote()}
                         disabled={promoteRowsLoading}
@@ -1061,26 +1155,19 @@ export default function StudentsPage() {
                     )}
                   </div>
 
-                  {allSchoolYears.length >= 2 ? (
-                    <div className="flex items-center gap-3">
-                      <div className="flex-1 bg-muted/50 rounded-lg px-4 py-3">
-                        <p className="text-xs text-muted-foreground font-medium mb-0.5">Promoting from</p>
-                        <p className="text-sm font-semibold">{sourceYear?.name ?? "—"}</p>
-                      </div>
-                      <ArrowRight className="w-5 h-5 text-muted-foreground flex-shrink-0" />
-                      <div className="flex-1 bg-primary/5 border border-primary/20 rounded-lg px-4 py-3">
-                        <p className="text-xs text-muted-foreground font-medium mb-0.5">Into</p>
-                        <p className="text-sm font-semibold text-primary">{targetYear?.name ?? "—"}</p>
-                      </div>
+                  {allSchoolYears.length >= 1 ? (
+                    <div className="bg-muted/50 rounded-lg px-4 py-3">
+                      <p className="text-xs text-muted-foreground font-medium mb-0.5">Classifying students in</p>
+                      <p className="text-sm font-semibold">{sourceYear?.name ?? "—"}</p>
                     </div>
                   ) : (
                     <p className="text-sm text-amber-600">
-                      At least two school years are needed. Add the next school year in Settings → School Year &amp; Terms.
+                      No school years found. Add a school year in Settings → School Year &amp; Terms.
                     </p>
                   )}
 
                   <p className="text-xs text-muted-foreground">
-                    School years are managed in Settings → School Year &amp; Terms.
+                    Classifications are saved on the student's current enrollment. No new enrollments are created — enroll students separately for the next year.
                   </p>
                 </CardContent>
               </Card>
@@ -1094,57 +1181,50 @@ export default function StudentsPage() {
                 </div>
               )}
 
-              {/* Student promotion table */}
               {promoteRows.length > 0 && !promoteResult && (
                 <>
-                  {/* Bulk next-class assignment per current class */}
+                  {/* Step 1 — Bulk classification per class */}
                   <Card>
                     <CardContent className="p-4 space-y-3">
-                      <p className="text-sm font-semibold">Step 1 — Set next class per level</p>
-                      <p className="text-xs text-muted-foreground">Configured from Classes → Promotion Path. Override here to apply to all students in that class at once.</p>
+                      <p className="text-sm font-semibold">Step 1 — Set the default classification for each class</p>
+                      <p className="text-xs text-muted-foreground">Apply one classification to all students in a class. You can still adjust individual students below.</p>
                       <div className="divide-y divide-border">
-                        {classBulkGroups.map((g) => {
-                          const targetClasses = allPromoteClasses.filter((c) => c.schoolYearId === targetYearId);
-                          return (
-                            <div key={g.currentClassId} className="flex items-center gap-3 py-2.5">
-                              <div className="flex-1 min-w-0">
-                                <span className="text-sm font-medium">{g.currentClassName}</span>
-                                {g.currentClassLevel && <span className="text-xs text-muted-foreground ml-1.5">({g.currentClassLevel})</span>}
-                                <span className="text-xs text-muted-foreground ml-1.5">· {g.studentCount} student{g.studentCount !== 1 ? "s" : ""}</span>
-                              </div>
-                              <span className="text-muted-foreground text-sm flex-shrink-0">→</span>
-                              <div className="w-56 flex-shrink-0">
-                                <Select
-                                  value={g.bulkClassId}
-                                  onChange={(e) => applyBulkNextClass(g.currentClassId, e.target.value)}
-                                  className="text-sm h-8"
-                                >
-                                  <option value="">{g.bulkClassId === "" && g.studentCount > 1 ? "— varied —" : "— Select next class —"}</option>
-                                  <option value="__graduate__">🎓 Graduate (no next class)</option>
-                                  {(targetClasses.length > 0 ? targetClasses : allPromoteClasses).map((c) => (
-                                    <option key={c.id} value={c.id}>{c.name}{c.level ? ` (${c.level})` : ""}</option>
-                                  ))}
-                                </Select>
-                              </div>
+                        {classBulkGroups.map((g) => (
+                          <div key={g.currentClassId} className="flex items-center gap-3 py-2.5">
+                            <div className="flex-1 min-w-0">
+                              <span className="text-sm font-medium">{g.currentClassName}</span>
+                              {g.currentClassLevel && <span className="text-xs text-muted-foreground ml-1.5">({g.currentClassLevel})</span>}
+                              <span className="text-xs text-muted-foreground ml-1.5">· {g.studentCount} student{g.studentCount !== 1 ? "s" : ""}</span>
                             </div>
-                          );
-                        })}
+                            <div className="w-60 flex-shrink-0">
+                              <Select
+                                value={g.bulkClassification}
+                                onChange={(e) => applyBulkClassification(g.currentClassId, e.target.value as ClassificationAction | "")}
+                                className="text-sm h-8"
+                              >
+                                <option value="">{g.bulkClassification === "" && g.studentCount > 1 ? "— varied —" : "— Choose —"}</option>
+                                <option value="eligible">Eligible for next level</option>
+                                <option value="graduated">Graduated</option>
+                              </Select>
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     </CardContent>
                   </Card>
 
+                  {/* Step 2 header + filters */}
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-sm font-semibold">
-                        Step 2 — Review and confirm
+                        Step 2 — Review and classify each student
                         {" "}({filteredPromoteRows.length} student{filteredPromoteRows.length !== 1 ? "s" : ""}{promoteLevel !== "all" ? ` · ${promoteLevel}` : ""})
                       </p>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        Promoting to <strong>{targetYear?.name}</strong>
+                        Classifying enrolled students in <strong>{sourceYear?.name}</strong>
                       </p>
                     </div>
                     <div className="flex items-center gap-2 flex-wrap justify-end">
-                      {/* Level filter */}
                       {promoteLevels.length > 1 && (
                         <div className="flex items-center gap-1 border-r border-border pr-3 mr-1">
                           <span className="text-xs text-muted-foreground">Level:</span>
@@ -1155,23 +1235,13 @@ export default function StudentsPage() {
                             All
                           </button>
                           {promoteLevels.map((lvl) => (
-                            <button
-                              key={lvl}
-                              onClick={() => setPromoteLevel(lvl)}
-                              className={`px-2.5 py-1 text-xs rounded-lg border transition-colors font-medium ${promoteLevel === lvl ? "border-primary bg-primary/5 text-primary" : "border-border text-muted-foreground hover:text-foreground hover:bg-muted"}`}
-                            >
+                            <button key={lvl} onClick={() => setPromoteLevel(lvl)}
+                              className={`px-2.5 py-1 text-xs rounded-lg border transition-colors font-medium ${promoteLevel === lvl ? "border-primary bg-primary/5 text-primary" : "border-border text-muted-foreground hover:text-foreground hover:bg-muted"}`}>
                               {lvl}
                             </button>
                           ))}
                         </div>
                       )}
-                      <span className="text-xs text-muted-foreground">Set all:</span>
-                      <button
-                        onClick={() => setPromoteBulkAction("promote")}
-                        className="px-2.5 py-1 text-xs rounded-lg border border-primary/40 text-primary hover:bg-primary/5 transition-colors font-medium"
-                      >
-                        Promote
-                      </button>
                     </div>
                   </div>
 
@@ -1193,102 +1263,86 @@ export default function StudentsPage() {
                           <tr className="bg-muted border-b border-border">
                             <th className="text-left px-4 py-3 font-medium text-muted-foreground">Student</th>
                             <th className="text-left px-4 py-3 font-medium text-muted-foreground">Current Class</th>
-                            <th className="text-left px-4 py-3 font-medium text-muted-foreground">Next Class</th>
-                            <th className="text-left px-4 py-3 font-medium text-muted-foreground">Action</th>
+                            <th className="text-left px-4 py-3 font-medium text-muted-foreground">Next Level</th>
+                            <th className="text-left px-4 py-3 font-medium text-muted-foreground">Classification</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-border">
-                          {filteredPromoteRows.map((row) => {
-                            const targetClasses = allPromoteClasses.filter((c) => c.schoolYearId === targetYearId);
-                            return (
-                              <tr key={row.studentId} className={`transition-colors ${row.action === "skip" ? "bg-muted/20" : "hover:bg-muted/40"}`}>
-                                <td className="px-4 py-3 font-medium">{row.studentName}</td>
-                                <td className="px-4 py-3 text-muted-foreground">{row.currentClassName}</td>
-                                <td className="px-4 py-3">
-                                  {row.action === "skip" ? (
-                                    <span className="text-xs text-muted-foreground">—</span>
-                                  ) : row.action === "graduate" ? (
-                                    <span className="text-xs font-medium text-green-700 flex items-center gap-1">🎓 Graduating</span>
-                                  ) : row.action === "repeat" ? (
-                                    <span className="text-muted-foreground italic text-xs">Same class ({row.currentClassName})</span>
-                                  ) : (
-                                    <div className="flex items-center gap-1.5">
-                                      <Select
-                                        value={row.selectedClassId}
-                                        onChange={(e) => setPromoteRowClass(row.studentId, e.target.value)}
-                                        className="text-sm h-8"
-                                      >
-                                        <option value="">— Select class —</option>
-                                        {(targetClasses.length > 0 ? targetClasses : allPromoteClasses).map((c) => (
-                                          <option key={c.id} value={c.id}>
-                                            {c.name}{c.level ? ` (${c.level})` : ""}
-                                          </option>
-                                        ))}
-                                      </Select>
-                                      {row.suggestedClassId && row.selectedClassId === row.suggestedClassId && (
-                                        <Badge variant="enrolled" className="text-xs whitespace-nowrap">suggested</Badge>
-                                      )}
-                                    </div>
-                                  )}
-                                </td>
-                                <td className="px-4 py-3">
-                                  <div className="flex items-center gap-1">
-                                    <ActionBtn active={row.action === "promote"} onClick={() => setPromoteRowAction(row.studentId, "promote")}
-                                      className="text-primary border-primary/40 bg-primary/5">
-                                      Promote
-                                    </ActionBtn>
-                                    <ActionBtn active={row.action === "repeat"} onClick={() => setPromoteRowAction(row.studentId, "repeat")}
-                                      className="text-amber-600 border-amber-300 bg-amber-50">
-                                      Repeat
-                                    </ActionBtn>
-                                    <ActionBtn active={row.action === "graduate"} onClick={() => setPromoteRowAction(row.studentId, "graduate")}
-                                      className="text-green-700 border-green-300 bg-green-50">
-                                      Graduate
-                                    </ActionBtn>
-                                    <ActionBtn active={row.action === "skip"} onClick={() => setPromoteRowAction(row.studentId, "skip")}
-                                      className="text-muted-foreground border-border">
-                                      Skip
-                                    </ActionBtn>
-                                  </div>
-                                </td>
-                              </tr>
-                            );
-                          })}
+                          {filteredPromoteRows.map((row) => (
+                            <tr key={row.studentId} className={`transition-colors ${row.classification === "unset" ? "hover:bg-muted/30" : "hover:bg-muted/40"}`}>
+                              <td className="px-4 py-3 font-medium">{row.studentName}</td>
+                              <td className="px-4 py-3 text-muted-foreground">{row.currentClassName}</td>
+                              <td className="px-4 py-3">
+                                {row.classification === "graduated" || row.classification === "not_continuing" ? (
+                                  <span className="text-xs text-muted-foreground">—</span>
+                                ) : row.classification === "not_eligible_retained" ? (
+                                  <span className="text-xs font-medium">{row.currentClassLevel || "—"}</span>
+                                ) : (
+                                  <span className="text-xs font-medium">{row.nextLevel || "—"}</span>
+                                )}
+                              </td>
+                              <td className="px-4 py-3">
+                                <div className="flex items-center flex-wrap gap-1">
+                                  <ActionBtn active={row.classification === "eligible"} onClick={() => setRowClassification(row.studentId, "eligible")}
+                                    className="text-primary border-primary/40 bg-primary/5">
+                                    Eligible
+                                  </ActionBtn>
+                                  <ActionBtn active={row.classification === "graduated"} onClick={() => setRowClassification(row.studentId, "graduated")}
+                                    className="text-green-700 border-green-300 bg-green-50">
+                                    Graduate
+                                  </ActionBtn>
+                                  <ActionBtn active={row.classification === "not_continuing"} onClick={() => setRowClassification(row.studentId, "not_continuing")}
+                                    className="text-rose-600 border-rose-300 bg-rose-50">
+                                    Not cont.
+                                  </ActionBtn>
+                                  <ActionBtn active={row.classification === "not_eligible_retained"} onClick={() => setRowClassification(row.studentId, "not_eligible_retained")}
+                                    className="text-amber-600 border-amber-300 bg-amber-50">
+                                    Retain
+                                  </ActionBtn>
+                                  <ActionBtn active={row.classification === "not_eligible_other"} onClick={() => setRowClassification(row.studentId, "not_eligible_other")}
+                                    className="text-orange-600 border-orange-300 bg-orange-50">
+                                    Other
+                                  </ActionBtn>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
                         </tbody>
                       </table>
                     </div>
                   </Card>
 
+                  {/* Summary + confirm */}
                   <div className="flex items-center justify-between bg-muted rounded-xl px-5 py-4">
                     <div className="text-sm space-y-1">
-                      {promoteCount > 0 && (
-                        <p>
-                          <span className="font-semibold text-primary">{promoteCount} student{promoteCount !== 1 ? "s" : ""}</span>
-                          {" "}will be enrolled in the new period
-                        </p>
+                      {eligibleCount > 0 && (
+                        <p><span className="font-semibold text-primary">{eligibleCount} student{eligibleCount !== 1 ? "s" : ""}</span> eligible for next level</p>
                       )}
-                      {graduateCount > 0 && (
-                        <p>
-                          <span className="font-semibold text-green-700">{graduateCount} student{graduateCount !== 1 ? "s" : ""}</span>
-                          {" "}will be marked as graduated
-                        </p>
+                      {retainedCount > 0 && (
+                        <p><span className="font-semibold text-amber-600">{retainedCount} student{retainedCount !== 1 ? "s" : ""}</span> retained</p>
                       )}
-                      {skipCount > 0 && (
-                        <p className="text-muted-foreground text-xs">{skipCount} student{skipCount !== 1 ? "s" : ""} skipped</p>
+                      {otherCount > 0 && (
+                        <p><span className="font-semibold text-orange-600">{otherCount} student{otherCount !== 1 ? "s" : ""}</span> not eligible — other reason</p>
+                      )}
+                      {graduatedCount > 0 && (
+                        <p><span className="font-semibold text-green-700">{graduatedCount} student{graduatedCount !== 1 ? "s" : ""}</span> graduated</p>
+                      )}
+                      {notContCount > 0 && (
+                        <p className="text-muted-foreground text-xs">{notContCount} not continuing</p>
+                      )}
+                      {unsetCount > 0 && (
+                        <p className="text-muted-foreground text-xs">{unsetCount} not yet classified</p>
                       )}
                     </div>
-                    <Button onClick={handlePromoteConfirm} disabled={promoteSaving || (promoteCount === 0 && graduateCount === 0)} className="min-w-[160px]">
+                    <Button
+                      onClick={handleClassifyConfirm}
+                      disabled={isReadOnly || promoteSaving || classifiedCount === 0}
+                      className="min-w-[200px]"
+                    >
                       {promoteSaving ? (
                         <><RefreshCw className="w-4 h-4 animate-spin" /> Saving…</>
                       ) : (
-                        <><Check className="w-4 h-4" />
-                          {promoteCount > 0 && graduateCount > 0
-                            ? `Enroll ${promoteCount} · Graduate ${graduateCount}`
-                            : promoteCount > 0
-                            ? `Enroll ${promoteCount} Student${promoteCount !== 1 ? "s" : ""}`
-                            : `Graduate ${graduateCount} Student${graduateCount !== 1 ? "s" : ""}`
-                          }
-                        </>
+                        <><Check className="w-4 h-4" /> Save Year-End Classifications</>
                       )}
                     </Button>
                   </div>
@@ -1296,11 +1350,11 @@ export default function StudentsPage() {
               )}
 
               {/* Empty state */}
-              {promoteRows.length === 0 && !promoteRowsLoading && sourceYearId && targetYearId && !promoteResult && (
+              {promoteRows.length === 0 && !promoteRowsLoading && sourceYearId && !promoteResult && (
                 <Card>
                   <CardContent className="p-12 text-center text-sm text-muted-foreground">
                     <Users className="w-8 h-8 mx-auto mb-3 opacity-40" />
-                    No enrolled students found in {sourceYear?.name ?? "the source year"}.
+                    No enrolled students found in {sourceYear?.name ?? "the selected year"}.
                   </CardContent>
                 </Card>
               )}
@@ -1314,15 +1368,9 @@ export default function StudentsPage() {
                         <Check className="w-5 h-5 text-green-600" />
                       </div>
                       <div>
-                        <p className="font-semibold">Promotion complete</p>
+                        <p className="font-semibold">Year-end classifications saved</p>
                         <p className="text-sm text-muted-foreground mt-0.5">
-                          {promoteResult.created > 0 && (
-                            <><strong className="text-foreground">{promoteResult.created}</strong> enrollment{promoteResult.created !== 1 ? "s" : ""} created</>
-                          )}
-                          {promoteResult.graduated > 0 && (
-                            <>{promoteResult.created > 0 ? ", " : ""}<strong className="text-green-700">{promoteResult.graduated}</strong> student{promoteResult.graduated !== 1 ? "s" : ""} graduated</>
-                          )}
-                          {promoteResult.skipped > 0 && <>, <strong className="text-foreground">{promoteResult.skipped}</strong> already existed (skipped)</>}
+                          {promoteResult.classified} student{promoteResult.classified !== 1 ? "s" : ""} classified successfully.
                         </p>
                       </div>
                     </div>
@@ -1333,7 +1381,7 @@ export default function StudentsPage() {
                       </div>
                     )}
                     <Button variant="outline" onClick={() => { setPromoteResult(null); setPromoteRows([]); }}>
-                      Promote Another Batch
+                      Classify Another Batch
                     </Button>
                   </CardContent>
                 </Card>
@@ -1730,6 +1778,12 @@ export default function StudentsPage() {
             <p className="text-sm text-muted-foreground">
               Adding enrollment for <strong>{enrollmentModal.firstName} {enrollmentModal.lastName}</strong>
             </p>
+            {enrollmentModal.progressionStatus === "eligible" && (
+              <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
+                <Check className="w-4 h-4 flex-shrink-0" />
+                This student is classified as <strong>eligible for next level</strong>.
+              </div>
+            )}
             {enrollmentFormError && <ErrorAlert message={enrollmentFormError} />}
             <div>
               <label className="block text-sm font-medium mb-1">Academic Period</label>
@@ -1957,20 +2011,19 @@ export default function StudentsPage() {
                   {
                     id: "promote",
                     icon: GraduationCap,
-                    title: "Promote students to the next school year",
-                    searchText: "promote promotion next year class graduate advance bulk end year",
+                    title: "Classify students at year-end",
+                    searchText: "classify classification year-end eligible retain graduate not continuing bulk end year",
                     body: (
                       <div className="space-y-2">
-                        <p>At the end of the school year, use the <strong>Promote Students</strong> tab to move students to their next class in bulk.</p>
+                        <p>At the end of a school year or term, use the <strong>Year-End Classification</strong> tab to record each student's eligibility outcome in bulk.</p>
                         <div className="space-y-2 mt-2">
-                          <Step n={1} text={<span>Click the <strong>Promote Students</strong> tab at the top of this page.</span>} />
-                          <Step n={2} text={<span>Select the <strong>source year</strong> (current year) and <strong>target year</strong> (next year). The target year must already exist in Settings.</span>} />
-                          <Step n={3} text={<span>Use the <strong>Step 2 panel</strong> to bulk-assign next classes per current class — this sets the default for all students in that class at once.</span>} />
-                          <Step n={4} text={<span>Review the student list. Change individual actions to <strong>Repeat</strong> (stays in same level), <strong>Graduate</strong> (marks as completed, no next enrollment), or <strong>Skip</strong> (exclude from this promotion run).</span>} />
-                          <Step n={5} text={<span>Click <strong>Confirm Promotion</strong>.</span>} />
+                          <Step n={1} text={<span>Click the <strong>Year-End Classification</strong> tab at the top of this page.</span>} />
+                          <Step n={2} text={<span>Use <strong>Step 1</strong> to apply one classification to all students in a class at once.</span>} />
+                          <Step n={3} text={<span>Review and adjust individual students in <strong>Step 2</strong>. Each student gets one of five outcomes: <strong>Eligible</strong>, <strong>Retain</strong>, <strong>Other reason</strong>, <strong>Graduate</strong>, or <strong>Not continuing</strong>.</span>} />
+                          <Step n={4} text={<span>Click <strong>Save Year-End Classifications</strong>. The outcome is saved on each student's current enrollment record.</span>} />
                         </div>
-                        <Tip>Set the <strong>Promotion Path</strong> on each class (Classes → Edit class) before running this. That setting pre-fills the next class for each student and makes the bulk assignment panel accurate.</Tip>
-                        <Note>Promotion creates new enrollment records in the target year. It doesn't delete or archive the current year's enrollments.</Note>
+                        <Tip>Classifications do not create new enrollment records — they only tag the current enrollment. To enroll a classified student in the next year, use <strong>Add Enrollment</strong> from their profile.</Tip>
+                        <Note>Students classified as <strong>Eligible</strong> will show a green banner in the Add Enrollment modal as a reminder that they have been cleared for the next level.</Note>
                       </div>
                     ),
                   },
@@ -2043,7 +2096,7 @@ export default function StudentsPage() {
               {helpSearch ? (
                 <span>Showing results for "<span className="font-medium text-foreground">{helpSearch}</span>"</span>
               ) : (
-                <span>9 topics · click any to expand</span>
+                <span>8 topics · click any to expand</span>
               )}
             </div>
           </div>

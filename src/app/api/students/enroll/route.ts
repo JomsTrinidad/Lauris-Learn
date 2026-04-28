@@ -13,13 +13,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "invalid_request" }, { status: 400 });
   }
 
-  const studentId       = typeof body.studentId       === "string" ? body.studentId       : null;
-  const classId         = typeof body.classId         === "string" ? body.classId         : null;
-  const schoolYearId    = typeof body.schoolYearId    === "string" ? body.schoolYearId    : null;
-  const academicPeriodId = typeof body.academicPeriodId === "string" ? body.academicPeriodId : null;
-  const rawStatus       = typeof body.status          === "string" ? body.status          : "enrolled";
-  const startDate       = typeof body.startDate       === "string" ? body.startDate       : null;
-  const endDate         = typeof body.endDate         === "string" ? body.endDate         : null;
+  const studentId          = typeof body.studentId          === "string" ? body.studentId          : null;
+  const classId            = typeof body.classId            === "string" ? body.classId            : null;
+  const schoolYearId       = typeof body.schoolYearId       === "string" ? body.schoolYearId       : null;
+  const academicPeriodId   = typeof body.academicPeriodId   === "string" ? body.academicPeriodId   : null;
+  const rawStatus          = typeof body.status             === "string" ? body.status             : "enrolled";
+  const startDate          = typeof body.startDate          === "string" ? body.startDate          : null;
+  const endDate            = typeof body.endDate            === "string" ? body.endDate            : null;
+  // Optional: present only when placing a promoted-pending-placement student
+  const sourceEnrollmentId = typeof body.sourceEnrollmentId === "string" ? body.sourceEnrollmentId : null;
 
   if (!studentId || !classId || !schoolYearId) {
     return NextResponse.json({ error: "studentId, classId, and schoolYearId are required." }, { status: 400 });
@@ -81,6 +83,31 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Validate source enrollment when placing a promoted-pending-placement student
+  if (sourceEnrollmentId) {
+    const { data: srcEnroll } = await admin
+      .from("enrollments")
+      .select("id, student_id, progression_status, students!inner(school_id)")
+      .eq("id", sourceEnrollmentId)
+      .maybeSingle() as { data: { id: string; student_id: string; progression_status: string | null; students: { school_id: string } } | null };
+
+    if (!srcEnroll) {
+      return NextResponse.json({ error: "Source enrollment not found." }, { status: 404 });
+    }
+    if (srcEnroll.students.school_id !== schoolId) {
+      return NextResponse.json({ error: "Source enrollment does not belong to your school." }, { status: 403 });
+    }
+    if (srcEnroll.student_id !== studentId) {
+      return NextResponse.json({ error: "Source enrollment does not belong to this student." }, { status: 422 });
+    }
+    if (srcEnroll.progression_status !== "promoted_pending_placement") {
+      return NextResponse.json(
+        { error: "Source enrollment is not in promoted_pending_placement status." },
+        { status: 422 }
+      );
+    }
+  }
+
   // Insert the enrollment — return id for audit log
   const { data: inserted, error: insertErr } = await admin.from("enrollments").insert({
     student_id: studentId,
@@ -114,6 +141,24 @@ export async function POST(req: NextRequest) {
     action:      "INSERT",
     newValues:   { student_id: studentId, class_id: classId, school_year_id: schoolYearId, status },
   });
+
+  // Mark the source enrollment as placed (only for pending-placement flow)
+  if (sourceEnrollmentId) {
+    await admin
+      .from("enrollments")
+      .update({ progression_status: "placed" })
+      .eq("id", sourceEnrollmentId);
+
+    await insertAuditLog(admin, {
+      schoolId:    schoolId,
+      actorUserId: user.id,
+      actorRole:   caller.role,
+      tableName:   "enrollments",
+      recordId:    sourceEnrollmentId,
+      action:      "UPDATE",
+      newValues:   { progression_status: "placed", source: "pending_placement" },
+    });
+  }
 
   return NextResponse.json({ ok: true });
 }

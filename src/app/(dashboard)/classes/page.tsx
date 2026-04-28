@@ -136,12 +136,13 @@ export default function ClassesPage() {
   }
 
   async function loadAllClasses() {
-    if (!schoolId) return;
+    if (!schoolId || !activeYear?.id) return;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data } = await (supabase as any)
       .from("classes")
       .select("id, name, level, school_years(name)")
       .eq("school_id", schoolId)
+      .eq("school_year_id", activeYear.id)
       .eq("is_active", true)
       .order("name");
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -810,7 +811,7 @@ export default function ClassesPage() {
                 .filter((c) => !editingClass || c.id !== editingClass.id)
                 .map((c) => (
                   <option key={c.id} value={c.id}>
-                    {c.name}{c.level ? ` (${c.level})` : ""}{c.schoolYearName ? ` — ${c.schoolYearName}` : ""}
+                    {c.name}{c.level ? ` (${c.level})` : ""}
                   </option>
                 ))}
             </Select>

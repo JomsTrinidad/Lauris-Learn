@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Plus, Calendar, Clock, Users, BookOpen, HelpCircle, X, Search, ChevronDown, ChevronRight, AlertTriangle } from "lucide-react";
+import { Plus, Calendar, Clock, Users, BookOpen, HelpCircle, X, Search, ChevronDown, ChevronRight, AlertTriangle, ListChecks } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -11,8 +11,10 @@ import { Card, CardContent } from "@/components/ui/card";
 import { PageSpinner, ErrorAlert } from "@/components/ui/spinner";
 import { createClient } from "@/lib/supabase/client";
 import { useSchoolContext } from "@/contexts/SchoolContext";
+import { getInitials } from "@/lib/utils";
 
 type AppliesTo = "all" | "class" | "selected";
+type RsvpStatus = "going" | "maybe" | "not_going";
 
 interface Event {
   id: string;
@@ -33,6 +35,16 @@ interface Event {
   rsvpNotGoing: number;
   rsvpNoResponse: number;
   totalCompanions: number;
+}
+
+interface RsvpRow {
+  id: string;
+  studentId: string;
+  studentName: string;
+  className: string;
+  status: RsvpStatus;
+  companions: number;
+  companionNames: string[];
 }
 
 interface ClassOption {
@@ -61,6 +73,18 @@ const EMPTY_FORM: EventForm = {
   requiresRsvp: true, maxCompanions: "",
 };
 
+const STATUS_LABELS: Record<RsvpStatus, string> = {
+  going: "Going",
+  maybe: "Maybe",
+  not_going: "Can't go",
+};
+
+const STATUS_COLORS: Record<RsvpStatus, string> = {
+  going: "bg-green-100 text-green-700 border-green-200",
+  maybe: "bg-yellow-100 text-yellow-700 border-yellow-200",
+  not_going: "bg-red-100 text-red-600 border-red-200",
+};
+
 function formatEventDate(dateStr: string) {
   return new Date(dateStr + "T00:00:00").toLocaleDateString("en-PH", { weekday: "short", year: "numeric", month: "short", day: "numeric" });
 }
@@ -83,6 +107,12 @@ export default function EventsPage() {
   const [form, setForm] = useState<EventForm>(EMPTY_FORM);
   const [tab, setTab] = useState<"upcoming" | "all">("upcoming");
 
+  // RSVP list modal
+  const [rsvpViewEvent, setRsvpViewEvent] = useState<Event | null>(null);
+  const [rsvpRows, setRsvpRows] = useState<RsvpRow[]>([]);
+  const [rsvpLoading, setRsvpLoading] = useState(false);
+  const [rsvpFilter, setRsvpFilter] = useState<"all" | RsvpStatus>("all");
+
   const [helpOpen, setHelpOpen] = useState(false);
   const [helpSearch, setHelpSearch] = useState("");
   const [helpExpanded, setHelpExpanded] = useState<Record<string, boolean>>({});
@@ -101,7 +131,6 @@ export default function EventsPage() {
   }
 
   async function loadEvents() {
-    // Fetch events and enrollment counts in parallel
     const [evResult, enrollResult] = await Promise.all([
       supabase
         .from("events")
@@ -120,7 +149,6 @@ export default function EventsPage() {
 
     if (evResult.error) { setError(evResult.error.message); return; }
 
-    // Build per-class enrollment count for "no response" calculation
     const classCount: Record<string, number> = {};
     for (const e of (enrollResult.data ?? [])) {
       classCount[e.class_id] = (classCount[e.class_id] ?? 0) + 1;
@@ -182,6 +210,61 @@ export default function EventsPage() {
     setClassOptions(data ?? []);
   }
 
+  async function openRsvpView(event: Event) {
+    setRsvpViewEvent(event);
+    setRsvpLoading(true);
+    setRsvpFilter("all");
+    setRsvpRows([]);
+
+    const { data: rsvpData } = await supabase
+      .from("event_rsvps")
+      .select("id, student_id, status, companions, companion_names")
+      .eq("event_id", event.id);
+
+    const studentIds = (rsvpData ?? [])
+      .map((r) => r.student_id)
+      .filter((id): id is string => !!id);
+
+    const [studentRes, enrollRes] = await Promise.all([
+      studentIds.length > 0
+        ? supabase.from("students").select("id, first_name, last_name").in("id", studentIds)
+        : Promise.resolve({ data: [] }),
+      studentIds.length > 0 && activeYear?.id
+        ? supabase
+            .from("enrollments")
+            .select("student_id, classes(name)")
+            .in("student_id", studentIds)
+            .eq("school_year_id", activeYear.id)
+            .eq("status", "enrolled")
+        : Promise.resolve({ data: [] }),
+    ]);
+
+    const studentMap: Record<string, string> = {};
+    for (const s of (studentRes.data ?? [])) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      studentMap[(s as any).id] = `${(s as any).first_name} ${(s as any).last_name}`;
+    }
+    const classMap: Record<string, string> = {};
+    for (const e of (enrollRes.data ?? [])) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if ((e as any).student_id) classMap[(e as any).student_id] = (e as any).classes?.name ?? "—";
+    }
+
+    setRsvpRows(
+      (rsvpData ?? []).map((r) => ({
+        id: r.id,
+        studentId: r.student_id ?? "",
+        studentName: r.student_id ? (studentMap[r.student_id] ?? "Unknown") : "Unknown",
+        className: r.student_id ? (classMap[r.student_id] ?? "—") : "—",
+        status: r.status as RsvpStatus,
+        companions: r.companions ?? 0,
+        companionNames: (r.companion_names as string[] | null) ?? [],
+      }))
+    );
+
+    setRsvpLoading(false);
+  }
+
   async function handleSave() {
     if (!form.title.trim()) { setFormError("Event name is required."); return; }
     if (!form.eventDate) { setFormError("Event date is required."); return; }
@@ -217,6 +300,8 @@ export default function EventsPage() {
   const displayed = tab === "upcoming"
     ? events.filter((e) => isUpcoming(e.eventDate)).sort((a, b) => a.eventDate.localeCompare(b.eventDate))
     : [...events].sort((a, b) => b.eventDate.localeCompare(a.eventDate));
+
+  const filteredRsvpRows = rsvpFilter === "all" ? rsvpRows : rsvpRows.filter((r) => r.status === rsvpFilter);
 
   if (loading) return <PageSpinner />;
 
@@ -321,29 +406,40 @@ export default function EventsPage() {
                     </div>
 
                     {event.requiresRsvp && (
-                      <div className="mt-3 flex flex-wrap gap-4 text-xs">
-                        <span className="flex items-center gap-1 text-green-600 font-medium">
-                          <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
-                          {event.rsvpGoing} Going
-                          {event.totalCompanions > 0 && (
-                            <span className="text-muted-foreground font-normal ml-0.5">
-                              (+{event.totalCompanions} companion{event.totalCompanions !== 1 ? "s" : ""})
+                      <div className="mt-3">
+                        <div className="flex flex-wrap gap-4 text-xs">
+                          <span className="flex items-center gap-1 text-green-600 font-medium">
+                            <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
+                            {event.rsvpGoing} Going
+                            {event.totalCompanions > 0 && (
+                              <span className="text-muted-foreground font-normal ml-0.5">
+                                (+{event.totalCompanions} companion{event.totalCompanions !== 1 ? "s" : ""})
+                              </span>
+                            )}
+                          </span>
+                          <span className="flex items-center gap-1 text-yellow-600 font-medium">
+                            <span className="w-2 h-2 rounded-full bg-yellow-400 inline-block" />
+                            {event.rsvpMaybe} Maybe
+                          </span>
+                          <span className="flex items-center gap-1 text-red-500 font-medium">
+                            <span className="w-2 h-2 rounded-full bg-red-400 inline-block" />
+                            {event.rsvpNotGoing} Can&apos;t go
+                          </span>
+                          {event.rsvpNoResponse > 0 && (
+                            <span className="flex items-center gap-1 text-muted-foreground font-medium">
+                              <span className="w-2 h-2 rounded-full bg-muted-foreground/40 inline-block" />
+                              {event.rsvpNoResponse} No response
                             </span>
                           )}
-                        </span>
-                        <span className="flex items-center gap-1 text-yellow-600 font-medium">
-                          <span className="w-2 h-2 rounded-full bg-yellow-400 inline-block" />
-                          {event.rsvpMaybe} Maybe
-                        </span>
-                        <span className="flex items-center gap-1 text-red-500 font-medium">
-                          <span className="w-2 h-2 rounded-full bg-red-400 inline-block" />
-                          {event.rsvpNotGoing} Can't go
-                        </span>
-                        {event.rsvpNoResponse > 0 && (
-                          <span className="flex items-center gap-1 text-muted-foreground font-medium">
-                            <span className="w-2 h-2 rounded-full bg-muted-foreground/40 inline-block" />
-                            {event.rsvpNoResponse} No response
-                          </span>
+                        </div>
+                        {(event.rsvpGoing + event.rsvpMaybe + event.rsvpNotGoing) > 0 && (
+                          <button
+                            onClick={() => openRsvpView(event)}
+                            className="mt-2 flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 hover:underline transition-colors"
+                          >
+                            <ListChecks className="w-3.5 h-3.5" />
+                            View RSVP list
+                          </button>
                         )}
                       </div>
                     )}
@@ -355,7 +451,90 @@ export default function EventsPage() {
         </div>
       )}
 
-      {/* Add Event Modal */}
+      {/* RSVP List Modal */}
+      <Modal
+        open={!!rsvpViewEvent}
+        onClose={() => { setRsvpViewEvent(null); setRsvpRows([]); }}
+        title={rsvpViewEvent ? `RSVPs — ${rsvpViewEvent.title}` : "RSVPs"}
+      >
+        {rsvpLoading ? (
+          <div className="flex items-center justify-center py-12">
+            <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {/* Filter tabs */}
+            <div className="flex gap-1 bg-muted p-1 rounded-lg w-fit text-xs">
+              {([
+                { key: "all", label: `All (${rsvpRows.length})` },
+                { key: "going", label: `Going (${rsvpRows.filter(r => r.status === "going").length})` },
+                { key: "maybe", label: `Maybe (${rsvpRows.filter(r => r.status === "maybe").length})` },
+                { key: "not_going", label: `Can't go (${rsvpRows.filter(r => r.status === "not_going").length})` },
+              ] as const).map(({ key, label }) => (
+                <button
+                  key={key}
+                  onClick={() => setRsvpFilter(key)}
+                  className={`px-3 py-1 rounded-md font-medium transition-colors ${
+                    rsvpFilter === key ? "bg-card shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {filteredRsvpRows.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-8">No responses yet.</p>
+            ) : (
+              <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full">
+                {filteredRsvpRows.map((row) => (
+                  <div key={row.id} className="border border-border rounded-lg px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      {/* Avatar */}
+                      <div className="w-8 h-8 rounded-full bg-primary/15 text-primary flex items-center justify-center text-xs font-bold flex-shrink-0">
+                        {getInitials(row.studentName)}
+                      </div>
+                      {/* Name + class */}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium leading-tight">{row.studentName}</p>
+                        <p className="text-xs text-muted-foreground">{row.className}</p>
+                      </div>
+                      {/* Status badge */}
+                      <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${STATUS_COLORS[row.status]}`}>
+                        {STATUS_LABELS[row.status]}
+                      </span>
+                      {/* Companions count */}
+                      {row.status === "going" && rsvpViewEvent?.maxCompanions !== null && (
+                        <span className="text-xs text-muted-foreground ml-1 flex-shrink-0">
+                          +{row.companions} companion{row.companions !== 1 ? "s" : ""}
+                        </span>
+                      )}
+                    </div>
+                    {/* Companion names */}
+                    {row.status === "going" && row.companionNames.length > 0 && (
+                      <div className="mt-2 ml-11 space-y-0.5">
+                        {row.companionNames.map((name, i) => (
+                          <p key={i} className="text-xs text-muted-foreground flex items-center gap-1.5">
+                            <span className="w-1 h-1 rounded-full bg-muted-foreground/50 flex-shrink-0 inline-block" />
+                            {name || <span className="italic">No name given</span>}
+                          </p>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex justify-end pt-1">
+              <Button variant="outline" onClick={() => { setRsvpViewEvent(null); setRsvpRows([]); }}>
+                Close
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
       {/* ── Events Help Drawer ── */}
       {helpOpen && (
         <div className="fixed inset-0 z-50 flex justify-end">
@@ -416,6 +595,24 @@ export default function EventsPage() {
                     ),
                   },
                   {
+                    id: "rsvp-list",
+                    icon: ListChecks,
+                    title: "View who RSVP'd",
+                    searchText: "rsvp list students going attendance who responded view names companions",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Once parents have submitted their responses, you can see the full list of students and their companion details.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>On any event card, look for the RSVP counts row (Going / Maybe / Can&apos;t go).</span>} />
+                          <Step n={2} text={<span>Click <strong>View RSVP list</strong> underneath the counts.</span>} />
+                          <Step n={3} text={<span>Filter by status using the tabs at the top: All, Going, Maybe, or Can&apos;t go.</span>} />
+                          <Step n={4} text={<span>Each row shows the student&apos;s name, class, response status, companion count, and each companion&apos;s name (if provided by the parent).</span>} />
+                        </div>
+                        <Tip>The "View RSVP list" link only appears after at least one parent has responded.</Tip>
+                      </div>
+                    ),
+                  },
+                  {
                     id: "applies-to",
                     icon: Users,
                     title: "Control who sees an event",
@@ -467,15 +664,15 @@ export default function EventsPage() {
                     id: "companions",
                     icon: Users,
                     title: "Track companions / headcount",
-                    searchText: "companions headcount guests max limit venue booking",
+                    searchText: "companions headcount guests max limit venue booking names list",
                     body: (
                       <div className="space-y-2">
                         <p>Use the <strong>Max Companions</strong> field when you need a headcount for venue booking — e.g. a field trip where parents can join.</p>
                         <div className="space-y-2 mt-2">
                           <Step n={1} text={<span>When creating the event, enter a number in <strong>Max Companions</strong> (e.g. "2" = up to 2 adults per student).</span>} />
                           <Step n={2} text={<span>Leave blank if you're not tracking companions.</span>} />
-                          <Step n={3} text={<span>Parents entering "Going" will be asked how many companions they're bringing (capped at your limit).</span>} />
-                          <Step n={4} text={<span>The total companions count appears on the event card for your headcount planning.</span>} />
+                          <Step n={3} text={<span>Parents selecting "Going" can set a companion count and optionally enter each companion&apos;s name.</span>} />
+                          <Step n={4} text={<span>The total companions count appears on the event card. Click <strong>View RSVP list</strong> to see individual companion names.</span>} />
                         </div>
                       </div>
                     ),
@@ -524,7 +721,7 @@ export default function EventsPage() {
                 if (filtered.length === 0) return (
                   <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
                     <HelpCircle className="w-8 h-8 mb-3 opacity-40" />
-                    <p className="text-sm">No topics match <span className="font-medium text-foreground">"{helpSearch}"</span></p>
+                    <p className="text-sm">No topics match <span className="font-medium text-foreground">&quot;{helpSearch}&quot;</span></p>
                     <button onClick={() => setHelpSearch("")} className="mt-2 text-xs text-primary hover:underline">Clear search</button>
                   </div>
                 );
@@ -546,7 +743,7 @@ export default function EventsPage() {
               })()}
             </div>
             <div className="px-5 py-3 border-t border-border flex-shrink-0 text-xs text-muted-foreground">
-              {helpSearch ? <span>Showing results for "<span className="font-medium text-foreground">{helpSearch}</span>"</span> : <span>6 topics · click any to expand</span>}
+              {helpSearch ? <span>Showing results for &quot;<span className="font-medium text-foreground">{helpSearch}</span>&quot;</span> : <span>7 topics · click any to expand</span>}
             </div>
           </div>
         </div>
@@ -571,7 +768,6 @@ export default function EventsPage() {
             <Input type="date" value={form.eventDate} onChange={(e) => setForm({ ...form, eventDate: e.target.value })} />
           </div>
 
-          {/* All-day toggle */}
           <label className="flex items-center gap-2.5 cursor-pointer select-none">
             <input
               type="checkbox"
@@ -618,7 +814,6 @@ export default function EventsPage() {
             <Input type="number" min={0} step={50} placeholder="Leave blank if free" value={form.fee} onChange={(e) => setForm({ ...form, fee: e.target.value })} />
           </div>
 
-          {/* RSVP / Informational toggle */}
           <div className="border border-border rounded-lg p-3 space-y-3 bg-muted/30">
             <label className="flex items-center gap-2.5 cursor-pointer select-none">
               <input
@@ -630,7 +825,7 @@ export default function EventsPage() {
               <div>
                 <span className="text-sm font-medium">Require RSVP</span>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  Uncheck for informational announcements — parents won't see a response prompt.
+                  Uncheck for informational announcements — parents won&apos;t see a response prompt.
                 </p>
               </div>
             </label>

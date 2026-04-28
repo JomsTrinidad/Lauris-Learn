@@ -289,12 +289,13 @@ export type Database = {
           parent_id: string | null;
           status: "going" | "not_going" | "maybe";
           companions: number;
+          companion_names: string[] | null;
           notes: string | null;
           created_at: string;
           updated_at: string;
         };
-        Insert: { id?: string; event_id: string; student_id?: string | null; parent_id?: string | null; status: "going" | "not_going" | "maybe"; companions?: number; notes?: string | null; created_at?: string };
-        Update: { id?: string; event_id?: string; student_id?: string | null; parent_id?: string | null; status?: "going" | "not_going" | "maybe"; companions?: number; notes?: string | null };
+        Insert: { id?: string; event_id: string; student_id?: string | null; parent_id?: string | null; status: "going" | "not_going" | "maybe"; companions?: number; companion_names?: string[] | null; notes?: string | null; created_at?: string };
+        Update: { id?: string; event_id?: string; student_id?: string | null; parent_id?: string | null; status?: "going" | "not_going" | "maybe"; companions?: number; companion_names?: string[] | null; notes?: string | null };
         Relationships: [{ foreignKeyName: "event_rsvps_event_id_fkey"; columns: ["event_id"]; isOneToOne: false; referencedRelation: "events"; referencedColumns: ["id"] }];
       };
       enrollment_inquiries: {
