@@ -364,54 +364,46 @@ export async function generateDemoData(
     if (profErr) throw new Error(`Insert into profiles failed: ${profErr.message}`);
   }
 
-  // ── 4. School year + academic periods ──────────────────────────────────────
-  // Reuse the existing active school year if the school already has one
-  // (create-school seeds one automatically; we must not insert a duplicate).
-  const { data: existingSy } = await (admin as any)
+  // ── 4. School years + academic periods ─────────────────────────────────────
+  // Demo narrative: we are standing just before SY 2026-2027 begins.
+  // All rich data (enrollments, attendance, billing) lives in the archived
+  // SY 2025-2026 — that's the year that just finished. SY 2026-2027 is the
+  // active upcoming year with classes set up but no enrollments yet, so the
+  // admin can demo Year-End Classification → returning-student enrollment flow.
+
+  // Archived year — SY 2025–2026 (all demo data: enrollments, attendance, billing)
+  const { data: archivedSyData, error: archivedSyErr } = await (admin as any)
     .from("school_years")
-    .select("id, start_date")
-    .eq("school_id", schoolId)
-    .eq("status", "active")
-    .maybeSingle();
+    .insert({ school_id: schoolId, name: "SY 2025–2026", start_date: "2025-06-01", end_date: "2026-03-31", status: "archived" })
+    .select("id").single();
+  if (archivedSyErr) throw new Error(`archived school_years insert: ${archivedSyErr.message}`);
+  const archivedYearId: string = archivedSyData.id;
 
-  let schoolYearId: string;
-  let yearStartDate: string;
-  if (existingSy?.id) {
-    schoolYearId  = existingSy.id;
-    yearStartDate = existingSy.start_date ?? BASE_START;
-  } else {
-    const { data: syData, error: syErr } = await (admin as any)
-      .from("school_years")
-      .insert({ school_id: schoolId, name: "SY 2025–2026", start_date: "2025-06-01", end_date: "2026-03-31", status: "active" })
-      .select("id, start_date").single();
-    if (syErr) throw new Error(`school_years insert: ${syErr.message}`);
-    schoolYearId  = syData.id;
-    yearStartDate = syData.start_date ?? BASE_START;
-  }
+  const { data: archivedApData } = await (admin as any).from("academic_periods").insert([
+    { school_id: schoolId, school_year_id: archivedYearId, name: "Regular Term", start_date: "2025-06-01", end_date: "2026-03-31", is_active: false },
+    ...(scenario !== "trial_new" ? [{ school_id: schoolId, school_year_id: archivedYearId, name: "Summer Term", start_date: "2026-04-01", end_date: "2026-05-31", is_active: false }] : []),
+  ]).select("id, name");
+  const archivedRegularPeriodId: string | null = (archivedApData ?? []).find((a: any) => a.name === "Regular Term")?.id ?? null;
 
-  // Compute how many months the active year is offset from the base scenario dates.
-  // All hardcoded 2025-XX dates in the scenario are shifted by this amount so the
-  // demo data always lands inside the correct school year.
-  const mo = monthsBetween(BASE_START, yearStartDate);
+  // Active year — SY 2026–2027 (classes set up, no enrollments yet)
+  const { data: syData, error: syErr } = await (admin as any)
+    .from("school_years")
+    .insert({ school_id: schoolId, name: "SY 2026–2027", start_date: "2026-06-01", end_date: "2027-03-31", status: "active" })
+    .select("id").single();
+  if (syErr) throw new Error(`school_years insert: ${syErr.message}`);
+  const schoolYearId: string = syData.id;
 
-  // Academic periods — insert only if none exist for this school year
-  const { data: existingAp } = await (admin as any)
+  const { data: apData } = await (admin as any)
     .from("academic_periods")
-    .select("id, name")
-    .eq("school_year_id", schoolYearId);
-
-  let apData = existingAp;
-  if (!existingAp || existingAp.length === 0) {
-    const { data: newAp } = await (admin as any)
-      .from("academic_periods")
-      .insert([
-        { school_id: schoolId, school_year_id: schoolYearId, name: "Regular Term", start_date: shiftDate("2025-06-01", mo), end_date: shiftDate("2026-03-31", mo), is_active: true },
-        ...(scenario !== "trial_new" ? [{ school_id: schoolId, school_year_id: schoolYearId, name: "Summer Term", start_date: shiftDate("2026-04-01", mo), end_date: shiftDate("2026-05-31", mo), is_active: false }] : []),
-      ])
-      .select("id, name");
-    apData = newAp;
-  }
+    .insert([
+      { school_id: schoolId, school_year_id: schoolYearId, name: "Regular Term", start_date: "2026-06-01", end_date: "2027-03-31", is_active: true },
+      ...(scenario !== "trial_new" ? [{ school_id: schoolId, school_year_id: schoolYearId, name: "Summer Term", start_date: "2027-04-01", end_date: "2027-05-31", is_active: false }] : []),
+    ])
+    .select("id, name");
   const regularPeriodId: string | null = (apData ?? []).find((a: any) => a.name === "Regular Term")?.id ?? null;
+
+  // mo = 0: BASE_START matches archived year start, no date shifting needed
+  const mo = 0;
 
   // ── 5. Fee types ────────────────────────────────────────────────────────────
   const feeTypeNames = scenario === "compliance_heavy"
@@ -434,21 +426,32 @@ export async function generateDemoData(
   const categoryIds: string[] = (pcData ?? []).map((c: any) => c.id);
 
   // ── 7. Classes ──────────────────────────────────────────────────────────────
+  // Archived year classes — enrollments, attendance, billing, updates all live here
   const { data: classData, error: classErr } = await (admin as any)
     .from("classes")
     .insert(cfg.classes.map((c) => ({
-      school_id: schoolId, school_year_id: schoolYearId, academic_period_id: regularPeriodId,
+      school_id: schoolId, school_year_id: archivedYearId, academic_period_id: archivedRegularPeriodId,
       name: c.name, level: c.level, start_time: c.startTime, end_time: c.endTime, capacity: c.capacity, is_active: true,
     })))
     .select("id, name");
   if (classErr) throw new Error(`classes insert: ${classErr.message}`);
   const classIds: string[] = (classData ?? []).map((c: any) => c.id);
 
+  // Active year classes — same structure, no enrollments yet (upcoming year)
+  const { data: nextClassData } = await (admin as any)
+    .from("classes")
+    .insert(cfg.classes.map((c) => ({
+      school_id: schoolId, school_year_id: schoolYearId, academic_period_id: regularPeriodId,
+      name: c.name, level: c.level, start_time: c.startTime, end_time: c.endTime, capacity: c.capacity, is_active: true,
+    })))
+    .select("id");
+  const nextClassIds: string[] = (nextClassData ?? []).map((c: any) => c.id);
+
   // ── 8. Class teachers ───────────────────────────────────────────────────────
-  const ctRows = classIds.map((cid, i) => ({
-    class_id: cid,
-    teacher_id: teacherIds[i % teacherIds.length],
-  }));
+  const ctRows = [
+    ...classIds.map((cid, i) => ({ class_id: cid, teacher_id: teacherIds[i % teacherIds.length] })),
+    ...nextClassIds.map((cid, i) => ({ class_id: cid, teacher_id: teacherIds[i % teacherIds.length] })),
+  ];
   await batchInsert(admin, "class_teachers", ctRows);
 
   // ── 9. Students ─────────────────────────────────────────────────────────────
@@ -501,8 +504,8 @@ export async function generateDemoData(
     for (let j = 0; j < count; j++, eIdx++) {
       enrollRows.push({
         student_id: studentIds[eIdx], class_id: classIds[classIdx],
-        school_year_id: schoolYearId, academic_period_id: regularPeriodId,
-        status: "enrolled", enrolled_at: shiftDate("2025-06-01", mo),
+        school_year_id: archivedYearId, academic_period_id: archivedRegularPeriodId,
+        status: "enrolled", enrolled_at: "2025-06-01",
       });
     }
   });
@@ -546,7 +549,7 @@ export async function generateDemoData(
         : billingStatus(monthIdx, shiftedBillingMonths.length, studentIdx);
       const dueDate   = `${month.slice(0, 7)}-15`;
       billingRows.push({
-        school_id: schoolId, student_id: sid, school_year_id: schoolYearId,
+        school_id: schoolId, student_id: sid, school_year_id: archivedYearId,
         class_id: classIds[classIdxFinal] ?? null,
         billing_month: month, description: `Tuition${misc ? " & Miscellaneous" : ""}`,
         amount_due: amountDue, status: bs, due_date: dueDate,

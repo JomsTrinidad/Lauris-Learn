@@ -65,6 +65,7 @@ interface Student {
   studentCode: string | null; preferredName: string | null;
   classId: string | null; className: string;
   enrollmentId: string | null; enrollmentStatus: EnrollmentStatus | null;
+  enrollmentYearId: string | null;
   allEnrollments: EnrollmentEntry[];
   guardianId: string | null; guardianName: string; guardianPhone: string;
   guardianEmail: string; guardianRelationship: string; guardianCommPref: CommPref | null;
@@ -172,7 +173,7 @@ interface SchoolCodeConfig { prefix: string; padding: number; includeYear: boole
 // ─── Page component ───────────────────────────────────────────────────────────
 
 export default function StudentsPage() {
-  const { schoolId, activeYear, userId, isReadOnly } = useSchoolContext();
+  const { schoolId, activeYear, userId, isReadOnly, allSchoolYears: schoolYearList } = useSchoolContext();
   const supabase = createClient();
 
   // Tab
@@ -241,6 +242,8 @@ export default function StudentsPage() {
   const [promoteRowsError, setPromoteRowsError] = useState<string | null>(null);
   const [promoteSaving, setPromoteSaving] = useState(false);
   const [promoteResult, setPromoteResult] = useState<ClassifyResult | null>(null);
+  const [selectedClassId, setSelectedClassId] = useState("");
+  const [selectedClassIsGraduating, setSelectedClassIsGraduating] = useState(false);
 
   // ─── Effects ───────────────────────────────────────────────────────────────
 
@@ -358,7 +361,9 @@ export default function StudentsPage() {
         const primaryGuardian = guardians.find((g) => g.is_primary) ?? guardians[0] ?? null;
         const activeEnrollment = yearId
           ? (enrollments.find((e) => e.school_year_id === yearId && e.status === "enrolled") ??
-             enrollments.find((e) => e.school_year_id === yearId))
+             enrollments.find((e) => e.school_year_id === yearId) ??
+             enrollments.find((e) => e.status === "enrolled") ??
+             enrollments[0] ?? null)
           : enrollments[0] ?? null;
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -387,6 +392,7 @@ export default function StudentsPage() {
           className: activeEnrollment?.classes?.name ?? "—",
           enrollmentId: activeEnrollment?.id ?? null,
           enrollmentStatus: activeEnrollment?.status ?? null,
+          enrollmentYearId: activeEnrollment?.school_year_id ?? null,
           allEnrollments,
           guardianId: primaryGuardian?.id ?? null,
           guardianName: primaryGuardian?.full_name ?? "—",
@@ -820,6 +826,8 @@ export default function StudentsPage() {
     setPromoteRows([]);
     setPromoteResult(null);
     setPromoteSearch("");
+    setSelectedClassId("");
+    setSelectedClassIsGraduating(false);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: enrollments, error: enrollErr } = await (supabase as any)
@@ -830,7 +838,8 @@ export default function StudentsPage() {
         classes(id, name, level, next_class_id, next_class:classes!next_class_id(id, name, level))
       `)
       .eq("school_year_id", src)
-      .eq("status", "enrolled");
+      .eq("status", "enrolled")
+      .is("progression_status", null);
 
     if (enrollErr) { setPromoteRowsError(enrollErr.message); setPromoteRowsLoading(false); return; }
 
@@ -944,16 +953,7 @@ export default function StudentsPage() {
   const sourceYear = allSchoolYears.find((y) => y.id === sourceYearId);
   const targetYear = allSchoolYears.find((y) => y.id === targetYearId);
 
-  const promoteLevels = [...new Set(promoteRows.map((r) => r.currentClassLevel).filter(Boolean))].sort();
-  const filteredPromoteRows = promoteRows.filter((r) => {
-    const matchLevel = promoteLevel === "all" || r.currentClassLevel === promoteLevel;
-    const matchSearch = !promoteSearch ||
-      r.studentName.toLowerCase().includes(promoteSearch.toLowerCase()) ||
-      r.currentClassName.toLowerCase().includes(promoteSearch.toLowerCase());
-    return matchLevel && matchSearch;
-  });
-
-  // One entry per unique current class — used for the bulk classification panel
+  // One entry per unique current class — used for the class picker and Step 1
   const classBulkGroups = promoteRows.reduce<Array<{
     currentClassId: string; currentClassName: string; currentClassLevel: string;
     studentCount: number; bulkClassification: ClassificationAction | "";
@@ -969,13 +969,19 @@ export default function StudentsPage() {
     return acc;
   }, []).sort((a, b) => a.currentClassName.localeCompare(b.currentClassName));
 
-  const eligibleCount   = filteredPromoteRows.filter((r) => r.classification === "eligible").length;
-  const retainedCount   = filteredPromoteRows.filter((r) => r.classification === "not_eligible_retained").length;
-  const otherCount      = filteredPromoteRows.filter((r) => r.classification === "not_eligible_other").length;
-  const graduatedCount  = filteredPromoteRows.filter((r) => r.classification === "graduated").length;
-  const notContCount    = filteredPromoteRows.filter((r) => r.classification === "not_continuing").length;
-  const unsetCount      = filteredPromoteRows.filter((r) => r.classification === "unset").length;
-  const classifiedCount = filteredPromoteRows.length - unsetCount;
+  const selectedClassGroup = classBulkGroups.find((g) => g.currentClassId === selectedClassId) ?? null;
+  const classPromoteRows   = selectedClassId ? promoteRows.filter((r) => r.currentClassId === selectedClassId) : [];
+  const filteredPromoteRows = classPromoteRows.filter((r) =>
+    !promoteSearch || r.studentName.toLowerCase().includes(promoteSearch.toLowerCase())
+  );
+
+  const eligibleCount   = classPromoteRows.filter((r) => r.classification === "eligible").length;
+  const retainedCount   = classPromoteRows.filter((r) => r.classification === "not_eligible_retained").length;
+  const otherCount      = classPromoteRows.filter((r) => r.classification === "not_eligible_other").length;
+  const graduatedCount  = classPromoteRows.filter((r) => r.classification === "graduated").length;
+  const notContCount    = classPromoteRows.filter((r) => r.classification === "not_continuing").length;
+  const unsetCount      = classPromoteRows.filter((r) => r.classification === "unset").length;
+  const classifiedCount = classPromoteRows.length - unsetCount;
 
   if (loading) return <PageSpinner />;
 
@@ -1070,13 +1076,14 @@ export default function StudentsPage() {
                     <th className="text-left px-5 py-3 font-medium text-muted-foreground">Parent / Guardian</th>
                     <th className="text-left px-5 py-3 font-medium text-muted-foreground">Contact</th>
                     <th className="text-left px-5 py-3 font-medium text-muted-foreground">Status</th>
+                    <th className="text-left px-5 py-3 font-medium text-muted-foreground">School Year</th>
                     <th className="px-5 py-3" />
                   </tr>
                 </thead>
                 <tbody>
                   {filtered.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="text-center py-10 text-muted-foreground">
+                      <td colSpan={7} className="text-center py-10 text-muted-foreground">
                         {students.length === 0 ? 'No students yet. Click "Add Student" to get started.' : "No students match your filters."}
                       </td>
                     </tr>
@@ -1106,6 +1113,15 @@ export default function StudentsPage() {
                           {student.enrollmentStatus
                             ? <Badge variant={student.enrollmentStatus}>{student.enrollmentStatus}</Badge>
                             : <span className="text-muted-foreground text-xs">—</span>}
+                        </td>
+                        <td className="px-5 py-4">
+                          {student.enrollmentYearId ? (
+                            <span className={`text-xs font-medium ${student.enrollmentYearId === activeYear?.id ? "text-foreground" : "text-muted-foreground"}`}>
+                              {schoolYearList.find((y) => y.id === student.enrollmentYearId)?.name ?? "—"}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">—</span>
+                          )}
                         </td>
                         <td className="px-5 py-4 text-right">
                           <div className="flex items-center justify-end gap-3">
@@ -1181,67 +1197,92 @@ export default function StudentsPage() {
                 </div>
               )}
 
-              {promoteRows.length > 0 && !promoteResult && (
+              {/* Class picker */}
+              {promoteRows.length > 0 && !selectedClassId && !promoteResult && (
+                <Card>
+                  <CardContent className="p-4 space-y-3">
+                    <div>
+                      <p className="text-sm font-semibold">Select a class to classify</p>
+                      <p className="text-xs text-muted-foreground mt-1">Work through one class at a time. After saving you can come back here to classify the next class.</p>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      {classBulkGroups.map((g) => (
+                        <button
+                          key={g.currentClassId}
+                          onClick={() => setSelectedClassId(g.currentClassId)}
+                          className="flex items-center justify-between px-4 py-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors text-left"
+                        >
+                          <div>
+                            <span className="text-sm font-medium">{g.currentClassName}</span>
+                            {g.currentClassLevel && <span className="text-xs text-muted-foreground ml-1.5">({g.currentClassLevel})</span>}
+                          </div>
+                          <span className="text-xs text-muted-foreground">{g.studentCount} student{g.studentCount !== 1 ? "s" : ""} →</span>
+                        </button>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {selectedClassGroup && !promoteResult && (
                 <>
-                  {/* Step 1 — Bulk classification per class */}
+                  {/* Step 1 — Bulk classification for selected class */}
                   <Card>
                     <CardContent className="p-4 space-y-3">
-                      <p className="text-sm font-semibold">Step 1 — Set the default classification for each class</p>
-                      <p className="text-xs text-muted-foreground">Apply one classification to all students in a class. You can still adjust individual students below.</p>
-                      <div className="divide-y divide-border">
-                        {classBulkGroups.map((g) => (
-                          <div key={g.currentClassId} className="flex items-center gap-3 py-2.5">
-                            <div className="flex-1 min-w-0">
-                              <span className="text-sm font-medium">{g.currentClassName}</span>
-                              {g.currentClassLevel && <span className="text-xs text-muted-foreground ml-1.5">({g.currentClassLevel})</span>}
-                              <span className="text-xs text-muted-foreground ml-1.5">· {g.studentCount} student{g.studentCount !== 1 ? "s" : ""}</span>
-                            </div>
-                            <div className="w-60 flex-shrink-0">
-                              <Select
-                                value={g.bulkClassification}
-                                onChange={(e) => applyBulkClassification(g.currentClassId, e.target.value as ClassificationAction | "")}
-                                className="text-sm h-8"
-                              >
-                                <option value="">{g.bulkClassification === "" && g.studentCount > 1 ? "— varied —" : "— Choose —"}</option>
-                                <option value="eligible">Eligible for next level</option>
-                                <option value="graduated">Graduated</option>
-                              </Select>
-                            </div>
-                          </div>
-                        ))}
+                      <div>
+                        <p className="text-sm font-semibold">Step 1 — Set the starting classification for this class</p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          This instantly pre-fills every student in Step 2 below. You can still override individual students before saving.
+                        </p>
                       </div>
+                      <div className="px-3 py-2.5 rounded-lg bg-muted/50">
+                        <div className="flex items-center gap-3">
+                          <div className="flex-1 min-w-0">
+                            <span className="text-sm font-medium">{selectedClassGroup.currentClassName}</span>
+                            {selectedClassGroup.currentClassLevel && <span className="text-xs text-muted-foreground ml-1.5">({selectedClassGroup.currentClassLevel})</span>}
+                            <span className="text-xs text-muted-foreground ml-1.5">· {selectedClassGroup.studentCount} student{selectedClassGroup.studentCount !== 1 ? "s" : ""}</span>
+                          </div>
+                          <div className="w-60 flex-shrink-0">
+                            <Select
+                              value={selectedClassGroup.bulkClassification}
+                              onChange={(e) => {
+                                const val = e.target.value as ClassificationAction | "";
+                                applyBulkClassification(selectedClassGroup.currentClassId, val);
+                                setSelectedClassIsGraduating(val === "graduated");
+                              }}
+                              className="text-sm h-8"
+                            >
+                              <option value="">— Choose —</option>
+                              <option value="eligible">Eligible for next level</option>
+                              <option value="graduated">Graduated</option>
+                            </Select>
+                          </div>
+                        </div>
+                        {selectedClassGroup.bulkClassification !== "" && (
+                          <p className="text-xs text-primary mt-1.5 pl-0.5">
+                            ✓ {selectedClassGroup.studentCount} student{selectedClassGroup.studentCount !== 1 ? "s" : ""} pre-filled in Step 2 — review individually below to override
+                          </p>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => { setSelectedClassId(""); setSelectedClassIsGraduating(false); setPromoteSearch(""); }}
+                        className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        ← Back to class list
+                      </button>
                     </CardContent>
                   </Card>
 
-                  {/* Step 2 header + filters */}
+                  {/* Step 2 header + search */}
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-sm font-semibold">
-                        Step 2 — Review and classify each student
-                        {" "}({filteredPromoteRows.length} student{filteredPromoteRows.length !== 1 ? "s" : ""}{promoteLevel !== "all" ? ` · ${promoteLevel}` : ""})
+                        Step 2 — Review and override individual students
+                        {" "}({filteredPromoteRows.length} student{filteredPromoteRows.length !== 1 ? "s" : ""})
                       </p>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        Classifying enrolled students in <strong>{sourceYear?.name}</strong>
+                        Pre-filled from Step 1 — change any student's classification here before saving.
                       </p>
-                    </div>
-                    <div className="flex items-center gap-2 flex-wrap justify-end">
-                      {promoteLevels.length > 1 && (
-                        <div className="flex items-center gap-1 border-r border-border pr-3 mr-1">
-                          <span className="text-xs text-muted-foreground">Level:</span>
-                          <button
-                            onClick={() => setPromoteLevel("all")}
-                            className={`px-2.5 py-1 text-xs rounded-lg border transition-colors font-medium ${promoteLevel === "all" ? "border-primary bg-primary/5 text-primary" : "border-border text-muted-foreground hover:text-foreground hover:bg-muted"}`}
-                          >
-                            All
-                          </button>
-                          {promoteLevels.map((lvl) => (
-                            <button key={lvl} onClick={() => setPromoteLevel(lvl)}
-                              className={`px-2.5 py-1 text-xs rounded-lg border transition-colors font-medium ${promoteLevel === lvl ? "border-primary bg-primary/5 text-primary" : "border-border text-muted-foreground hover:text-foreground hover:bg-muted"}`}>
-                              {lvl}
-                            </button>
-                          ))}
-                        </div>
-                      )}
                     </div>
                   </div>
 
@@ -1249,7 +1290,7 @@ export default function StudentsPage() {
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                     <Input
                       type="text"
-                      placeholder="Filter by student name or class…"
+                      placeholder="Filter by student name…"
                       value={promoteSearch}
                       onChange={(e) => setPromoteSearch(e.target.value)}
                       className="pl-9"
@@ -1257,21 +1298,24 @@ export default function StudentsPage() {
                   </div>
 
                   <Card className="overflow-hidden">
-                    <div className="overflow-x-auto">
+                    <div className="overflow-y-scroll max-h-[480px] [&::-webkit-scrollbar]:w-2.5 [&::-webkit-scrollbar-track]:bg-muted [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-thumb]:bg-muted-foreground/40 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb:hover]:bg-muted-foreground/60">
                       <table className="w-full text-sm">
-                        <thead>
+                        <thead className="sticky top-0 z-10">
                           <tr className="bg-muted border-b border-border">
                             <th className="text-left px-4 py-3 font-medium text-muted-foreground">Student</th>
-                            <th className="text-left px-4 py-3 font-medium text-muted-foreground">Current Class</th>
-                            <th className="text-left px-4 py-3 font-medium text-muted-foreground">Next Level</th>
+                            <th className="text-left px-4 py-3 font-medium text-muted-foreground">
+                              Next Level
+                              {targetYear && <p className="text-xs font-normal text-muted-foreground/60 mt-0.5">{targetYear.name}</p>}
+                            </th>
                             <th className="text-left px-4 py-3 font-medium text-muted-foreground">Classification</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-border">
-                          {filteredPromoteRows.map((row) => (
+                          {filteredPromoteRows.map((row) => {
+                            const isGraduatingClass = selectedClassIsGraduating;
+                            return (
                             <tr key={row.studentId} className={`transition-colors ${row.classification === "unset" ? "hover:bg-muted/30" : "hover:bg-muted/40"}`}>
                               <td className="px-4 py-3 font-medium">{row.studentName}</td>
-                              <td className="px-4 py-3 text-muted-foreground">{row.currentClassName}</td>
                               <td className="px-4 py-3">
                                 {row.classification === "graduated" || row.classification === "not_continuing" ? (
                                   <span className="text-xs text-muted-foreground">—</span>
@@ -1283,18 +1327,24 @@ export default function StudentsPage() {
                               </td>
                               <td className="px-4 py-3">
                                 <div className="flex items-center flex-wrap gap-1">
-                                  <ActionBtn active={row.classification === "eligible"} onClick={() => setRowClassification(row.studentId, "eligible")}
-                                    className="text-primary border-primary/40 bg-primary/5">
-                                    Eligible
-                                  </ActionBtn>
-                                  <ActionBtn active={row.classification === "graduated"} onClick={() => setRowClassification(row.studentId, "graduated")}
-                                    className="text-green-700 border-green-300 bg-green-50">
-                                    Graduate
-                                  </ActionBtn>
-                                  <ActionBtn active={row.classification === "not_continuing"} onClick={() => setRowClassification(row.studentId, "not_continuing")}
-                                    className="text-rose-600 border-rose-300 bg-rose-50">
-                                    Not cont.
-                                  </ActionBtn>
+                                  {!isGraduatingClass && (
+                                    <ActionBtn active={row.classification === "eligible"} onClick={() => setRowClassification(row.studentId, "eligible")}
+                                      className="text-primary border-primary/40 bg-primary/5">
+                                      Eligible
+                                    </ActionBtn>
+                                  )}
+                                  {isGraduatingClass && (
+                                    <ActionBtn active={row.classification === "graduated"} onClick={() => setRowClassification(row.studentId, "graduated")}
+                                      className="text-green-700 border-green-300 bg-green-50">
+                                      Graduate
+                                    </ActionBtn>
+                                  )}
+                                  {!isGraduatingClass && (
+                                    <ActionBtn active={row.classification === "not_continuing"} onClick={() => setRowClassification(row.studentId, "not_continuing")}
+                                      className="text-rose-600 border-rose-300 bg-rose-50">
+                                      Not cont.
+                                    </ActionBtn>
+                                  )}
                                   <ActionBtn active={row.classification === "not_eligible_retained"} onClick={() => setRowClassification(row.studentId, "not_eligible_retained")}
                                     className="text-amber-600 border-amber-300 bg-amber-50">
                                     Retain
@@ -1306,7 +1356,8 @@ export default function StudentsPage() {
                                 </div>
                               </td>
                             </tr>
-                          ))}
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
@@ -1353,8 +1404,9 @@ export default function StudentsPage() {
               {promoteRows.length === 0 && !promoteRowsLoading && sourceYearId && !promoteResult && (
                 <Card>
                   <CardContent className="p-12 text-center text-sm text-muted-foreground">
-                    <Users className="w-8 h-8 mx-auto mb-3 opacity-40" />
-                    No enrolled students found in {sourceYear?.name ?? "the selected year"}.
+                    <Check className="w-8 h-8 mx-auto mb-3 opacity-40" />
+                    <p className="font-medium text-foreground">All classes have been classified</p>
+                    <p className="mt-1">No unclassified enrolled students remain in {sourceYear?.name ?? "the selected year"}.</p>
                   </CardContent>
                 </Card>
               )}
@@ -1380,8 +1432,8 @@ export default function StudentsPage() {
                         {promoteResult.errors.map((e, i) => <p key={i} className="text-xs">{e}</p>)}
                       </div>
                     )}
-                    <Button variant="outline" onClick={() => { setPromoteResult(null); setPromoteRows([]); }}>
-                      Classify Another Batch
+                    <Button variant="outline" onClick={() => { loadStudentsForPromote(); }}>
+                      Classify Another Class
                     </Button>
                   </CardContent>
                 </Card>

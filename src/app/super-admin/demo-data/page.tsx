@@ -4,6 +4,7 @@ import {
   FlaskConical, RefreshCw, Trash2, Plus, CheckCircle, AlertTriangle,
   Users, GraduationCap, BookOpen, CalendarDays, Receipt, Star, Eye,
   ChevronDown, ChevronUp, Clock, XCircle, Loader2,
+  HelpCircle, X, Search, ChevronRight, Key, School as SchoolIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -119,6 +120,10 @@ export default function DemoDataPage() {
   const [clearTarget, setClearTarget]   = useState<DemoSchool | null>(null);
   const [clearing, setClearing]         = useState(false);
   const [clearError, setClearError]     = useState("");
+
+  const [helpOpen, setHelpOpen]           = useState(false);
+  const [helpSearch, setHelpSearch]       = useState("");
+  const [helpExpanded, setHelpExpanded]   = useState<Record<string, boolean>>({});
 
   // Expanded history panel per school
   const [expandedId, setExpandedId]     = useState<string | null>(null);
@@ -276,15 +281,24 @@ export default function DemoDataPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div>
-        <h1 className="text-xl font-semibold flex items-center gap-2">
-          <FlaskConical className="w-5 h-5 text-primary" />
-          Demo Data Management
-        </h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Generate realistic fake data for demo schools. Operations are strictly isolated to schools marked{" "}
-          <code className="text-xs bg-muted px-1 py-0.5 rounded">is_demo = true</code>.
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-semibold flex items-center gap-2">
+            <FlaskConical className="w-5 h-5 text-primary" />
+            Demo Data Management
+          </h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Generate realistic fake data for demo schools. Operations are strictly isolated to schools marked{" "}
+            <code className="text-xs bg-muted px-1 py-0.5 rounded">is_demo = true</code>.
+          </p>
+        </div>
+        <button
+          onClick={() => setHelpOpen(true)}
+          className="p-2 rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-foreground flex-shrink-0"
+          title="Demo data help"
+        >
+          <HelpCircle className="w-5 h-5" />
+        </button>
       </div>
 
       {/* Safety notice */}
@@ -442,6 +456,268 @@ export default function DemoDataPage() {
           );
         })}
       </div>
+
+      {/* ── Demo Data Help Drawer ── */}
+      {helpOpen && (
+        <div className="fixed inset-0 z-50 flex justify-end">
+          <div className="absolute inset-0 bg-black/30" onClick={() => { setHelpOpen(false); setHelpSearch(""); }} />
+          <div className="relative flex flex-col w-full max-w-md bg-card border-l border-border shadow-2xl h-full animate-in slide-in-from-right duration-200">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center"><BookOpen className="w-4 h-4 text-primary" /></div>
+                <h2 className="font-semibold text-base">Demo Data Help</h2>
+              </div>
+              <button onClick={() => { setHelpOpen(false); setHelpSearch(""); }} className="p-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="px-5 py-3 border-b border-border flex-shrink-0">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <input type="text" placeholder="Search topics..." value={helpSearch} onChange={(e) => setHelpSearch(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 text-sm bg-muted border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors" />
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-2 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full">
+              {(() => {
+                const Step = ({ n, text }: { n: number; text: React.ReactNode }) => (
+                  <div className="flex gap-2.5 items-start">
+                    <span className="flex-shrink-0 w-5 h-5 rounded-full bg-primary/15 text-primary text-[10px] font-bold flex items-center justify-center mt-0.5">{n}</span>
+                    <span>{text}</span>
+                  </div>
+                );
+                const Tip = ({ children }: { children: React.ReactNode }) => (
+                  <div className="mt-3 flex gap-2 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2 text-amber-800 dark:text-amber-300 text-xs">
+                    <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" /><span>{children}</span>
+                  </div>
+                );
+                const Note = ({ children }: { children: React.ReactNode }) => (
+                  <div className="mt-3 flex gap-2 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg px-3 py-2 text-blue-800 dark:text-blue-300 text-xs">
+                    <HelpCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" /><span>{children}</span>
+                  </div>
+                );
+                const Code = ({ children }: { children: string }) => (
+                  <pre className="bg-muted rounded-lg p-2.5 text-xs font-mono text-foreground overflow-x-auto border border-border my-2 whitespace-pre-wrap break-all">{children}</pre>
+                );
+                type HelpTopic = { id: string; icon: React.ElementType; title: string; searchText: string; body: React.ReactNode };
+                const topics: HelpTopic[] = [
+                  {
+                    id: "overview",
+                    icon: FlaskConical,
+                    title: "What is demo data?",
+                    searchText: "overview what demo data fake realistic isolated safe school is_demo",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Demo data is a set of realistic but entirely fake records — students, classes, billing, attendance, updates, and user accounts — seeded into a designated demo school for walkthroughs and testing.</p>
+                        <p>All operations (generate, refresh, clear) are restricted to schools flagged as <code className="bg-muted px-1 rounded text-xs">is_demo = true</code>. The server rejects any request targeting a real school.</p>
+                        <Note>Demo schools appear on this page. Regular schools managed in the Schools page are never touched by any operation here.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "setup",
+                    icon: SchoolIcon,
+                    title: "Setting up a demo school",
+                    searchText: "setup create demo school is_demo mark schools page prerequisite before generate",
+                    body: (
+                      <div className="space-y-2">
+                        <p>A demo school must exist before you can generate data. If this page shows no schools, create one first.</p>
+                        <div className="space-y-2 mt-1">
+                          <Step n={1} text={<span>Go to <strong className="text-foreground">Schools</strong> in the sidebar.</span>} />
+                          <Step n={2} text={<span>Click <strong className="text-foreground">+ New School</strong> and fill in the school name and trial dates.</span>} />
+                          <Step n={3} text={<span>Check <strong className="text-foreground">Mark as demo/test account</strong> — this sets <code className="bg-muted px-1 rounded">is_demo = true</code>.</span>} />
+                          <Step n={4} text={<span>Save. The school will appear on this page, ready for data generation.</span>} />
+                        </div>
+                        <Tip>You can also convert an existing school to demo by editing it in the Schools page and checking the demo checkbox.</Tip>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "scenarios",
+                    icon: Users,
+                    title: "Choosing a scenario",
+                    searchText: "scenario small preschool compliance heavy trial new which use best for sales walkthrough",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Each scenario seeds a different volume and type of data. Pick based on your presentation goal:</p>
+                        <div className="space-y-2 mt-1">
+                          {[
+                            {
+                              name: "Small Preschool",
+                              key: "small_preschool",
+                              size: "4 classes · ~38 students · 4 teachers · 10 parents",
+                              best: "General walkthroughs and sales demos — balanced and easy to navigate.",
+                            },
+                            {
+                              name: "Compliance-Heavy",
+                              key: "compliance_heavy",
+                              size: "8 classes · ~80 students · 8 teachers · 15 parents",
+                              best: "Showing reporting, media workflows, and billing at scale.",
+                            },
+                            {
+                              name: "New Trial School",
+                              key: "trial_new",
+                              size: "2 classes · 15 students · 2 teachers · 5 parents",
+                              best: "Onboarding demos — shows an incomplete, real-looking setup.",
+                            },
+                          ].map(({ name, key, size, best }) => (
+                            <div key={key} className="bg-muted/50 rounded-lg p-2.5 border border-border space-y-0.5">
+                              <p className="text-xs font-semibold text-foreground">{name} <code className="font-mono text-primary ml-1 text-[10px]">{key}</code></p>
+                              <p className="text-xs text-muted-foreground">{size}</p>
+                              <p className="text-xs text-muted-foreground italic">Best for: {best}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "actions",
+                    icon: RefreshCw,
+                    title: "Generate, Refresh, and Clear",
+                    searchText: "generate refresh clear data actions difference what happens replace wipe reset",
+                    body: (
+                      <div className="space-y-2">
+                        <div className="space-y-2.5 mt-1">
+                          {[
+                            {
+                              label: "Generate Demo Data",
+                              color: "text-primary",
+                              desc: "First-time seeding. Clears any prior data and seeds a full fresh dataset for the chosen scenario. Use this when the school has no demo data yet.",
+                            },
+                            {
+                              label: "Refresh",
+                              color: "text-foreground",
+                              desc: "Re-seeds the school with a fresh dataset (same as generate, but labeled for repeat use). The school shell is preserved. Use to reset after a messy walkthrough.",
+                            },
+                            {
+                              label: "Clear Data",
+                              color: "text-destructive",
+                              desc: "Removes all demo-generated records — students, billing, attendance, updates, user accounts — but leaves the school record intact. Use to empty out without re-generating.",
+                            },
+                          ].map(({ label, color, desc }) => (
+                            <div key={label} className="flex gap-2.5 items-start">
+                              <span className={`font-semibold text-xs w-28 flex-shrink-0 mt-0.5 ${color}`}>{label}</span>
+                              <span className="text-xs">{desc}</span>
+                            </div>
+                          ))}
+                        </div>
+                        <Tip>If a generation run fails partway through, click <strong>Generate</strong> again — the route auto-clears partial data before retrying. Check the run history panel for the error message.</Tip>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "credentials",
+                    icon: Key,
+                    title: "Demo login credentials",
+                    searchText: "credentials login password email teacher parent batch id accounts demo users find",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Every generation run creates a unique <strong className="text-foreground">batch ID</strong> — a 7-character base-36 timestamp (e.g. <code className="bg-muted px-1 rounded text-xs">abc1x3f</code>). All demo user credentials use this batch ID.</p>
+                        <div className="space-y-1.5">
+                          <div className="bg-muted/50 rounded-lg p-2.5 border border-border">
+                            <p className="text-xs font-semibold text-foreground mb-1">Teacher accounts</p>
+                            <p className="text-xs font-mono">Email: teacher.demo.{"{batchId}"}.01@example.com</p>
+                            <p className="text-xs font-mono">Password: DemoPass@{"{batchId}"}!</p>
+                            <p className="text-xs text-muted-foreground mt-1">Numbered 01, 02… up to the teacher count for the scenario.</p>
+                          </div>
+                          <div className="bg-muted/50 rounded-lg p-2.5 border border-border">
+                            <p className="text-xs font-semibold text-foreground mb-1">Parent accounts</p>
+                            <p className="text-xs font-mono">Email: parent.demo.{"{batchId}"}.01@example.com</p>
+                            <p className="text-xs font-mono">Password: DemoPass@{"{batchId}"}!</p>
+                            <p className="text-xs text-muted-foreground mt-1">Numbered 01, 02… up to the parent count for the scenario.</p>
+                          </div>
+                        </div>
+                        <Tip>The batch ID changes every time you generate or refresh. To find the current batch ID: Supabase Dashboard → Authentication → Users, filter by <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">@example.com</code> to see the current emails.</Tip>
+                        <Code>{`-- Find demo user emails for a school
+SELECT au.email, p.role, p.full_name
+FROM profiles p
+JOIN auth.users au ON au.id = p.id
+WHERE p.school_id = '<DEMO_SCHOOL_UUID>'
+  AND p.role IN ('teacher', 'parent')
+ORDER BY p.role, au.email;`}</Code>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "history",
+                    icon: Clock,
+                    title: "Reading the run history",
+                    searchText: "run history log status completed failed generating pending timestamps scenario",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Each school card shows a <strong className="text-foreground">Run History</strong> toggle at the bottom. Expand it to see the last 10 runs for that school.</p>
+                        <div className="space-y-2 mt-1">
+                          {[
+                            { label: "Generating…", desc: "Run is currently in progress. Refresh the page in a few seconds to see the updated status." },
+                            { label: "Generated", desc: "Completed successfully. The stat pills above show what was seeded." },
+                            { label: "Cleared", desc: "A clear operation completed — all data was removed." },
+                            { label: "Failed", desc: "An error occurred. The error message is shown on the card. Run again to retry — partial data is auto-cleaned." },
+                          ].map(({ label, desc }) => (
+                            <div key={label} className="flex gap-2.5 items-start">
+                              <span className="font-semibold text-xs w-24 flex-shrink-0 mt-0.5 text-foreground">{label}</span>
+                              <span className="text-xs">{desc}</span>
+                            </div>
+                          ))}
+                        </div>
+                        <Note>The stat pills (Students, Teachers, Bills, etc.) on the card reflect the <strong>last successful generate run</strong>, not the current live count. They don&apos;t update after a clear.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "safety",
+                    icon: AlertTriangle,
+                    title: "Safety & isolation",
+                    searchText: "safety isolation real school data protect block server side is_demo guard",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Demo operations have multiple layers of protection to prevent accidental changes to real school data:</p>
+                        <div className="space-y-1.5 mt-1">
+                          {[
+                            "The generate and clear API routes verify is_demo = true before running. Any request targeting a non-demo school is rejected with a 403 error.",
+                            "This page only lists schools where is_demo = true — real schools never appear here.",
+                            "Demo user accounts use @example.com emails and are immediately identifiable in Supabase Auth.",
+                            "Each run is logged to demo_data_runs with the school ID, scenario, action, and timestamp for a full audit trail.",
+                          ].map((item, i) => (
+                            <div key={i} className="flex items-start gap-2 text-xs text-muted-foreground">
+                              <CheckCircle className="w-3.5 h-3.5 text-green-500 flex-shrink-0 mt-0.5" /><span>{item}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ),
+                  },
+                ];
+                const q = helpSearch.trim().toLowerCase();
+                const filtered = q ? topics.filter((t) => t.title.toLowerCase().includes(q) || t.searchText.toLowerCase().includes(q)) : topics;
+                if (filtered.length === 0) return (
+                  <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
+                    <HelpCircle className="w-8 h-8 mb-3 opacity-40" />
+                    <p className="text-sm">No topics match <span className="font-medium text-foreground">&quot;{helpSearch}&quot;</span></p>
+                    <button onClick={() => setHelpSearch("")} className="mt-2 text-xs text-primary hover:underline">Clear search</button>
+                  </div>
+                );
+                return filtered.map((item) => {
+                  const Icon = item.icon;
+                  const open = !!helpExpanded[item.id];
+                  return (
+                    <div key={item.id} className="border border-border rounded-xl overflow-hidden">
+                      <button className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-muted/60 transition-colors"
+                        onClick={() => setHelpExpanded((prev) => ({ ...prev, [item.id]: !prev[item.id] }))}>
+                        <div className="w-6 h-6 rounded-md bg-muted flex items-center justify-center flex-shrink-0"><Icon className="w-3.5 h-3.5 text-muted-foreground" /></div>
+                        <span className="flex-1 text-sm font-medium">{item.title}</span>
+                        {open ? <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0" /> : <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />}
+                      </button>
+                      {open && <div className="px-4 pb-4 pt-3 text-sm text-muted-foreground leading-relaxed border-t border-border bg-muted/20">{item.body}</div>}
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+            <div className="px-5 py-3 border-t border-border flex-shrink-0 text-xs text-muted-foreground">
+              {helpSearch ? <span>Showing results for &quot;<span className="font-medium text-foreground">{helpSearch}</span>&quot;</span> : <span>7 topics · click any to expand</span>}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Generate / Refresh Modal */}
       <Modal

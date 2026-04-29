@@ -4,6 +4,8 @@ import { useRouter } from "next/navigation";
 import {
   Plus, Eye, Pencil, AlertTriangle, CheckCircle, XCircle, Clock,
   Ban, CreditCard, FlaskConical, HardDrive, ChevronDown, ChevronUp, ShieldCheck,
+  HelpCircle, X, Search, ChevronRight, BookOpen, Layers, School as SchoolIcon,
+  Shield, Key, Database, Server, UserCheck, ArrowRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -152,6 +154,10 @@ export default function SuperAdminSchoolsPage() {
   const [readinessOpen, setReadinessOpen] = useState(false);
   const [auditLogCount, setAuditLogCount] = useState<number | null>(null);
   const [readinessLoading, setReadinessLoading] = useState(false);
+
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [helpSearch, setHelpSearch] = useState("");
+  const [helpExpanded, setHelpExpanded] = useState<Record<string, boolean>>({});
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingSchool, setEditingSchool] = useState<School | null>(null);
@@ -421,9 +427,18 @@ export default function SuperAdminSchoolsPage() {
           <h1>Schools</h1>
           <p className="text-sm text-muted-foreground mt-1">Manage all schools on the platform</p>
         </div>
-        <Button onClick={openCreate}>
-          <Plus className="w-4 h-4 mr-2" /> New School
-        </Button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setHelpOpen(true)}
+            className="p-2 rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+            title="Platform docs"
+          >
+            <HelpCircle className="w-5 h-5" />
+          </button>
+          <Button onClick={openCreate}>
+            <Plus className="w-4 h-4 mr-2" /> New School
+          </Button>
+        </div>
       </div>
 
       {error && <ErrorAlert message={error} />}
@@ -786,6 +801,462 @@ export default function SuperAdminSchoolsPage() {
           </div>
         </div>
       </Modal>
+
+      {/* ── Platform Docs Help Drawer ── */}
+      {helpOpen && (
+        <div className="fixed inset-0 z-50 flex justify-end">
+          <div className="absolute inset-0 bg-black/30" onClick={() => { setHelpOpen(false); setHelpSearch(""); }} />
+          <div className="relative flex flex-col w-full max-w-lg bg-card border-l border-border shadow-2xl h-full animate-in slide-in-from-right duration-200">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center"><BookOpen className="w-4 h-4 text-primary" /></div>
+                <h2 className="font-semibold text-base">Platform Documentation</h2>
+              </div>
+              <button onClick={() => { setHelpOpen(false); setHelpSearch(""); }} className="p-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="px-5 py-3 border-b border-border flex-shrink-0">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <input type="text" placeholder="Search topics..." value={helpSearch} onChange={(e) => setHelpSearch(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 text-sm bg-muted border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors" />
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-2 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full">
+              {(() => {
+                const Step = ({ n, text }: { n: number; text: React.ReactNode }) => (
+                  <div className="flex gap-2.5 items-start">
+                    <span className="flex-shrink-0 w-5 h-5 rounded-full bg-primary/15 text-primary text-[10px] font-bold flex items-center justify-center mt-0.5">{n}</span>
+                    <span>{text}</span>
+                  </div>
+                );
+                const Tip = ({ children }: { children: React.ReactNode }) => (
+                  <div className="mt-3 flex gap-2 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2 text-amber-800 dark:text-amber-300 text-xs">
+                    <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" /><span>{children}</span>
+                  </div>
+                );
+                const Note = ({ children }: { children: React.ReactNode }) => (
+                  <div className="mt-3 flex gap-2 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg px-3 py-2 text-blue-800 dark:text-blue-300 text-xs">
+                    <HelpCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" /><span>{children}</span>
+                  </div>
+                );
+                const Danger = ({ children }: { children: React.ReactNode }) => (
+                  <div className="mt-3 flex gap-2 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2 text-red-800 dark:text-red-300 text-xs">
+                    <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" /><span>{children}</span>
+                  </div>
+                );
+                const Code = ({ children }: { children: string }) => (
+                  <pre className="bg-muted rounded-lg p-2.5 text-xs font-mono text-foreground overflow-x-auto border border-border my-2 whitespace-pre-wrap break-all">{children}</pre>
+                );
+                const Check = ({ items }: { items: string[] }) => (
+                  <ul className="space-y-1.5 my-2">
+                    {items.map((item, i) => (
+                      <li key={i} className="flex items-start gap-2 text-xs text-muted-foreground">
+                        <CheckCircle className="w-3.5 h-3.5 text-green-500 flex-shrink-0 mt-0.5" /><span>{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                );
+                type HelpTopic = { id: string; icon: React.ElementType; title: string; searchText: string; body: React.ReactNode };
+                const topics: HelpTopic[] = [
+                  {
+                    id: "overview",
+                    icon: Layers,
+                    title: "Platform Overview",
+                    searchText: "platform overview multi-tenant saas school roles permissions school_id rls",
+                    body: (
+                      <div className="space-y-3">
+                        <p>Lauris Learn is a multi-tenant platform. Each <strong className="text-foreground">School</strong> is an independent tenant with its own data, users, branding, and billing. All tables include a <code className="bg-muted px-1 rounded text-xs">school_id</code> column and RLS ensures tenants cannot access each other&apos;s data.</p>
+                        <p>Four user roles:</p>
+                        <div className="grid grid-cols-1 gap-2 mt-1">
+                          {[
+                            { role: "super_admin", desc: "Full platform access — create/manage all schools, impersonate admins, generate demo data." },
+                            { role: "school_admin", desc: "Full access to their school. Manages students, billing, classes, staff, settings." },
+                            { role: "teacher", desc: "Limited to their assigned classes. Records attendance, posts updates, observations." },
+                            { role: "parent", desc: "Read-only portal. Views their child&apos;s attendance, updates, billing, progress, events." },
+                          ].map(({ role, desc }) => (
+                            <div key={role} className="bg-muted/50 rounded-lg p-2.5 border border-border">
+                              <p className="text-xs font-mono font-semibold text-primary mb-0.5">{role}</p>
+                              <p className="text-xs text-muted-foreground">{desc}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "creating-school",
+                    icon: SchoolIcon,
+                    title: "Creating a New School",
+                    searchText: "create new school record seed default branch year trial admin setup",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Go to <strong className="text-foreground">Schools</strong> and click <strong className="text-foreground">+ New School</strong>. Creating a school automatically:</p>
+                        <Check items={[
+                          "Creates the schools record with is_demo = false",
+                          "Seeds a default School Year (SY 2025–2026, active)",
+                          "Seeds a default Branch (Main Branch)",
+                          "Sets trial_start_date, trial_end_date, trial_status per your input",
+                        ]} />
+                        <Tip>After creating a school you must manually create the first <strong>school_admin</strong> user. Have the admin sign up via <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">/login</code>, then update their profile in Supabase SQL Editor (see Onboarding Checklist).</Tip>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "trial-system",
+                    icon: Clock,
+                    title: "Trial System",
+                    searchText: "trial system expire active converted days countdown read-only banner school",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Every school has three trial columns on the <code className="bg-muted px-1 rounded text-xs">schools</code> table:</p>
+                        <div className="space-y-1.5">
+                          {[
+                            { col: "trial_start_date", desc: "When the trial began (DATE)" },
+                            { col: "trial_end_date",   desc: "When the trial expires (DATE)" },
+                            { col: "trial_status",     desc: "active | expired | converted" },
+                          ].map(({ col, desc }) => (
+                            <div key={col} className="flex gap-3 items-start">
+                              <code className="bg-muted px-1.5 py-0.5 rounded text-xs font-mono text-foreground flex-shrink-0">{col}</code>
+                              <span className="text-xs">{desc}</span>
+                            </div>
+                          ))}
+                        </div>
+                        <p className="text-xs">Dashboard banner logic (SchoolContext) checks on load:</p>
+                        <ul className="text-xs space-y-1 list-disc list-inside">
+                          <li><strong className="text-foreground">≤ 7 days remaining</strong> — amber warning banner with countdown</li>
+                          <li><strong className="text-foreground">Expired</strong> — red banner; all write actions disabled (read-only mode)</li>
+                          <li><strong className="text-foreground">Converted</strong> — no banner; full access regardless of dates</li>
+                        </ul>
+                        <Note>To extend a trial, use the Edit (pencil) button on the school row and update the trial end date. Changes take effect on the school admin&apos;s next page load.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "impersonation",
+                    icon: Shield,
+                    title: "Impersonation",
+                    searchText: "impersonate school admin troubleshoot setup session banner exit",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Click <strong className="text-foreground">View</strong> on any school row to enter that school&apos;s dashboard as a school admin. A blue banner appears at the top confirming you are impersonating. Click <strong className="text-foreground">Exit Impersonation</strong> to return.</p>
+                        <p className="text-xs font-medium text-foreground">How it works:</p>
+                        <ul className="text-xs space-y-1 list-disc list-inside">
+                          <li>State stored in <code className="bg-muted px-1 rounded">sessionStorage.__ll_impersonating</code></li>
+                          <li>SchoolContext reads this on load and switches the active school_id</li>
+                          <li>Your super_admin auth session is preserved — you are not logged in as the school admin</li>
+                          <li>All writes during impersonation are scoped to that school&apos;s data</li>
+                        </ul>
+                        <Tip>Impersonation is session-scoped — closing the tab ends it automatically. Impersonation events are recorded in the audit log.</Tip>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "demo-data",
+                    icon: FlaskConical,
+                    title: "Demo Data",
+                    searchText: "demo data seed generate refresh reset clear scenario walkthrough test",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Demo data can only be generated for schools with <code className="bg-muted px-1 rounded text-xs">is_demo = true</code>. This flag is a hard safety block — the API will reject any request targeting a non-demo school.</p>
+                        <p className="text-xs font-medium text-foreground">Three scenarios:</p>
+                        <div className="space-y-1.5">
+                          {[
+                            { name: "Small Preschool", key: "small_preschool", detail: "4 classes · ~38 students · 4 teachers · 10 parents" },
+                            { name: "Compliance-Heavy", key: "compliance_heavy", detail: "8 classes · ~80 students · 8 teachers · 15 parents" },
+                            { name: "New Trial School", key: "trial_new", detail: "2 classes · 15 students · 2 teachers · 5 parents" },
+                          ].map(({ name, key, detail }) => (
+                            <div key={key} className="bg-muted/50 rounded-lg p-2.5 border border-border">
+                              <p className="text-xs font-semibold text-foreground">{name} <code className="font-mono text-primary ml-1">{key}</code></p>
+                              <p className="text-xs mt-0.5">{detail}</p>
+                            </div>
+                          ))}
+                        </div>
+                        <p className="text-xs font-medium text-foreground">Actions:</p>
+                        <ul className="text-xs space-y-1 list-disc list-inside">
+                          <li><strong className="text-foreground">Generate</strong> — clears prior data and seeds fresh data</li>
+                          <li><strong className="text-foreground">Refresh</strong> — re-seeds with the same scenario</li>
+                          <li><strong className="text-foreground">Clear Data</strong> — removes all demo data but leaves the school record</li>
+                        </ul>
+                        <Note>Each generation run is tracked in <code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded">demo_data_runs</code>. Run history shows status, scenario, and timestamps for the last 10 runs.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "onboarding",
+                    icon: CheckCircle,
+                    title: "Onboarding Checklist",
+                    searchText: "onboarding checklist new school setup admin assign profile sql class student billing go live",
+                    body: (
+                      <div className="space-y-2">
+                        <div className="space-y-3">
+                          <Step n={1} text={<span><strong>Create the school record</strong> — click + New School. Note the generated School ID (UUID).</span>} />
+                          <Step n={2} text={<span><strong>Admin signs up</strong> — have them navigate to <code className="bg-muted px-1 rounded">/login</code> and create an account.</span>} />
+                          <Step n={3} text={<span><strong>Assign admin to school</strong> — in Supabase SQL Editor:</span>} />
+                        </div>
+                        <Code>{`UPDATE profiles
+SET
+  school_id = '<SCHOOL_UUID>',
+  role      = 'school_admin',
+  full_name = 'Admin Name'
+WHERE email = 'admin@theirschool.com';`}</Code>
+                        <Step n={4} text={<span><strong>Admin configures Settings</strong> — School Info, Branding, School Years, Academic Periods.</span>} />
+                        <Step n={5} text={<span><strong>Finance Setup</strong> — Fee Types, Tuition Configs, Discounts.</span>} />
+                        <Step n={6} text={<span><strong>Classes & Teachers</strong> — create classes, assign teachers, set promotion paths. Teachers use the same sign-up + SQL flow with <code className="bg-muted px-1 rounded">role = &apos;teacher&apos;</code>.</span>} />
+                        <Step n={7} text={<span><strong>Add students</strong> — full name, DOB, gender, guardian(s), enroll into class.</span>} />
+                        <Step n={8} text={<span><strong>Parent portal (optional)</strong> — generate invite link from Students section. Parents accept at <code className="bg-muted px-1 rounded">/invite?token=...</code>.</span>} />
+                        <Step n={9} text={<span><strong>Generate initial billing</strong> — Billing → Generate Billing for the first month.</span>} />
+                        <Step n={10} text={<span><strong>Verify & go live</strong> — test login as teacher, parent, and confirm trial dates.</span>} />
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "trial-to-prod",
+                    icon: ArrowRight,
+                    title: "Trial → Production Migration",
+                    searchText: "trial production convert paid subscription migrate keep data fresh clean status",
+                    body: (
+                      <div className="space-y-3">
+                        <p className="text-xs font-semibold text-foreground">Option A — Keep trial data (most common)</p>
+                        <p className="text-xs">Use when the school entered real students and configured actual data during the trial.</p>
+                        <div className="space-y-1.5">
+                          <Step n={1} text={<span>Edit the school row — set <code className="bg-muted px-1 rounded">trial_status → converted</code>, <code className="bg-muted px-1 rounded">subscription_status → active</code>, billing plan/cycle.</span>} />
+                          <Step n={2} text={<span>Admin&apos;s next page load shows no trial banner and full write access.</span>} />
+                          <Step n={3} text={<span>If school was also a demo, clear demo data then set <code className="bg-muted px-1 rounded">is_demo = false</code> in SQL.</span>} />
+                        </div>
+                        <p className="text-xs font-semibold text-foreground mt-3">Option B — Fresh production school</p>
+                        <p className="text-xs">Use when the trial contained only test/demo data and the school wants a clean slate.</p>
+                        <div className="space-y-1.5">
+                          <Step n={1} text={<span>Create a new school with <code className="bg-muted px-1 rounded">trial_status = converted</code> immediately.</span>} />
+                          <Step n={2} text={<span>Re-assign the admin profile&apos;s <code className="bg-muted px-1 rounded">school_id</code> to the new school UUID.</span>} />
+                          <Step n={3} text={<span>Admin redoes Settings, Finance Setup, Classes, and Students.</span>} />
+                          <Step n={4} text={<span>Decommission the old trial school — leave as expired or delete via SQL (cascades all data).</span>} />
+                        </div>
+                        <Danger>Deleting a school is irreversible. All cascaded data — students, billing, payments, attendance, enrollments — will be permanently deleted. Always take a Supabase backup first.</Danger>
+                        <Note><strong>Which option?</strong> Ask the admin: "Did you enter real student names and configure your actual fee structure during the trial?" Yes → Option A. Just clicked around or used demo data → Option B.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "credentials",
+                    icon: Key,
+                    title: "Demo Credentials",
+                    searchText: "demo credentials login email password batch id teacher parent accounts find",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Each demo generation run creates a unique <strong className="text-foreground">batch ID</strong> (7-char base-36 timestamp, e.g. <code className="bg-muted px-1 rounded text-xs">abc1x3f</code>). All credentials for that run use this batch ID:</p>
+                        <div className="space-y-1.5">
+                          <div className="bg-muted/50 rounded-lg p-2.5 border border-border">
+                            <p className="text-xs font-semibold text-foreground mb-1">Teacher accounts</p>
+                            <p className="text-xs font-mono">Email: teacher.demo.{"{batchId}"}.01@example.com</p>
+                            <p className="text-xs font-mono">Password: DemoPass@{"{batchId}"}!</p>
+                          </div>
+                          <div className="bg-muted/50 rounded-lg p-2.5 border border-border">
+                            <p className="text-xs font-semibold text-foreground mb-1">Parent accounts</p>
+                            <p className="text-xs font-mono">Email: parent.demo.{"{batchId}"}.01@example.com</p>
+                            <p className="text-xs font-mono">Password: DemoPass@{"{batchId}"}!</p>
+                          </div>
+                        </div>
+                        <Tip>The batch ID changes every time you generate or refresh. To find the current batch ID: Supabase Dashboard → Authentication → Users, filter by <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">@example.com</code>.</Tip>
+                        <Code>{`-- Find current demo user emails for a school
+SELECT au.email, p.role, p.full_name
+FROM profiles p
+JOIN auth.users au ON au.id = p.id
+WHERE p.school_id = '<DEMO_SCHOOL_UUID>'
+  AND p.role IN ('teacher', 'parent')
+ORDER BY p.role, au.email;`}</Code>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "database",
+                    icon: Database,
+                    title: "Database & Migrations",
+                    searchText: "database migrations schema sql supabase rls row level security tables fresh project",
+                    body: (
+                      <div className="space-y-2">
+                        <p>All schema files live in <code className="bg-muted px-1 rounded text-xs">supabase/</code>. Run in order in the Supabase SQL Editor:</p>
+                        <div className="space-y-2">
+                          <Step n={1} text={<span>Run <code className="bg-muted px-1 rounded">supabase/schema.sql</code> — creates all tables, enums, RLS policies, triggers, and seed data.</span>} />
+                          <Step n={2} text={<span>Run migrations <code className="bg-muted px-1 rounded">001_additions.sql</code> → latest file in ascending numeric order. Current sequence: 001 → 043.</span>} />
+                          <Step n={3} text={<span>Verify RLS is enabled on all tables:</span>} />
+                        </div>
+                        <Code>{`SELECT tablename, rowsecurity
+FROM pg_tables
+WHERE schemaname = 'public'
+ORDER BY tablename;`}</Code>
+                        <Tip>If you add a new table: (1) enable RLS, (2) add a super_admin bypass policy using <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">is_super_admin()</code>, and (3) add school-member read/write policies.</Tip>
+                        <p className="text-xs font-medium text-foreground">Key design rules:</p>
+                        <ul className="text-xs space-y-1 list-disc list-inside">
+                          <li>Every tenant table has <code className="bg-muted px-1 rounded">school_id UUID NOT NULL REFERENCES schools(id) ON DELETE CASCADE</code></li>
+                          <li>PKs use <code className="bg-muted px-1 rounded">UUID DEFAULT gen_random_uuid()</code></li>
+                          <li>The <code className="bg-muted px-1 rounded">handle_new_user</code> trigger auto-creates a profile row on auth user creation — always upsert profiles, never insert</li>
+                        </ul>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "storage",
+                    icon: Server,
+                    title: "Storage Buckets",
+                    searchText: "storage bucket updates-media private photos signed url receipt path convention create",
+                    body: (
+                      <div className="space-y-2">
+                        <p>All media uses a single private bucket: <code className="bg-muted px-1 rounded text-xs">updates-media</code>. It must be created manually in the Supabase Dashboard (migrations add policies but not the bucket itself).</p>
+                        <Step n={1} text={<span>Supabase Dashboard → Storage → New Bucket: name <strong>updates-media</strong>, Public: <strong>OFF</strong>, 10 MB limit, image/* MIME types.</span>} />
+                        <p className="text-xs font-medium text-foreground">Path conventions:</p>
+                        <div className="space-y-1.5">
+                          {[
+                            { path: "updates-media/{post_id}/{filename}", desc: "Class update photos" },
+                            { path: "payment-receipts/{schoolId}/{paymentId}.{ext}", desc: "Payment receipt photos" },
+                            { path: "proud-moments/{schoolId}/{momentId}/{filename}", desc: "Proud moment media" },
+                          ].map(({ path, desc }) => (
+                            <div key={path} className="flex gap-2 items-start">
+                              <code className="bg-muted px-1.5 py-0.5 rounded text-xs font-mono text-foreground flex-shrink-0">{path}</code>
+                              <span className="text-xs text-muted-foreground">{desc}</span>
+                            </div>
+                          ))}
+                        </div>
+                        <p className="text-xs">Signed URLs expire after <strong className="text-foreground">1 hour</strong>. Pages generate signed URLs in a single batch on load via <code className="bg-muted px-1 rounded">createSignedUrls()</code>.</p>
+                        <Note>Planned (not yet built): split into separate <code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded">receipts</code> and <code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded">student-documents</code> buckets when the document hub is built.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "roles",
+                    icon: UserCheck,
+                    title: "Roles & Permissions",
+                    searchText: "roles permissions access control super admin teacher parent school billing attendance",
+                    body: (
+                      <div className="space-y-2">
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-xs border-collapse">
+                            <thead>
+                              <tr className="bg-muted/50">
+                                <th className="text-left p-2 border border-border font-medium text-foreground">Action</th>
+                                <th className="text-center p-1.5 border border-border font-medium text-foreground">SA</th>
+                                <th className="text-center p-1.5 border border-border font-medium text-foreground">Admin</th>
+                                <th className="text-center p-1.5 border border-border font-medium text-foreground">Teacher</th>
+                                <th className="text-center p-1.5 border border-border font-medium text-foreground">Parent</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {[
+                                ["Create / delete schools",         "✅", "—", "—", "—"],
+                                ["Impersonate school admins",        "✅", "—", "—", "—"],
+                                ["Generate demo data",               "✅", "—", "—", "—"],
+                                ["Manage all school data",           "✅", "✅", "—", "—"],
+                                ["Manage students & guardians",      "✅", "✅", "—", "—"],
+                                ["Manage billing & payments",        "✅", "✅", "—", "—"],
+                                ["Record attendance",                "✅", "✅", "✅", "—"],
+                                ["Post class updates",               "✅", "✅", "✅", "—"],
+                                ["Record progress observations",     "✅", "✅", "✅", "—"],
+                                ["View child data (read-only)",      "—", "—", "—", "✅"],
+                                ["RSVP to events",                   "—", "—", "—", "✅"],
+                                ["Report absence",                   "—", "—", "—", "✅"],
+                              ].map(([action, ...cols]) => (
+                                <tr key={action} className="hover:bg-muted/30 transition-colors">
+                                  <td className="p-1.5 border border-border text-muted-foreground">{action}</td>
+                                  {cols.map((val, i) => (
+                                    <td key={i} className="p-1.5 border border-border text-center">
+                                      {val === "✅" ? <span className="text-green-500">✅</span> : <span className="text-muted-foreground/40">—</span>}
+                                    </td>
+                                  ))}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        <p className="text-xs text-muted-foreground">SA = super_admin</p>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "troubleshooting",
+                    icon: HelpCircle,
+                    title: "Troubleshooting",
+                    searchText: "troubleshoot fix issue admin login wrong school parent no data RLS storage photo bucket duplicate trial overlay",
+                    body: (
+                      <div className="space-y-3">
+                        {[
+                          {
+                            issue: "Admin sees no school data / wrong school",
+                            cause: "Profile has wrong school_id or no school_id.",
+                            fix: `UPDATE profiles SET school_id = '<SCHOOL_UUID>', role = 'school_admin' WHERE email = 'admin@school.com';`,
+                          },
+                          {
+                            issue: "Parent can't see their child's data",
+                            cause: "Guardian record not created, or profile role is not 'parent'.",
+                            fix: `-- Check guardian record\nSELECT * FROM guardians WHERE email = 'parent@example.com';\n\n-- Fix role if needed\nUPDATE profiles SET role = 'parent' WHERE email = 'parent@example.com';`,
+                          },
+                          {
+                            issue: "duplicate key: one_active_year_per_school",
+                            cause: "School already has an active school year. Only one allowed per school.",
+                            fix: `-- Archive the old one first\nUPDATE school_years SET status = 'archived' WHERE id = '<OLD_SY_UUID>';`,
+                          },
+                          {
+                            issue: "Demo data generation fails partway through",
+                            cause: "Prior partial run left orphaned data.",
+                            fix: "Click Generate again — the route auto-clears partial data before retrying. If it keeps failing, check the run history panel for the error message.",
+                          },
+                          {
+                            issue: "Read-only overlay persists after converting trial",
+                            cause: "SchoolContext caches trial state on load.",
+                            fix: "Ask the admin to press F5 / hard-refresh. trial_status = 'converted' is picked up on reload.",
+                          },
+                          {
+                            issue: "Photo upload fails silently",
+                            cause: "updates-media bucket was not created, or created as public.",
+                            fix: "Verify in Supabase Dashboard → Storage that 'updates-media' exists and is set to private.",
+                          },
+                        ].map(({ issue, cause, fix }) => (
+                          <div key={issue} className="border border-border rounded-xl p-3 space-y-1.5">
+                            <p className="text-xs font-medium text-foreground flex items-start gap-2">
+                              <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0 mt-0.5" />{issue}
+                            </p>
+                            <p className="text-xs text-muted-foreground ml-5.5"><strong className="text-foreground">Cause:</strong> {cause}</p>
+                            {fix.includes("\n") || fix.startsWith("UPDATE") || fix.startsWith("SELECT") || fix.startsWith("--") ? (
+                              <Code>{fix}</Code>
+                            ) : (
+                              <p className="text-xs text-muted-foreground"><strong className="text-foreground">Fix:</strong> {fix}</p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ),
+                  },
+                ];
+                const q = helpSearch.trim().toLowerCase();
+                const filtered = q ? topics.filter((t) => t.title.toLowerCase().includes(q) || t.searchText.toLowerCase().includes(q)) : topics;
+                if (filtered.length === 0) return (
+                  <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
+                    <HelpCircle className="w-8 h-8 mb-3 opacity-40" />
+                    <p className="text-sm">No topics match <span className="font-medium text-foreground">&quot;{helpSearch}&quot;</span></p>
+                    <button onClick={() => setHelpSearch("")} className="mt-2 text-xs text-primary hover:underline">Clear search</button>
+                  </div>
+                );
+                return filtered.map((item) => {
+                  const Icon = item.icon;
+                  const open = !!helpExpanded[item.id];
+                  return (
+                    <div key={item.id} className="border border-border rounded-xl overflow-hidden">
+                      <button className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-muted/60 transition-colors"
+                        onClick={() => setHelpExpanded((prev) => ({ ...prev, [item.id]: !prev[item.id] }))}>
+                        <div className="w-6 h-6 rounded-md bg-muted flex items-center justify-center flex-shrink-0"><Icon className="w-3.5 h-3.5 text-muted-foreground" /></div>
+                        <span className="flex-1 text-sm font-medium">{item.title}</span>
+                        {open ? <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0" /> : <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />}
+                      </button>
+                      {open && <div className="px-4 pb-4 pt-3 text-sm text-muted-foreground leading-relaxed border-t border-border bg-muted/20">{item.body}</div>}
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+            <div className="px-5 py-3 border-t border-border flex-shrink-0 text-xs text-muted-foreground">
+              {helpSearch ? <span>Showing results for &quot;<span className="font-medium text-foreground">{helpSearch}</span>&quot;</span> : <span>12 topics · click any to expand</span>}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Edit / School Management Modal */}
       <Modal
