@@ -1,6 +1,5 @@
 "use client";
 import { useEffect, useState, useRef } from "react";
-import { useRouter } from "next/navigation";
 import {
   Plus, ArrowRight, Search, TrendingUp, Pencil,
   X, BookOpen, HelpCircle, AlertTriangle, ChevronDown, ChevronRight, UserCheck, Tag,
@@ -114,9 +113,8 @@ const STATUS_FLOW: Record<InquiryStatus, InquiryStatus | null> = {
 };
 
 export default function EnrollmentPage() {
-  const { schoolId, activeYear, userRole } = useSchoolContext();
+  const { schoolId, activeYear, userRole, userId } = useSchoolContext();
   const supabase = createClient();
-  const router = useRouter();
 
   const [inquiries, setInquiries] = useState<Inquiry[]>([]);
   const [classOptions, setClassOptions] = useState<ClassOption[]>([]);
@@ -147,6 +145,10 @@ export default function EnrollmentPage() {
   const [convertDob, setConvertDob] = useState("");
   const [convertGender, setConvertGender] = useState("");
 
+  // ── Billing setup gate ────────────────────────────────────────────────────
+  const [billingSetup, setBillingSetup] = useState<{ feeTypesOk: boolean; tuitionConfigsOk: boolean } | null>(null);
+  const [billingSetupChecking, setBillingSetupChecking] = useState(false);
+
   // ── Fork picker + returning student flow ──────────────────────────────────
   const [forkOpen, setForkOpen] = useState(false);
   const [returningOpen, setReturningOpen] = useState(false);
@@ -158,7 +160,16 @@ export default function EnrollmentPage() {
   const [returningOverride, setReturningOverride] = useState("");
   const [returningSaving, setReturningSaving] = useState(false);
   const [returningError, setReturningError] = useState<string | null>(null);
-  const [returningSuccess, setReturningSuccess] = useState<{ studentId: string; studentName: string } | null>(null);
+  const [returningReserved, setReturningReserved] = useState<{ studentId: string; studentName: string; classId: string } | null>(null);
+  const [enrollmentNotes, setEnrollmentNotes] = useState("");
+  const [showPaymentForm, setShowPaymentForm] = useState(false);
+  const [paymentMode, setPaymentMode] = useState<"simple" | "itemized">("simple");
+  const [reservePayment, setReservePayment] = useState({ amount: "", method: "cash", date: new Date().toISOString().split("T")[0], orNumber: "" });
+  const [itemizedAmounts, setItemizedAmounts] = useState<Record<string, string>>({});
+  const [feeTypes, setFeeTypes] = useState<{ id: string; name: string; defaultAmount: number | null }[]>([]);
+  const [reservePaymentSaving, setReservePaymentSaving] = useState(false);
+  const [reservePaymentError, setReservePaymentError] = useState<string | null>(null);
+  const [reservePaymentDone, setReservePaymentDone] = useState(false);
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -174,6 +185,11 @@ export default function EnrollmentPage() {
     return () => { if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [returningSearch, schoolId]);
+
+  useEffect(() => {
+    if (returningOpen && schoolId) loadFeeTypes();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [returningOpen, schoolId]);
 
   async function loadAll() {
     setLoading(true);
@@ -490,6 +506,27 @@ export default function EnrollmentPage() {
     setReturningSearching(false);
   }
 
+  async function checkBillingSetup() {
+    if (!schoolId || billingSetup !== null) return;
+    setBillingSetupChecking(true);
+    const [ftRes, tcRes] = await Promise.all([
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (supabase as any).from("fee_types").select("id", { count: "exact", head: true }).eq("school_id", schoolId).eq("is_active", true),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (supabase as any).from("tuition_configs").select("id", { count: "exact", head: true }).eq("school_id", schoolId),
+    ]);
+    setBillingSetup({
+      feeTypesOk:      (ftRes.count  ?? 0) > 0,
+      tuitionConfigsOk: (tcRes.count ?? 0) > 0,
+    });
+    setBillingSetupChecking(false);
+  }
+
+  function openFork() {
+    setForkOpen(true);
+    checkBillingSetup();
+  }
+
   function openReturning() {
     setForkOpen(false);
     setReturningOpen(true);
@@ -499,7 +536,13 @@ export default function EnrollmentPage() {
     setReturningClassId("");
     setReturningOverride("");
     setReturningError(null);
-    setReturningSuccess(null);
+    setReturningReserved(null);
+    setEnrollmentNotes("");
+    setShowPaymentForm(false);
+    setPaymentMode("simple");
+    setReservePayment({ amount: "", method: "cash", date: new Date().toISOString().split("T")[0], orNumber: "" });
+    setReservePaymentDone(false);
+    setReservePaymentError(null);
   }
 
   function selectReturning(student: ReturnStudent) {
@@ -546,12 +589,137 @@ export default function EnrollmentPage() {
       return;
     }
 
-    setReturningSuccess({
+    setReturningReserved({
       studentId: returningSelected.id,
       studentName: `${returningSelected.firstName} ${returningSelected.lastName}`,
+      classId: returningClassId,
     });
+    setShowPaymentForm(false);
+    setReservePayment({ amount: "", method: "cash", date: new Date().toISOString().split("T")[0], orNumber: "" });
+    setReservePaymentError(null);
+    setReservePaymentDone(false);
     setReturningSaving(false);
     await loadAll();
+  }
+
+  async function loadFeeTypes() {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data } = await (supabase as any)
+      .from("fee_types")
+      .select("id, name, default_amount")
+      .eq("school_id", schoolId!)
+      .eq("is_active", true)
+      .order("name");
+    const items = (data ?? []).map((ft: { id: string; name: string; default_amount: number | null }) => ({
+      id: ft.id, name: ft.name, defaultAmount: ft.default_amount ?? null,
+    }));
+    setFeeTypes(items);
+    const init: Record<string, string> = {};
+    items.forEach((ft: { id: string; defaultAmount: number | null }) => {
+      init[ft.id] = ft.defaultAmount != null ? ft.defaultAmount.toString() : "";
+    });
+    setItemizedAmounts(init);
+  }
+
+  async function handleReservationPayment() {
+    if (!returningReserved || !activeYear?.id || !schoolId) return;
+    setReservePaymentSaving(true);
+    setReservePaymentError(null);
+
+    const currentMonth = new Date().toISOString().substring(0, 7) + "-01";
+    const notes = enrollmentNotes.trim() || null;
+
+    try {
+      if (paymentMode === "itemized") {
+        const items = feeTypes.filter((ft) => {
+          const a = parseFloat(itemizedAmounts[ft.id] ?? "");
+          return !isNaN(a) && a > 0;
+        });
+        if (items.length === 0) {
+          setReservePaymentError("Please enter an amount for at least one fee type.");
+          setReservePaymentSaving(false);
+          return;
+        }
+        for (const ft of items) {
+          const amt = parseFloat(itemizedAmounts[ft.id]);
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: br, error: brErr } = await (supabase as any)
+            .from("billing_records")
+            .insert({
+              school_id: schoolId,
+              student_id: returningReserved.studentId,
+              class_id: returningReserved.classId,
+              school_year_id: activeYear.id,
+              billing_month: currentMonth,
+              amount_due: amt,
+              status: "paid",
+              description: ft.name,
+              fee_type_id: ft.id,
+              notes,
+            })
+            .select("id")
+            .single();
+          if (brErr) throw new Error(brErr.message);
+
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { error: payErr } = await (supabase as any)
+            .from("payments")
+            .insert({
+              billing_record_id: br.id,
+              amount: amt,
+              payment_method: reservePayment.method,
+              payment_date: reservePayment.date,
+              or_number: reservePayment.orNumber || null,
+              status: "confirmed",
+              recorded_by: userId ?? null,
+            });
+          if (payErr) throw new Error(payErr.message);
+        }
+      } else {
+        const amt = parseFloat(reservePayment.amount);
+        if (isNaN(amt) || amt <= 0) {
+          setReservePaymentError("Please enter a valid amount.");
+          setReservePaymentSaving(false);
+          return;
+        }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: br, error: brErr } = await (supabase as any)
+          .from("billing_records")
+          .insert({
+            school_id: schoolId,
+            student_id: returningReserved.studentId,
+            class_id: returningReserved.classId,
+            school_year_id: activeYear.id,
+            billing_month: currentMonth,
+            amount_due: amt,
+            status: "paid",
+            description: "Registration / Reservation Fee",
+            notes,
+          })
+          .select("id")
+          .single();
+        if (brErr) throw new Error(brErr.message);
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { error: payErr } = await (supabase as any)
+          .from("payments")
+          .insert({
+            billing_record_id: br.id,
+            amount: amt,
+            payment_method: reservePayment.method,
+            payment_date: reservePayment.date,
+            or_number: reservePayment.orNumber || null,
+            status: "confirmed",
+            recorded_by: userId ?? null,
+          });
+        if (payErr) throw new Error(payErr.message);
+      }
+
+      setReservePaymentDone(true);
+    } catch (err: unknown) {
+      setReservePaymentError(err instanceof Error ? err.message : "Payment recording failed.");
+    }
+    setReservePaymentSaving(false);
   }
 
   async function markNotProceeding(id: string) {
@@ -632,7 +800,7 @@ export default function EnrollmentPage() {
           <button onClick={() => { setHelpOpen(true); setHelpSearch(""); }} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors px-2">
             <HelpCircle className="w-4 h-4" /> Help
           </button>
-          <Button onClick={() => setForkOpen(true)}>
+          <Button onClick={openFork}>
             <Plus className="w-4 h-4" /> Start Enrollment
           </Button>
         </div>
@@ -1402,7 +1570,7 @@ export default function EnrollmentPage() {
                           <Step n={2} text={<span>Search by student name, nickname, student code, or parent name. Results appear after 2 characters.</span>} />
                           <Step n={3} text={<span>Students tagged as <strong>Eligible — ready to enroll</strong> (green) are cleared from Year-End Classification. These are your primary targets.</span>} />
                           <Step n={4} text={<span>Select a student to proceed. The class selector defaults to classes matching the <strong>recommended next level</strong> but you can choose any class.</span>} />
-                          <Step n={5} text={<span>Click <strong>Confirm Enrollment</strong>. After success, use <strong>Proceed to Billing</strong> to record a registration fee if needed.</span>} />
+                          <Step n={5} text={<span>Click <strong>Reserve Slot</strong>. The slot is reserved but not confirmed until payment is made. Use <strong>Record Payment</strong> in the next screen to collect a registration fee and secure the slot.</span>} />
                         </div>
                         <Tip>Students with non-eligible classifications (Retained, Graduated, etc.) show a warning and require an override reason from a school admin before enrolling.</Tip>
                         <Note>If a student is <strong>already enrolled</strong> in the active year, enrollment is blocked outright — no override is possible. Check the Students page to view their current enrollment.</Note>
@@ -1489,18 +1657,81 @@ export default function EnrollmentPage() {
       {/* ── Fork Picker Modal ─────────────────────────────────────────────── */}
       <Modal open={forkOpen} onClose={() => setForkOpen(false)} title="Start Enrollment" className="max-w-sm">
         <div className="space-y-3 pt-1">
-          <button
-            onClick={openReturning}
-            className="w-full flex items-start gap-4 p-4 rounded-xl border-2 border-border hover:border-primary hover:bg-primary/5 transition-colors text-left group"
-          >
-            <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0 group-hover:bg-primary/20 transition-colors mt-0.5">
-              <UserCheck className="w-5 h-5 text-primary" />
+
+          {/* Billing setup gate — shown while checking or when incomplete */}
+          {(billingSetupChecking || (billingSetup && (!billingSetup.feeTypesOk || !billingSetup.tuitionConfigsOk))) && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-2">
+              {billingSetupChecking ? (
+                <div className="flex items-center gap-2 text-sm text-amber-700">
+                  <RefreshCw className="w-4 h-4 animate-spin flex-shrink-0" />
+                  Checking billing setup…
+                </div>
+              ) : (
+                <>
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                    <p className="text-sm font-semibold text-amber-800">Billing setup required</p>
+                  </div>
+                  <p className="text-xs text-amber-700 pl-6">
+                    Complete billing setup before enrolling students so fees can be properly recorded.
+                  </p>
+                  <ul className="pl-6 space-y-0.5">
+                    {!billingSetup?.feeTypesOk && (
+                      <li className="text-xs text-amber-700 flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500 flex-shrink-0" />
+                        No active fee types defined
+                      </li>
+                    )}
+                    {!billingSetup?.tuitionConfigsOk && (
+                      <li className="text-xs text-amber-700 flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500 flex-shrink-0" />
+                        No tuition rates configured
+                      </li>
+                    )}
+                  </ul>
+                  <div className="pl-6 pt-1">
+                    <a
+                      href="/billing"
+                      onClick={() => setForkOpen(false)}
+                      className="inline-flex items-center gap-1 text-xs font-medium text-amber-800 underline underline-offset-2 hover:text-amber-900"
+                    >
+                      Go to Billing → Setup
+                      <ArrowRight className="w-3 h-3" />
+                    </a>
+                  </div>
+                </>
+              )}
             </div>
-            <div>
-              <p className="font-semibold text-sm">Enroll Returning Student</p>
-              <p className="text-xs text-muted-foreground mt-0.5">Search for an existing student and create a new enrollment for this school year.</p>
-            </div>
-          </button>
+          )}
+
+          {/* Enroll Returning Student — blocked when fee types are missing */}
+          {(() => {
+            const blocked = billingSetup !== null && !billingSetup.feeTypesOk;
+            return (
+              <button
+                onClick={blocked ? undefined : openReturning}
+                disabled={billingSetupChecking || blocked}
+                className={`w-full flex items-start gap-4 p-4 rounded-xl border-2 transition-colors text-left group
+                  ${blocked
+                    ? "border-border bg-muted/50 opacity-60 cursor-not-allowed"
+                    : "border-border hover:border-primary hover:bg-primary/5"
+                  }`}
+              >
+                <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 transition-colors
+                  ${blocked ? "bg-muted" : "bg-primary/10 group-hover:bg-primary/20"}`}>
+                  <UserCheck className={`w-5 h-5 ${blocked ? "text-muted-foreground" : "text-primary"}`} />
+                </div>
+                <div>
+                  <p className="font-semibold text-sm">Enroll Returning Student</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {blocked
+                      ? "Set up fee types in Billing → Setup first."
+                      : "Search for an existing student and create a new enrollment for this school year."}
+                  </p>
+                </div>
+              </button>
+            );
+          })()}
 
           <button
             onClick={() => { setForkOpen(false); setModalOpen(true); setForm(EMPTY_FORM); setFormError(null); }}
@@ -1520,42 +1751,221 @@ export default function EnrollmentPage() {
       {/* ── Returning Student Modal ────────────────────────────────────────── */}
       <Modal
         open={returningOpen}
-        onClose={() => { setReturningOpen(false); setReturningSelected(null); setReturningSuccess(null); }}
+        onClose={() => {
+          setReturningOpen(false);
+          setReturningSelected(null);
+          setReturningReserved(null);
+          setEnrollmentNotes("");
+          setShowPaymentForm(false);
+          setPaymentMode("simple");
+          setReservePaymentDone(false);
+          setReservePaymentError(null);
+        }}
         title="Enroll Returning Student"
         className="max-w-2xl"
       >
         <div className="space-y-4">
-          {/* ── Success state ── */}
-          {returningSuccess && (
-            <div className="space-y-4">
-              <div className="flex items-start gap-3 p-4 bg-green-50 border border-green-200 rounded-xl">
-                <Check className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-semibold text-sm text-green-800">{returningSuccess.studentName} enrolled successfully</p>
-                  <p className="text-xs text-green-700 mt-0.5">A new enrollment has been created for {activeYear?.name ?? "the active year"}.</p>
+          {/* ── Slot reserved state ── */}
+          {returningReserved && (() => {
+            const slotExpiry = (() => {
+              if (!activeYear?.startDate) return null;
+              const d = new Date(activeYear.startDate + "T00:00:00");
+              d.setDate(d.getDate() - 7);
+              return d.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+            })();
+
+            if (reservePaymentDone) {
+              return (
+                <div className="space-y-4">
+                  <div className="flex items-start gap-3 p-4 bg-green-50 border border-green-200 rounded-xl">
+                    <Check className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-semibold text-sm text-green-800">Payment recorded</p>
+                      <p className="text-xs text-green-700 mt-0.5">
+                        The slot for <strong>{returningReserved.studentName}</strong> is now secured.
+                        Full payment history is available in <strong>Billing → Payments</strong>.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex justify-end">
+                    <Button onClick={() => { setReturningOpen(false); setReturningReserved(null); setReservePaymentDone(false); }}>
+                      Done
+                    </Button>
+                  </div>
                 </div>
+              );
+            }
+
+            if (showPaymentForm) {
+              const itemizedTotal = feeTypes.reduce((sum, ft) => {
+                const v = parseFloat(itemizedAmounts[ft.id] ?? "");
+                return sum + (isNaN(v) ? 0 : v);
+              }, 0);
+              const canSubmit = paymentMode === "itemized"
+                ? itemizedTotal > 0 && !!reservePayment.date
+                : !!reservePayment.amount && !!reservePayment.date;
+
+              return (
+                <div className="space-y-4">
+                  <button
+                    onClick={() => setShowPaymentForm(false)}
+                    className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    ← Back
+                  </button>
+                  <p className="text-sm font-medium">Record initial payment for <strong>{returningReserved.studentName}</strong></p>
+
+                  {/* Payment mode toggle */}
+                  <div className="flex rounded-lg border border-border overflow-hidden text-sm">
+                    <button
+                      type="button"
+                      onClick={() => setPaymentMode("simple")}
+                      className={`flex-1 py-2 transition-colors ${paymentMode === "simple" ? "bg-primary text-white font-medium" : "bg-muted text-muted-foreground hover:bg-accent"}`}
+                    >
+                      Single payment
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPaymentMode("itemized")}
+                      className={`flex-1 py-2 transition-colors ${paymentMode === "itemized" ? "bg-primary text-white font-medium" : "bg-muted text-muted-foreground hover:bg-accent"}`}
+                    >
+                      Itemize by fee type
+                    </button>
+                  </div>
+
+                  {/* Simple mode: single amount */}
+                  {paymentMode === "simple" && (
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Amount *</label>
+                      <Input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        placeholder="0.00"
+                        value={reservePayment.amount}
+                        onChange={(e) => setReservePayment({ ...reservePayment, amount: e.target.value })}
+                      />
+                    </div>
+                  )}
+
+                  {/* Itemized mode: per fee type */}
+                  {paymentMode === "itemized" && (
+                    <div className="space-y-2">
+                      {feeTypes.length === 0 ? (
+                        <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                          No fee types defined yet. Add fee types in Billing → Setup → Fee Types, or use Single Payment instead.
+                        </p>
+                      ) : (
+                        <>
+                          <div className="border border-border rounded-lg overflow-hidden">
+                            {feeTypes.map((ft, i) => (
+                              <div key={ft.id} className={`flex items-center gap-3 px-3 py-2.5 ${i > 0 ? "border-t border-border" : ""}`}>
+                                <span className="flex-1 text-sm">{ft.name}</span>
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  placeholder="0.00"
+                                  value={itemizedAmounts[ft.id] ?? ""}
+                                  onChange={(e) => setItemizedAmounts({ ...itemizedAmounts, [ft.id]: e.target.value })}
+                                  className="w-32 text-right"
+                                />
+                              </div>
+                            ))}
+                            <div className="flex items-center gap-3 px-3 py-2.5 border-t border-border bg-muted/50">
+                              <span className="flex-1 text-sm font-semibold">Total</span>
+                              <span className="w-32 text-right text-sm font-semibold">
+                                ₱{itemizedTotal.toLocaleString("en-PH", { minimumFractionDigits: 2 })}
+                              </span>
+                            </div>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Common fields: method, date, OR# */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Payment Method *</label>
+                      <Select value={reservePayment.method} onChange={(e) => setReservePayment({ ...reservePayment, method: e.target.value })}>
+                        <option value="cash">Cash</option>
+                        <option value="gcash">GCash</option>
+                        <option value="maya">Maya</option>
+                        <option value="bank_transfer">Bank Transfer</option>
+                        <option value="card">Card</option>
+                        <option value="other">Other</option>
+                      </Select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Date *</label>
+                      <DatePicker value={reservePayment.date} onChange={(v) => setReservePayment({ ...reservePayment, date: v })} />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">OR Number <span className="text-muted-foreground font-normal">(optional)</span></label>
+                    <Input
+                      placeholder="e.g. OR-001"
+                      value={reservePayment.orNumber}
+                      onChange={(e) => setReservePayment({ ...reservePayment, orNumber: e.target.value })}
+                    />
+                  </div>
+
+                  {reservePaymentError && <ErrorAlert message={reservePaymentError} />}
+                  <div className="flex justify-end gap-2 pt-1 border-t border-border">
+                    <Button variant="outline" onClick={() => setShowPaymentForm(false)} disabled={reservePaymentSaving}>Cancel</Button>
+                    <Button onClick={handleReservationPayment} disabled={reservePaymentSaving || !canSubmit}>
+                      {reservePaymentSaving ? <><RefreshCw className="w-4 h-4 animate-spin" /> Saving…</> : <><Check className="w-4 h-4" /> Confirm Payment</>}
+                    </Button>
+                  </div>
+                </div>
+              );
+            }
+
+            return (
+              <div className="space-y-4">
+                <div className="flex items-start gap-3 p-4 bg-blue-50 border border-blue-200 rounded-xl">
+                  <Check className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-semibold text-sm text-blue-800">Slot reserved for {returningReserved.studentName}</p>
+                    <p className="text-xs text-blue-700 mt-0.5">
+                      A slot has been reserved for {activeYear?.name ?? "the upcoming school year"}.
+                    </p>
+                  </div>
+                </div>
+                <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl space-y-1.5">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                    <p className="text-sm font-medium text-amber-800">Slot is not yet guaranteed</p>
+                  </div>
+                  <p className="text-xs text-amber-700 pl-6">
+                    This reservation does not confirm the student&apos;s enrollment. The slot will only be secured once payment has been received.
+                  </p>
+                  {slotExpiry && (
+                    <p className="text-xs text-amber-700 pl-6 font-medium">
+                      This slot will be held until <strong>{slotExpiry}</strong>. Unreserved slots may be released after this date.
+                    </p>
+                  )}
+                </div>
+                <div className="flex gap-2 pt-1">
+                  <Button onClick={() => setShowPaymentForm(true)} className="flex-1">
+                    Record Payment
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => { setReturningOpen(false); setReturningReserved(null); }}
+                    className="flex-1"
+                  >
+                    Done
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground text-center">Full billing and payment history is available in the Billing section.</p>
               </div>
-              <div className="flex gap-2 pt-1">
-                <Button
-                  variant="outline"
-                  onClick={() => router.push("/billing")}
-                  className="flex-1"
-                >
-                  <ArrowRight className="w-4 h-4" /> Proceed to Billing
-                </Button>
-                <Button
-                  onClick={() => { setReturningOpen(false); setReturningSuccess(null); }}
-                  className="flex-1"
-                >
-                  Done
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground text-center">To record a registration fee or payment, use the Billing page.</p>
-            </div>
-          )}
+            );
+          })()}
 
           {/* ── Search + results step ── */}
-          {!returningSuccess && !returningSelected && (
+          {!returningReserved && !returningSelected && (
             <>
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -1629,7 +2039,7 @@ export default function EnrollmentPage() {
           )}
 
           {/* ── Enrollment confirmation step ── */}
-          {!returningSuccess && returningSelected && (() => {
+          {!returningReserved && returningSelected && (() => {
             const s = returningSelected;
             const isBlocked = s.derivedStatus === "already_enrolled";
             const needsOverride =
@@ -1757,16 +2167,27 @@ export default function EnrollmentPage() {
                   </div>
                 )}
 
+                {/* Reference / Notes */}
+                <div>
+                  <label className="block text-sm font-medium mb-1">Reference / Notes <span className="text-muted-foreground font-normal">(optional)</span></label>
+                  <Textarea
+                    value={enrollmentNotes}
+                    onChange={(e) => setEnrollmentNotes(e.target.value)}
+                    placeholder="e.g. Early bird registrant · referred by John Smith · scholarship applicant…"
+                    rows={2}
+                  />
+                </div>
+
                 {returningError && <ErrorAlert message={returningError} />}
 
                 <div className="flex justify-end gap-2 pt-1 border-t border-border">
-                  <Button variant="outline" onClick={() => { setReturningSelected(null); setReturningError(null); }}>Back</Button>
+                  <Button variant="outline" onClick={() => { setReturningSelected(null); setReturningError(null); setEnrollmentNotes(""); }}>Back</Button>
                   {!isBlocked && !(needsOverride && !canOverride) && (
                     <Button
                       onClick={handleReturningEnroll}
                       disabled={returningSaving || !returningClassId || (needsOverride && canOverride && !returningOverride.trim())}
                     >
-                      {returningSaving ? <><RefreshCw className="w-4 h-4 animate-spin" /> Enrolling…</> : <><Check className="w-4 h-4" /> Confirm Enrollment</>}
+                      {returningSaving ? <><RefreshCw className="w-4 h-4 animate-spin" /> Reserving…</> : <><Check className="w-4 h-4" /> Reserve Slot</>}
                     </Button>
                   )}
                 </div>

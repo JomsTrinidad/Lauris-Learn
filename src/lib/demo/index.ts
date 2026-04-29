@@ -406,17 +406,75 @@ export async function generateDemoData(
   const mo = 0;
 
   // ── 5. Fee types ────────────────────────────────────────────────────────────
-  const feeTypeNames = scenario === "compliance_heavy"
-    ? ["Tuition Fee", "Miscellaneous Fee", "Activity Fee", "Book Fee"]
+  type FeeTypeDef = { name: string; defaultAmount: number };
+  const feeTypeDefs: FeeTypeDef[] = scenario === "compliance_heavy"
+    ? [
+        { name: "Tuition Fee",       defaultAmount: cfg.tuitionAmount },
+        { name: "Miscellaneous Fee", defaultAmount: 500 },
+        { name: "Activity Fee",      defaultAmount: 300 },
+        { name: "Book Fee",          defaultAmount: 800 },
+      ]
     : scenario === "trial_new"
-    ? ["Tuition Fee"]
-    : ["Tuition Fee", "Miscellaneous Fee"];
+    ? [{ name: "Tuition Fee", defaultAmount: cfg.tuitionAmount }]
+    : [
+        { name: "Tuition Fee",       defaultAmount: cfg.tuitionAmount },
+        { name: "Miscellaneous Fee", defaultAmount: 500 },
+      ];
 
   const { data: ftData } = await (admin as any)
     .from("fee_types")
-    .insert(feeTypeNames.map((name) => ({ school_id: schoolId, name, is_active: true })))
+    .insert(feeTypeDefs.map(({ name, defaultAmount }) => ({
+      school_id: schoolId, name, is_active: true, default_amount: defaultAmount,
+    })))
     .select("id, name");
   const tuitionFeeTypeId: string | null = (ftData ?? []).find((f: any) => f.name === "Tuition Fee")?.id ?? null;
+  const miscFeeTypeId: string | null    = (ftData ?? []).find((f: any) => f.name === "Miscellaneous Fee")?.id ?? null;
+
+  // ── 5b. Tuition configs (per level × academic period) ──────────────────────
+  const uniqueLevels = [...new Set(cfg.classes.map((c) => c.level))];
+  // Level tuition amounts: base + small increment per level index for realism
+  const levelTuition: Record<string, number> = {};
+  uniqueLevels.forEach((lvl, i) => { levelTuition[lvl] = cfg.tuitionAmount + i * 200; });
+  const archivedBillingMonths = cfg.billingMonths.length;
+  const tuitionConfigRows: Record<string, unknown>[] = [];
+
+  if (archivedRegularPeriodId) {
+    uniqueLevels.forEach((lvl) => {
+      tuitionConfigRows.push({
+        school_id: schoolId,
+        academic_period_id: archivedRegularPeriodId,
+        level: lvl,
+        total_amount: levelTuition[lvl] * archivedBillingMonths,
+        months: archivedBillingMonths,
+      });
+    });
+  }
+  if (regularPeriodId) {
+    uniqueLevels.forEach((lvl) => {
+      tuitionConfigRows.push({
+        school_id: schoolId,
+        academic_period_id: regularPeriodId,
+        level: lvl,
+        total_amount: levelTuition[lvl] * 10,
+        months: 10,
+      });
+    });
+  }
+  if (tuitionConfigRows.length) await batchInsert(admin, "tuition_configs", tuitionConfigRows);
+
+  // ── 5c. Discounts ────────────────────────────────────────────────────────────
+  const discountRows: Record<string, unknown>[] = [
+    { school_id: schoolId, name: "Early Enrollment Discount", type: "percentage", scope: "early_enrollment", value: 10,  is_active: true },
+    { school_id: schoolId, name: "Sibling Discount",          type: "fixed",      scope: "sibling",          value: 500, is_active: true },
+    { school_id: schoolId, name: "Full Payment Discount",     type: "percentage", scope: "full_payment",     value: 5,   is_active: true },
+  ];
+  if (scenario === "compliance_heavy") {
+    discountRows.push({ school_id: schoolId, name: "Scholar Discount", type: "percentage", scope: "custom", value: 15, is_active: true });
+  }
+  await batchInsert(admin, "discounts", discountRows);
+
+  // suppress unused warning — miscFeeTypeId reserved for future itemized billing seed
+  void miscFeeTypeId;
 
   // ── 6. Progress categories ──────────────────────────────────────────────────
   const { data: pcData } = await (admin as any)
@@ -769,8 +827,9 @@ export async function clearDemoData(
   if (classIds.length)   await (admin as any).from("class_teachers").delete().in("class_id", classIds);
   if (studentIds.length) await (admin as any).from("enrollments").delete().in("student_id", studentIds);
   await (admin as any).from("classes").delete().eq("school_id", schoolId);
-  await (admin as any).from("academic_periods").delete().eq("school_id", schoolId);
+  await (admin as any).from("academic_periods").delete().eq("school_id", schoolId); // cascades → tuition_configs
   await (admin as any).from("fee_types").delete().eq("school_id", schoolId);
+  await (admin as any).from("discounts").delete().eq("school_id", schoolId);
   await (admin as any).from("events").delete().eq("school_id", schoolId);
   await (admin as any).from("holidays").delete().eq("school_id", schoolId);
   await (admin as any).from("enrollment_inquiries").delete().eq("school_id", schoolId);
