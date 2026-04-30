@@ -905,7 +905,7 @@ export default function StudentsPage() {
         case "not_eligible_retained": return `Retained in ${r.currentClassLevel || "current level"}`;
         case "not_eligible_other":   return "Not eligible — other reason";
         case "graduated":            return `Graduated from ${r.currentClassLevel || "current level"}`;
-        case "not_continuing":       return "Not continuing / transferred";
+        case "not_continuing":       return "Withdrawn";
         default: return "";
       }
     }
@@ -1342,7 +1342,7 @@ export default function StudentsPage() {
                                   {!isGraduatingClass && (
                                     <ActionBtn active={row.classification === "not_continuing"} onClick={() => setRowClassification(row.studentId, "not_continuing")}
                                       className="text-rose-600 border-rose-300 bg-rose-50">
-                                      Not cont.
+                                      Withdrawn
                                     </ActionBtn>
                                   )}
                                   <ActionBtn active={row.classification === "not_eligible_retained"} onClick={() => setRowClassification(row.studentId, "not_eligible_retained")}
@@ -1379,7 +1379,7 @@ export default function StudentsPage() {
                         <p><span className="font-semibold text-green-700">{graduatedCount} student{graduatedCount !== 1 ? "s" : ""}</span> graduated</p>
                       )}
                       {notContCount > 0 && (
-                        <p className="text-muted-foreground text-xs">{notContCount} not continuing</p>
+                        <p className="text-muted-foreground text-xs">{notContCount} withdrawn</p>
                       )}
                       {unsetCount > 0 && (
                         <p className="text-muted-foreground text-xs">{unsetCount} not yet classified</p>
@@ -2071,7 +2071,7 @@ export default function StudentsPage() {
                         <div className="space-y-2 mt-2">
                           <Step n={1} text={<span>Click the <strong>Year-End Classification</strong> tab at the top of this page.</span>} />
                           <Step n={2} text={<span>Use <strong>Step 1</strong> to apply one classification to all students in a class at once.</span>} />
-                          <Step n={3} text={<span>Review and adjust individual students in <strong>Step 2</strong>. Each student gets one of five outcomes: <strong>Eligible</strong>, <strong>Retain</strong>, <strong>Other reason</strong>, <strong>Graduate</strong>, or <strong>Not continuing</strong>.</span>} />
+                          <Step n={3} text={<span>Review and adjust individual students in <strong>Step 2</strong>. Each student gets one of five outcomes: <strong>Eligible</strong>, <strong>Retain</strong>, <strong>Other reason</strong>, <strong>Graduate</strong>, or <strong>Withdrawn</strong>.</span>} />
                           <Step n={4} text={<span>Click <strong>Save Year-End Classifications</strong>. The outcome is saved on each student's current enrollment record.</span>} />
                         </div>
                         <Tip>Classifications do not create new enrollment records — they only tag the current enrollment. To enroll a classified student in the next year, use <strong>Add Enrollment</strong> from their profile.</Tip>

@@ -251,11 +251,12 @@ ON CONFLICT (id) DO NOTHING;
 -- Fee types
 INSERT INTO fee_types (school_id, name, description)
 VALUES
-  ('00000000-0000-0000-0000-000000000001', 'Tuition',        'Monthly tuition fee'),
-  ('00000000-0000-0000-0000-000000000001', 'Books',          'Textbooks and learning materials'),
-  ('00000000-0000-0000-0000-000000000001', 'Enrollment Fee', 'One-time registration fee'),
-  ('00000000-0000-0000-0000-000000000001', 'Activity Fee',   'Field trips and special activities'),
-  ('00000000-0000-0000-0000-000000000001', 'Miscellaneous',  'Other charges')
+  ('00000000-0000-0000-0000-000000000001', 'Tuition',                   'Monthly tuition fee'),
+  ('00000000-0000-0000-0000-000000000001', 'Enrollment Fee',            'One-time registration and enrollment fee'),
+  ('00000000-0000-0000-0000-000000000001', 'Learning Materials',        'Textbooks, workbooks, and learning kits'),
+  ('00000000-0000-0000-0000-000000000001', 'Uniform & Supplies',        'School uniforms, PE attire, and classroom supplies'),
+  ('00000000-0000-0000-0000-000000000001', 'Activity & Optional Fees',  'Field trips, school events, and optional programs'),
+  ('00000000-0000-0000-0000-000000000001', 'External Fees',             'Government requirements, insurance, and non-school charges')
 ON CONFLICT DO NOTHING;
 
 -- Tuition configs (Regular Term)

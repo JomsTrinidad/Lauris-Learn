@@ -161,6 +161,7 @@ export default function EnrollmentPage() {
   const [returningSaving, setReturningSaving] = useState(false);
   const [returningError, setReturningError] = useState<string | null>(null);
   const [returningReserved, setReturningReserved] = useState<{ studentId: string; studentName: string; classId: string } | null>(null);
+  const [returningPreloaded, setReturningPreloaded] = useState<ReturnStudent[]>([]);
   const [enrollmentNotes, setEnrollmentNotes] = useState("");
   const [showPaymentForm, setShowPaymentForm] = useState(false);
   const [paymentMode, setPaymentMode] = useState<"simple" | "itemized">("simple");
@@ -187,7 +188,7 @@ export default function EnrollmentPage() {
   }, [returningSearch, schoolId]);
 
   useEffect(() => {
-    if (returningOpen && schoolId) loadFeeTypes();
+    if (returningOpen && schoolId) { loadFeeTypes(); loadPreloadedStudents(); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [returningOpen, schoolId]);
 
@@ -358,13 +359,54 @@ export default function EnrollmentPage() {
 
   // ── Returning student search ───────────────────────────────────────────────
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function mapRawToReturnStudent(s: any, activeYearId: string | null): ReturnStudent {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const guardians: any[] = s.guardians ?? [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const enrollments: any[] = s.enrollments ?? [];
+    const primaryG = guardians.find((g: { is_primary: boolean }) => g.is_primary) ?? guardians[0] ?? null;
+    const classifiedEnroll = enrollments
+      .filter((e) => e.status === "completed" && e.progression_status)
+      .sort((a, b) => (b.school_years?.name ?? "").localeCompare(a.school_years?.name ?? ""))
+    [0] ?? null;
+    const latestEnroll = [...enrollments]
+      .sort((a, b) => (b.school_years?.name ?? "").localeCompare(a.school_years?.name ?? ""))
+    [0] ?? null;
+    const displayEnroll = classifiedEnroll ?? latestEnroll;
+    const progressionStatus: string | null = classifiedEnroll?.progression_status ?? null;
+    const progressionNotes: string | null = classifiedEnroll?.progression_notes ?? null;
+    const recommendedNextLevel: string | null = displayEnroll?.classes?.next_class?.level ?? null;
+    const activeYearEnroll = activeYearId
+      ? enrollments.find((e) => e.school_year_id === activeYearId && e.status !== "withdrawn" && e.status !== "completed")
+      : null;
+    const alreadyEnrolled = !!activeYearEnroll;
+    const activeYearClassName: string | null = activeYearEnroll?.classes?.name ?? null;
+    let derivedStatus: ReturnDerivedStatus;
+    if (alreadyEnrolled)                              derivedStatus = "already_enrolled";
+    else if (progressionStatus === "eligible")        derivedStatus = "eligible_not_enrolled";
+    else if (progressionStatus === "not_eligible_retained") derivedStatus = "not_eligible_retained";
+    else if (progressionStatus === "not_eligible_other")    derivedStatus = "not_eligible_other";
+    else if (progressionStatus === "graduated")       derivedStatus = "graduated";
+    else if (progressionStatus === "not_continuing")  derivedStatus = "not_continuing";
+    else                                              derivedStatus = "no_classification";
+    return {
+      id: s.id, firstName: s.first_name, lastName: s.last_name,
+      preferredName: s.preferred_name ?? null, studentCode: s.student_code ?? null,
+      guardianName: primaryG?.full_name ?? "—", guardianPhone: primaryG?.phone ?? "—",
+      lastSchoolYearName: displayEnroll?.school_years?.name ?? "—",
+      lastClassName: displayEnroll?.classes?.name ?? "—",
+      lastClassLevel: displayEnroll?.classes?.level ?? "—",
+      progressionStatus, progressionNotes, recommendedNextLevel, derivedStatus, activeYearClassName,
+    };
+  }
+
   async function searchReturningStudents(q: string) {
     if (!schoolId || q.trim().length < 2) { setReturningResults([]); return; }
     setReturningSearching(true);
 
     const like = `%${q.trim()}%`;
 
-    // Query 1: match on student name / preferred name / student code
     const [directRes, guardianRes] = await Promise.all([
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (supabase as any)
@@ -383,7 +425,6 @@ export default function EnrollmentPage() {
         .or(`first_name.ilike.${like},last_name.ilike.${like},preferred_name.ilike.${like},student_code.ilike.${like}`)
         .limit(15),
 
-      // Query 2: match on guardian name / phone
       supabase
         .from("guardians")
         .select("student_id, full_name, phone")
@@ -391,7 +432,6 @@ export default function EnrollmentPage() {
         .limit(15),
     ]);
 
-    // Collect student IDs found via guardian match, then fetch those students
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const guardianStudentIds: string[] = ((guardianRes.data ?? []) as any[]).map((g: any) => g.student_id);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -415,8 +455,6 @@ export default function EnrollmentPage() {
       guardianStudents = data ?? [];
     }
 
-    // Merge + deduplicate by student id
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const seen = new Set<string>();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const merged: any[] = [];
@@ -424,75 +462,8 @@ export default function EnrollmentPage() {
       if (!seen.has(s.id)) { seen.add(s.id); merged.push(s); }
     }
 
-    const results: ReturnStudent[] = merged.slice(0, 15).map((s) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const guardians: any[] = s.guardians ?? [];
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const enrollments: any[] = s.enrollments ?? [];
-      const primaryG = guardians.find((g) => g.is_primary) ?? guardians[0] ?? null;
+    const results: ReturnStudent[] = merged.slice(0, 15).map((s) => mapRawToReturnStudent(s, activeYear?.id ?? null));
 
-      // Most recent completed enrollment (year-end classified)
-      const classifiedEnroll = enrollments
-        .filter((e) => e.status === "completed" && e.progression_status)
-        .sort((a, b) => (b.school_years?.name ?? "").localeCompare(a.school_years?.name ?? ""))
-      [0] ?? null;
-
-      // Fallback: most recent enrollment of any status for display
-      const latestEnroll = enrollments
-        .sort((a, b) => (b.school_years?.name ?? "").localeCompare(a.school_years?.name ?? ""))
-      [0] ?? null;
-
-      const displayEnroll = classifiedEnroll ?? latestEnroll;
-
-      const progressionStatus: string | null = classifiedEnroll?.progression_status ?? null;
-      const progressionNotes: string | null = classifiedEnroll?.progression_notes ?? null;
-      const recommendedNextLevel: string | null = displayEnroll?.classes?.next_class?.level ?? null;
-
-      // Check for active-year enrollment
-      const activeYearEnroll = activeYear?.id
-        ? enrollments.find((e) => e.school_year_id === activeYear.id && e.status !== "withdrawn" && e.status !== "completed")
-        : null;
-      const alreadyEnrolled = !!activeYearEnroll;
-      const activeYearClassName: string | null = activeYearEnroll?.classes?.name ?? null;
-
-      // Derive status
-      let derivedStatus: ReturnDerivedStatus;
-      if (alreadyEnrolled) {
-        derivedStatus = "already_enrolled";
-      } else if (progressionStatus === "eligible") {
-        derivedStatus = "eligible_not_enrolled";
-      } else if (progressionStatus === "not_eligible_retained") {
-        derivedStatus = "not_eligible_retained";
-      } else if (progressionStatus === "not_eligible_other") {
-        derivedStatus = "not_eligible_other";
-      } else if (progressionStatus === "graduated") {
-        derivedStatus = "graduated";
-      } else if (progressionStatus === "not_continuing") {
-        derivedStatus = "not_continuing";
-      } else {
-        derivedStatus = "no_classification";
-      }
-
-      return {
-        id: s.id,
-        firstName: s.first_name,
-        lastName: s.last_name,
-        preferredName: s.preferred_name ?? null,
-        studentCode: s.student_code ?? null,
-        guardianName: primaryG?.full_name ?? "—",
-        guardianPhone: primaryG?.phone ?? "—",
-        lastSchoolYearName: displayEnroll?.school_years?.name ?? "—",
-        lastClassName: displayEnroll?.classes?.name ?? "—",
-        lastClassLevel: displayEnroll?.classes?.level ?? "—",
-        progressionStatus,
-        progressionNotes,
-        recommendedNextLevel,
-        derivedStatus,
-        activeYearClassName,
-      };
-    });
-
-    // Sort: eligible_not_enrolled first, then already_enrolled (to show block clearly), rest alphabetically
     results.sort((a, b) => {
       const rank = (r: ReturnStudent) =>
         r.derivedStatus === "eligible_not_enrolled" ? 0 :
@@ -504,6 +475,39 @@ export default function EnrollmentPage() {
 
     setReturningResults(results);
     setReturningSearching(false);
+  }
+
+  async function loadPreloadedStudents() {
+    if (!schoolId) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data } = await (supabase as any)
+      .from("students")
+      .select(`
+        id, first_name, last_name, preferred_name, student_code,
+        guardians(full_name, phone, is_primary),
+        enrollments(
+          id, status, progression_status, progression_notes, school_year_id,
+          classes(name, level, next_class:classes!next_class_id(level)),
+          school_years(name)
+        )
+      `)
+      .eq("school_id", schoolId)
+      .eq("is_active", true)
+      .limit(40);
+    if (!data) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const mapped: ReturnStudent[] = (data as any[]).map((s) => mapRawToReturnStudent(s, activeYear?.id ?? null));
+    // Sort: eligible first, then no_classification (fill to 5), graduated last
+    mapped.sort((a, b) => {
+      const rank = (r: ReturnStudent) =>
+        r.derivedStatus === "eligible_not_enrolled" ? 0 :
+        r.derivedStatus === "no_classification"     ? 1 :
+        r.derivedStatus === "graduated"             ? 2 : 3;
+      const d = rank(a) - rank(b);
+      if (d !== 0) return d;
+      return `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`);
+    });
+    setReturningPreloaded(mapped.slice(0, 5));
   }
 
   async function checkBillingSetup() {
@@ -532,6 +536,7 @@ export default function EnrollmentPage() {
     setReturningOpen(true);
     setReturningSearch("");
     setReturningResults([]);
+    setReturningPreloaded([]);
     setReturningSelected(null);
     setReturningClassId("");
     setReturningOverride("");
@@ -2033,7 +2038,58 @@ export default function EnrollmentPage() {
                 </div>
               )}
               {!returningSearching && returningSearch.trim().length === 0 && (
-                <p className="text-xs text-muted-foreground text-center py-4">Search for a student to begin. Results show year-end classification status.</p>
+                returningPreloaded.length > 0 ? (
+                  <>
+                    <p className="text-xs text-muted-foreground px-1">
+                      Showing eligible students ready to enroll — search by name or parent name to see all students.
+                    </p>
+                    <div className="divide-y divide-border border border-border rounded-xl overflow-hidden">
+                      {returningPreloaded.map((s) => {
+                        const statusBadge = (() => {
+                          switch (s.derivedStatus) {
+                            case "eligible_not_enrolled":  return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-xs font-medium"><Check className="w-3 h-3" /> Eligible — ready to enroll</span>;
+                            case "already_enrolled":       return <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-xs font-medium">Already enrolled · {s.activeYearClassName}</span>;
+                            case "not_eligible_retained":  return <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-xs font-medium">Retained</span>;
+                            case "not_eligible_other":     return <span className="px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 text-xs font-medium">Not eligible — other</span>;
+                            case "graduated":              return <span className="px-2 py-0.5 rounded-full bg-muted text-muted-foreground text-xs font-medium">Graduated</span>;
+                            case "not_continuing":         return <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-700 text-xs font-medium">Not continuing</span>;
+                            default:                       return <span className="px-2 py-0.5 rounded-full bg-muted text-muted-foreground text-xs font-medium">No classification</span>;
+                          }
+                        })();
+                        return (
+                          <button
+                            key={s.id}
+                            onClick={() => selectReturning(s)}
+                            className="w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-muted/50 transition-colors"
+                          >
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-medium text-sm">
+                                  {s.firstName} {s.lastName}
+                                  {s.preferredName && <span className="text-muted-foreground font-normal"> "{s.preferredName}"</span>}
+                                </span>
+                                {s.studentCode && <span className="font-mono text-xs text-muted-foreground">{s.studentCode}</span>}
+                                {statusBadge}
+                              </div>
+                              <div className="text-xs text-muted-foreground mt-0.5 space-y-0.5">
+                                <p>{s.guardianName} · {s.guardianPhone}</p>
+                                <p>Last: {s.lastSchoolYearName} · {s.lastClassName}{s.lastClassLevel && s.lastClassLevel !== "—" ? ` (${s.lastClassLevel})` : ""}</p>
+                                {s.recommendedNextLevel && <p className="text-primary">→ Recommended next: {s.recommendedNextLevel}</p>}
+                              </div>
+                            </div>
+                            <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0 mt-1" />
+                          </button>
+                        );
+                      })}
+                      <div className="px-4 py-2.5 bg-muted/40 flex items-center gap-2">
+                        <Search className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                        <p className="text-xs text-muted-foreground">Search above to find more students</p>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-xs text-muted-foreground text-center py-4">Search for a student to begin. Results show year-end classification status.</p>
+                )
               )}
             </>
           )}
