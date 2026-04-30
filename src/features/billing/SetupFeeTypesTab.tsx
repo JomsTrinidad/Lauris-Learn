@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { Plus, Pencil, Trash2 } from "lucide-react";
+import { Plus, Pencil, Trash2, Lock, LockOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -22,8 +22,10 @@ export function SetupFeeTypesTab({ schoolId }: { schoolId: string }) {
 
   const fetchFeeTypes = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase.from("fee_types").select("id, name, description, is_active").eq("school_id", schoolId).order("name");
-    setFeeTypes((data ?? []).map((f) => ({ id: f.id, name: f.name, description: f.description ?? "", isActive: f.is_active })));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data } = await (supabase as any).from("fee_types").select("id, name, description, is_active, secures_placement").eq("school_id", schoolId).order("name");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    setFeeTypes((data ?? []).map((f: any) => ({ id: f.id, name: f.name, description: f.description ?? "", isActive: f.is_active, securesPlacement: f.secures_placement ?? false })));
     setLoading(false);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [schoolId]);
@@ -57,6 +59,19 @@ export function SetupFeeTypesTab({ schoolId }: { schoolId: string }) {
     fetchFeeTypes();
   }
 
+  async function toggleSecures(ft: SetupFeeType) {
+    if (ft.securesPlacement) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (supabase as any).from("fee_types").update({ secures_placement: false }).eq("id", ft.id);
+    } else {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (supabase as any).from("fee_types").update({ secures_placement: false }).eq("school_id", schoolId);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (supabase as any).from("fee_types").update({ secures_placement: true }).eq("id", ft.id);
+    }
+    fetchFeeTypes();
+  }
+
   if (loading) return <div className="flex justify-center py-8"><div className="animate-spin rounded-full border-2 border-border border-t-primary w-8 h-8" /></div>;
 
   return (
@@ -69,15 +84,27 @@ export function SetupFeeTypesTab({ schoolId }: { schoolId: string }) {
         {feeTypes.length === 0
           ? <Card><CardContent className="p-8 text-center text-sm text-muted-foreground">No fee types yet.</CardContent></Card>
           : feeTypes.map((ft) => (
-            <Card key={ft.id}><CardContent className="p-4 flex items-center justify-between">
-              <div>
-                <div className="flex items-center gap-2">
+            <Card key={ft.id}><CardContent className="p-4 flex items-center justify-between gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-medium">{ft.name}</span>
                   {!ft.isActive && <Badge variant="default">Inactive</Badge>}
+                  {ft.securesPlacement && (
+                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-primary/10 text-primary text-xs font-medium">
+                      <Lock className="w-3 h-3" /> Secures slot
+                    </span>
+                  )}
                 </div>
                 {ft.description && <p className="text-xs text-muted-foreground mt-0.5">{ft.description}</p>}
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <button
+                  onClick={() => toggleSecures(ft)}
+                  title={ft.securesPlacement ? "Remove slot gate" : "Set as slot payment gate"}
+                  className={`p-1.5 rounded-md border transition-colors text-xs ${ft.securesPlacement ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:bg-muted"}`}
+                >
+                  {ft.securesPlacement ? <Lock className="w-3.5 h-3.5" /> : <LockOpen className="w-3.5 h-3.5" />}
+                </button>
                 <Button size="sm" variant="ghost" onClick={() => toggleActive(ft)}>{ft.isActive ? "Deactivate" : "Activate"}</Button>
                 <Button size="sm" variant="outline" onClick={() => openEdit(ft)}><Pencil className="w-3.5 h-3.5" /></Button>
                 <Button size="sm" variant="outline" onClick={() => handleDelete(ft.id)}><Trash2 className="w-3.5 h-3.5 text-destructive" /></Button>

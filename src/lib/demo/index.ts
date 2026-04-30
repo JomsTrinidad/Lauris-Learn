@@ -406,29 +406,37 @@ export async function generateDemoData(
   const mo = 0;
 
   // ── 5. Fee types ────────────────────────────────────────────────────────────
-  type FeeTypeDef = { name: string; defaultAmount: number };
-  const feeTypeDefs: FeeTypeDef[] = scenario === "compliance_heavy"
-    ? [
-        { name: "Tuition Fee",       defaultAmount: cfg.tuitionAmount },
-        { name: "Miscellaneous Fee", defaultAmount: 500 },
-        { name: "Activity Fee",      defaultAmount: 300 },
-        { name: "Book Fee",          defaultAmount: 800 },
-      ]
-    : scenario === "trial_new"
-    ? [{ name: "Tuition Fee", defaultAmount: cfg.tuitionAmount }]
-    : [
-        { name: "Tuition Fee",       defaultAmount: cfg.tuitionAmount },
-        { name: "Miscellaneous Fee", defaultAmount: 500 },
-      ];
+  const FEE_TYPE_DEFS: Array<{ name: string; defaultAmount: number }> = [
+    { name: "Tuition Fee",       defaultAmount: cfg.tuitionAmount },
+    { name: "Registration Fee",  defaultAmount: 500 },
+    { name: "Miscellaneous Fee", defaultAmount: 500 },
+    { name: "Books & Materials", defaultAmount: 800 },
+    { name: "Uniform Fee",       defaultAmount: 1200 },
+    { name: "Activity Fee",      defaultAmount: 300 },
+    { name: "Field Trip Fee",    defaultAmount: 350 },
+    { name: "Late Payment Fee",  defaultAmount: 200 },
+    { name: "Discount",          defaultAmount: 0 },
+    { name: "Other",             defaultAmount: 0 },
+  ];
 
-  const { data: ftData } = await (admin as any)
-    .from("fee_types")
-    .insert(feeTypeDefs.map(({ name, defaultAmount }) => ({
-      school_id: schoolId, name, is_active: true, default_amount: defaultAmount,
-    })))
-    .select("id, name");
-  const tuitionFeeTypeId: string | null = (ftData ?? []).find((f: any) => f.name === "Tuition Fee")?.id ?? null;
-  const miscFeeTypeId: string | null    = (ftData ?? []).find((f: any) => f.name === "Miscellaneous Fee")?.id ?? null;
+  // Fetch existing fee types so we never insert duplicates (idempotent on re-run)
+  const { data: existingFt } = await (admin as any)
+    .from("fee_types").select("id, name").eq("school_id", schoolId);
+  const existingFtNames = new Set((existingFt ?? []).map((f: any) => f.name as string));
+  const feeTypesToInsert = FEE_TYPE_DEFS.filter((f) => !existingFtNames.has(f.name));
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let ftData: Array<{ id: string; name: string }> = existingFt ?? [];
+  if (feeTypesToInsert.length > 0) {
+    const { data: newFt } = await (admin as any)
+      .from("fee_types")
+      .insert(feeTypesToInsert.map(({ name, defaultAmount }) => ({
+        school_id: schoolId, name, is_active: true, default_amount: defaultAmount,
+      })))
+      .select("id, name");
+    ftData = [...ftData, ...(newFt ?? [])];
+  }
+  const tuitionFeeTypeId: string | null = ftData.find((f: any) => f.name === "Tuition Fee")?.id ?? null;
+  const miscFeeTypeId: string | null    = ftData.find((f: any) => f.name === "Miscellaneous Fee")?.id ?? null;
 
   // ── 5b. Tuition configs (per level × academic period) ──────────────────────
   const uniqueLevels = [...new Set(cfg.classes.map((c) => c.level))];

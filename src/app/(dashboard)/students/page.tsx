@@ -56,6 +56,7 @@ interface AcademicPeriod { id: string; name: string; }
 interface EnrollmentEntry {
   id: string; classId: string; className: string;
   periodId: string | null; periodName: string | null;
+  schoolYearId: string;
   status: EnrollmentStatus; startDate: string | null; endDate: string | null;
 }
 
@@ -74,6 +75,7 @@ interface Student {
   authorizedPickups: string | null; primaryLanguage: string | null;
   specialNeeds: string | null; teacherNotes: string | null; adminNotes: string | null;
   progressionStatus: string | null; progressionNotes: string | null;
+  recommendedNextLevel: string | null;
   photoUrl: string | null;
 }
 
@@ -192,6 +194,7 @@ export default function StudentsPage() {
   const [search, setSearch] = useState("");
   const [classFilter, setClassFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [returningFilter, setReturningFilter] = useState(false);
 
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [addModalOpen, setAddModalOpen] = useState(false);
@@ -343,7 +346,7 @@ export default function StudentsPage() {
         allergies, medical_conditions, emergency_contact_name, emergency_contact_phone,
         authorized_pickups, primary_language, special_needs, teacher_notes, admin_notes,
         guardians(id, full_name, relationship, phone, email, is_primary, communication_preference),
-        enrollments(id, status, class_id, school_year_id, academic_period_id, start_date, end_date, progression_status, progression_notes, classes(name), academic_periods(name))
+        enrollments(id, status, class_id, school_year_id, academic_period_id, start_date, end_date, progression_status, progression_notes, classes(name, next_class:classes!next_class_id(level)), academic_periods(name), school_years(name))
       `)
       .eq("school_id", schoolId!)
       .eq("is_active", true)
@@ -373,10 +376,17 @@ export default function StudentsPage() {
           className: e.classes?.name ?? "—",
           periodId: e.academic_period_id ?? null,
           periodName: e.academic_periods?.name ?? null,
+          schoolYearId: e.school_year_id,
           status: e.status as EnrollmentStatus,
           startDate: e.start_date ?? null,
           endDate: e.end_date ?? null,
         }));
+
+        // Most recent enrollment with a classification (prefer active year, then any prior)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const classifiedEnroll = [...enrollments].filter((e: any) => e.progression_status !== null)
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          .sort((a: any, b: any) => (b.school_years?.name ?? "").localeCompare(a.school_years?.name ?? ""))[0] ?? null;
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const sx = s as any;
@@ -410,9 +420,11 @@ export default function StudentsPage() {
           teacherNotes: sx.teacher_notes ?? null,
           adminNotes: sx.admin_notes ?? null,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          progressionStatus: (activeEnrollment as any)?.progression_status ?? null,
+          progressionStatus: (activeEnrollment as any)?.progression_status ?? classifiedEnroll?.progression_status ?? null,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          progressionNotes: (activeEnrollment as any)?.progression_notes ?? null,
+          progressionNotes: (activeEnrollment as any)?.progression_notes ?? classifiedEnroll?.progression_notes ?? null,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          recommendedNextLevel: (activeEnrollment as any)?.classes?.next_class?.level ?? classifiedEnroll?.classes?.next_class?.level ?? null,
           photoUrl: sx.photo_url ?? null,
         };
       })
@@ -421,15 +433,18 @@ export default function StudentsPage() {
 
   async function loadClasses() {
     if (!activeYear?.id) { setClassOptions([]); return; }
-    const { data } = await supabase
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data } = await (supabase as any)
       .from("classes")
       .select("id, name, capacity")
       .eq("school_id", schoolId!)
       .eq("school_year_id", activeYear.id)
       .eq("is_active", true)
+      .eq("is_system", false)
       .order("start_time");
 
-    const classIds = (data ?? []).map((c) => c.id);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const classIds = (data ?? []).map((c: any) => c.id);
     let enrolledByClass: Record<string, number> = {};
     if (classIds.length > 0) {
       const { data: enrollRows } = await supabase
@@ -443,7 +458,8 @@ export default function StudentsPage() {
     }
 
     setClassOptions(
-      (data ?? []).map((c) => ({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (data ?? []).map((c: any) => ({
         id: c.id, name: c.name, capacity: c.capacity ?? 0, enrolled: enrolledByClass[c.id] ?? 0,
       }))
     );
@@ -941,13 +957,25 @@ export default function StudentsPage() {
 
   // ─── Derived values ────────────────────────────────────────────────────────
 
+  const totalEnrolled = students.filter((s) => s.enrollmentStatus === "enrolled" && s.enrollmentYearId === activeYear?.id).length;
+
+  const returningEnrolledIds = new Set(
+    students.filter((s) => {
+      const enrolledThisYear = s.enrollmentStatus === "enrolled" && s.enrollmentYearId === activeYear?.id;
+      const hasPriorEnrollment = s.allEnrollments.some((e) => e.schoolYearId !== activeYear?.id);
+      return enrolledThisYear && hasPriorEnrollment;
+    }).map((s) => s.id)
+  );
+  const returningEnrolledCount = returningEnrolledIds.size;
+
   const filtered = students.filter((s) => {
     const fullName = `${s.firstName} ${s.lastName}`.toLowerCase();
     const code = (s.studentCode ?? "").toLowerCase();
     const matchSearch = !search || fullName.includes(search.toLowerCase()) || s.guardianName.toLowerCase().includes(search.toLowerCase()) || code.includes(search.toLowerCase());
     const matchClass = !classFilter || s.classId === classFilter;
     const matchStatus = !statusFilter || s.enrollmentStatus === statusFilter;
-    return matchSearch && matchClass && matchStatus;
+    const matchReturning = !returningFilter || returningEnrolledIds.has(s.id);
+    return matchSearch && matchClass && matchStatus && matchReturning;
   });
 
   const sourceYear = allSchoolYears.find((y) => y.id === sourceYearId);
@@ -1044,6 +1072,28 @@ export default function StudentsPage() {
         <>
           {error && <ErrorAlert message={error} />}
 
+          {/* Summary metrics */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <Card>
+              <CardContent className="p-4">
+                <p className="text-xs text-muted-foreground">Enrolled ({activeYear?.name ?? "—"})</p>
+                <p className="text-2xl font-bold mt-1">{totalEnrolled}</p>
+              </CardContent>
+            </Card>
+            <Card
+              className={`cursor-pointer transition-all hover:shadow-md ${returningFilter ? "ring-2 ring-primary" : ""}`}
+              onClick={() => setReturningFilter((v) => !v)}
+            >
+              <CardContent className="p-4">
+                <p className="text-xs text-muted-foreground">Enrolled Returning</p>
+                <p className="text-2xl font-bold mt-1">{returningEnrolledCount}</p>
+                <p className={`text-xs mt-0.5 font-medium ${returningFilter ? "text-primary" : "text-muted-foreground"}`}>
+                  {returningFilter ? "Filtering — click to clear" : "Click to filter"}
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+
           {/* Search & Filters */}
           <div className="flex flex-col sm:flex-row gap-3">
             <div className="flex-1 relative">
@@ -1063,6 +1113,14 @@ export default function StudentsPage() {
             <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="sm:w-44">
               {STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
             </Select>
+            {returningFilter && (
+              <button
+                onClick={() => setReturningFilter(false)}
+                className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border border-primary bg-primary/5 text-primary hover:bg-primary/10 transition-colors whitespace-nowrap"
+              >
+                Returning only <X className="w-3 h-3" />
+              </button>
+            )}
           </div>
 
           {/* Table */}
@@ -1072,18 +1130,19 @@ export default function StudentsPage() {
                 <thead className="bg-muted border-b border-border">
                   <tr>
                     <th className="text-left px-5 py-3 font-medium text-muted-foreground">Student</th>
+                    <th className="text-left px-5 py-3 font-medium text-muted-foreground">School Year</th>
                     <th className="text-left px-5 py-3 font-medium text-muted-foreground">Class</th>
                     <th className="text-left px-5 py-3 font-medium text-muted-foreground">Parent / Guardian</th>
                     <th className="text-left px-5 py-3 font-medium text-muted-foreground">Contact</th>
                     <th className="text-left px-5 py-3 font-medium text-muted-foreground">Status</th>
-                    <th className="text-left px-5 py-3 font-medium text-muted-foreground">School Year</th>
+                    <th className="text-left px-5 py-3 font-medium text-muted-foreground">Next Level</th>
                     <th className="px-5 py-3" />
                   </tr>
                 </thead>
                 <tbody>
                   {filtered.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="text-center py-10 text-muted-foreground">
+                      <td colSpan={8} className="text-center py-10 text-muted-foreground">
                         {students.length === 0 ? 'No students yet. Click "Add Student" to get started.' : "No students match your filters."}
                       </td>
                     </tr>
@@ -1106,6 +1165,15 @@ export default function StudentsPage() {
                             </div>
                           </div>
                         </td>
+                        <td className="px-5 py-4">
+                          {student.enrollmentYearId ? (
+                            <span className={`text-xs font-medium ${student.enrollmentYearId === activeYear?.id ? "text-foreground" : "text-muted-foreground"}`}>
+                              {schoolYearList.find((y) => y.id === student.enrollmentYearId)?.name ?? "—"}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">—</span>
+                          )}
+                        </td>
                         <td className="px-5 py-4 text-muted-foreground">{student.className}</td>
                         <td className="px-5 py-4">{student.guardianName}</td>
                         <td className="px-5 py-4 text-muted-foreground">{student.guardianPhone}</td>
@@ -1115,13 +1183,30 @@ export default function StudentsPage() {
                             : <span className="text-muted-foreground text-xs">—</span>}
                         </td>
                         <td className="px-5 py-4">
-                          {student.enrollmentYearId ? (
-                            <span className={`text-xs font-medium ${student.enrollmentYearId === activeYear?.id ? "text-foreground" : "text-muted-foreground"}`}>
-                              {schoolYearList.find((y) => y.id === student.enrollmentYearId)?.name ?? "—"}
-                            </span>
-                          ) : (
-                            <span className="text-muted-foreground text-xs">—</span>
-                          )}
+                          {student.progressionStatus ? (() => {
+                            const ps = student.progressionStatus;
+                            const color =
+                              ps === "eligible"              ? "text-green-700 bg-green-50 border-green-200" :
+                              ps === "not_eligible_retained" ? "text-amber-700 bg-amber-50 border-amber-200" :
+                              ps === "not_eligible_other"    ? "text-orange-700 bg-orange-50 border-orange-200" :
+                              ps === "graduated"             ? "text-muted-foreground bg-muted border-border" :
+                              ps === "not_continuing"        ? "text-red-700 bg-red-50 border-red-200" :
+                                                              "text-muted-foreground bg-muted border-border";
+                            const label =
+                              ps === "eligible"              ? "Eligible" :
+                              ps === "not_eligible_retained" ? "Retained" :
+                              ps === "not_eligible_other"    ? "Not Eligible" :
+                              ps === "graduated"             ? "Graduated" :
+                              ps === "not_continuing"        ? "Not Continuing" : ps;
+                            return (
+                              <div className="space-y-0.5">
+                                <span className={`inline-block px-2 py-0.5 rounded-full border text-xs font-medium ${color}`}>{label}</span>
+                                {student.recommendedNextLevel && (
+                                  <p className="text-xs text-muted-foreground">→ {student.recommendedNextLevel}</p>
+                                )}
+                              </div>
+                            );
+                          })() : <span className="text-muted-foreground text-xs">—</span>}
                         </td>
                         <td className="px-5 py-4 text-right">
                           <div className="flex items-center justify-end gap-3">

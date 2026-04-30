@@ -15,6 +15,7 @@ export async function POST(req: NextRequest) {
 
   const studentId          = typeof body.studentId          === "string" ? body.studentId          : null;
   const classId            = typeof body.classId            === "string" ? body.classId            : null;
+  const level              = typeof body.level              === "string" ? body.level.trim()        : null;
   const schoolYearId       = typeof body.schoolYearId       === "string" ? body.schoolYearId       : null;
   const academicPeriodId   = typeof body.academicPeriodId   === "string" ? body.academicPeriodId   : null;
   const rawStatus          = typeof body.status             === "string" ? body.status             : "enrolled";
@@ -23,8 +24,11 @@ export async function POST(req: NextRequest) {
   // Optional: present only when placing a promoted-pending-placement student
   const sourceEnrollmentId = typeof body.sourceEnrollmentId === "string" ? body.sourceEnrollmentId : null;
 
-  if (!studentId || !classId || !schoolYearId) {
-    return NextResponse.json({ error: "studentId, classId, and schoolYearId are required." }, { status: 400 });
+  if (!studentId || !schoolYearId) {
+    return NextResponse.json({ error: "studentId and schoolYearId are required." }, { status: 400 });
+  }
+  if (!classId && !level) {
+    return NextResponse.json({ error: "Either classId or level is required." }, { status: 400 });
   }
   const status: EnrollStatus = VALID_STATUSES.includes(rawStatus as EnrollStatus)
     ? (rawStatus as EnrollStatus)
@@ -55,21 +59,72 @@ export async function POST(req: NextRequest) {
 
   const schoolId = caller.school_id;
 
-  // Verify all referenced entities belong to the caller's school
-  const [studentRes, classRes, yearRes] = await Promise.all([
+  // Verify student and school year belong to the caller's school
+  const [studentRes, yearRes] = await Promise.all([
     admin.from("students").select("school_id").eq("id", studentId).maybeSingle(),
-    admin.from("classes").select("school_id").eq("id", classId).maybeSingle(),
     admin.from("school_years").select("school_id").eq("id", schoolYearId).maybeSingle(),
   ]);
 
   if (!studentRes.data || studentRes.data.school_id !== schoolId) {
     return NextResponse.json({ error: "Student does not belong to your school." }, { status: 403 });
   }
-  if (!classRes.data || classRes.data.school_id !== schoolId) {
-    return NextResponse.json({ error: "Class does not belong to your school." }, { status: 403 });
-  }
   if (!yearRes.data || yearRes.data.school_id !== schoolId) {
     return NextResponse.json({ error: "School year does not belong to your school." }, { status: 403 });
+  }
+
+  // ── Resolve classId ────────────────────────────────────────────────────────
+  // When classId is provided directly, verify it belongs to the school.
+  // When level is provided instead, look up (or create) the Unassigned
+  // placeholder class for that level + year. This keeps class_id NOT NULL.
+  let resolvedClassId: string;
+
+  if (classId) {
+    const classRes = await admin
+      .from("classes")
+      .select("school_id")
+      .eq("id", classId)
+      .maybeSingle();
+    if (!classRes.data || classRes.data.school_id !== schoolId) {
+      return NextResponse.json({ error: "Class does not belong to your school." }, { status: 403 });
+    }
+    resolvedClassId = classId;
+  } else {
+    // Level-based enrollment: find or create the Unassigned placeholder class
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: existing } = await (admin as any)
+      .from("classes")
+      .select("id")
+      .eq("school_id", schoolId)
+      .eq("school_year_id", schoolYearId)
+      .eq("level", level)
+      .eq("is_system", true)
+      .maybeSingle();
+
+    if (existing?.id) {
+      resolvedClassId = existing.id;
+    } else {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: created, error: createErr } = await (admin as any)
+        .from("classes")
+        .insert({
+          school_id:      schoolId,
+          school_year_id: schoolYearId,
+          name:           `[Unassigned] ${level}`,
+          level,
+          is_system:      true,
+          capacity:       9999,
+          start_time:     "00:00",
+          end_time:       "00:00",
+          is_active:      true,
+        })
+        .select("id")
+        .single();
+      if (createErr || !created?.id) {
+        console.error("[students/enroll] Failed to create Unassigned class:", createErr);
+        return NextResponse.json({ error: "Failed to create placement class." }, { status: 500 });
+      }
+      resolvedClassId = created.id;
+    }
   }
 
   if (academicPeriodId) {
@@ -110,20 +165,19 @@ export async function POST(req: NextRequest) {
 
   // Insert the enrollment — return id for audit log
   const { data: inserted, error: insertErr } = await admin.from("enrollments").insert({
-    student_id: studentId,
-    class_id: classId,
-    school_year_id: schoolYearId,
+    student_id:         studentId,
+    class_id:           resolvedClassId,
+    school_year_id:     schoolYearId,
     academic_period_id: academicPeriodId,
     status,
-    start_date: startDate,
-    end_date: endDate,
+    start_date:         startDate,
+    end_date:           endDate,
   }).select("id").single();
 
   if (insertErr) {
-    // Surface duplicate-key as a friendlier message
     if (insertErr.code === "23505") {
       return NextResponse.json(
-        { error: "This student is already enrolled in that class for this school year." },
+        { error: "This student is already enrolled for this school year." },
         { status: 409 }
       );
     }
@@ -133,13 +187,13 @@ export async function POST(req: NextRequest) {
 
   // Audit — service-role bypasses auth.uid() so triggers can't fire; write manually
   await insertAuditLog(admin, {
-    schoolId:    schoolId,
+    schoolId,
     actorUserId: user.id,
     actorRole:   caller.role,
     tableName:   "enrollments",
     recordId:    inserted?.id ?? null,
     action:      "INSERT",
-    newValues:   { student_id: studentId, class_id: classId, school_year_id: schoolYearId, status },
+    newValues:   { student_id: studentId, class_id: resolvedClassId, level, school_year_id: schoolYearId, status },
   });
 
   // Mark the source enrollment as placed (only for pending-placement flow)
@@ -150,7 +204,7 @@ export async function POST(req: NextRequest) {
       .eq("id", sourceEnrollmentId);
 
     await insertAuditLog(admin, {
-      schoolId:    schoolId,
+      schoolId,
       actorUserId: user.id,
       actorRole:   caller.role,
       tableName:   "enrollments",

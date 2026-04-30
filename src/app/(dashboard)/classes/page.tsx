@@ -144,6 +144,7 @@ export default function ClassesPage() {
       .eq("school_id", schoolId)
       .eq("school_year_id", activeYear.id)
       .eq("is_active", true)
+      .eq("is_system", false)
       .order("name");
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     setAllClasses(((data ?? []) as any[]).map((c: any) => ({
@@ -159,12 +160,13 @@ export default function ClassesPage() {
     if (!yearId) { setClasses([]); return; }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: classRows, error: classErr } = await supabase
+    const { data: classRows, error: classErr } = await (supabase as any)
       .from("classes")
       .select(`id, name, level, start_time, end_time, capacity, is_active, meeting_link, messenger_link, next_class_id,
         class_teachers(teacher_id, teacher:profiles(full_name))`)
       .eq("school_id", schoolId!)
       .eq("school_year_id", yearId)
+      .eq("is_system", false)
       .order("start_time") as { data: any[] | null; error: any };
 
     if (classErr) { setError(classErr.message); return; }
@@ -245,6 +247,7 @@ export default function ClassesPage() {
 
   async function handleSave() {
     if (!form.name.trim()) { setFormError("Class name is required."); return; }
+    if (form.name.trim().startsWith("[Unassigned]")) { setFormError('Class names starting with "[Unassigned]" are reserved by the system.'); return; }
     if (form.startTime >= form.endTime) { setFormError("Start time must be before end time."); return; }
     const cap = parseInt(form.capacity);
     if (!cap || cap < 1) { setFormError("Capacity must be at least 1."); return; }

@@ -68,6 +68,14 @@ const EMPTY_FORM: InquiryForm = {
   desiredClassId: "", inquirySource: "", notes: "", nextFollowUp: "",
 };
 
+interface PendingPlacement {
+  enrollmentId: string;
+  studentId: string;
+  studentName: string;
+  level: string;
+  hasPaid: boolean;
+}
+
 // ── Returning student types ────────────────────────────────────────────────
 
 type ReturnDerivedStatus =
@@ -141,7 +149,7 @@ export default function EnrollmentPage() {
   const [editSaving, setEditSaving] = useState(false);
   // Convert-to-enrolled confirmation modal
   const [convertInquiry, setConvertInquiry] = useState<Inquiry | null>(null);
-  const [convertClassId, setConvertClassId] = useState("");
+  const [convertLevel, setConvertLevel] = useState("");
   const [convertDob, setConvertDob] = useState("");
   const [convertGender, setConvertGender] = useState("");
 
@@ -156,11 +164,11 @@ export default function EnrollmentPage() {
   const [returningResults, setReturningResults] = useState<ReturnStudent[]>([]);
   const [returningSearching, setReturningSearching] = useState(false);
   const [returningSelected, setReturningSelected] = useState<ReturnStudent | null>(null);
-  const [returningClassId, setReturningClassId] = useState("");
+  const [returningLevel, setReturningLevel] = useState("");
   const [returningOverride, setReturningOverride] = useState("");
   const [returningSaving, setReturningSaving] = useState(false);
   const [returningError, setReturningError] = useState<string | null>(null);
-  const [returningReserved, setReturningReserved] = useState<{ studentId: string; studentName: string; classId: string } | null>(null);
+  const [returningReserved, setReturningReserved] = useState<{ studentId: string; studentName: string; classId: string | null } | null>(null);
   const [returningPreloaded, setReturningPreloaded] = useState<ReturnStudent[]>([]);
   const [enrollmentNotes, setEnrollmentNotes] = useState("");
   const [showPaymentForm, setShowPaymentForm] = useState(false);
@@ -172,6 +180,12 @@ export default function EnrollmentPage() {
   const [reservePaymentError, setReservePaymentError] = useState<string | null>(null);
   const [reservePaymentDone, setReservePaymentDone] = useState(false);
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const [pendingPlacements, setPendingPlacements] = useState<PendingPlacement[]>([]);
+  const [placementClassId, setPlacementClassId] = useState<Record<string, string>>({});
+  const [placing, setPlacing] = useState<string | null>(null);
+  const [placementGateActive, setPlacementGateActive] = useState(false);
+  const [placementFeeTypeName, setPlacementFeeTypeName] = useState<string | null>(null);
 
   useEffect(() => {
     if (!schoolId) { setLoading(false); return; }
@@ -195,7 +209,7 @@ export default function EnrollmentPage() {
   async function loadAll() {
     setLoading(true);
     setError(null);
-    await Promise.all([loadInquiries(), loadClasses()]);
+    await Promise.all([loadInquiries(), loadClasses(), loadPendingPlacements()]);
     setLoading(false);
   }
 
@@ -238,15 +252,18 @@ export default function EnrollmentPage() {
 
   async function loadClasses() {
     if (!activeYear?.id) { setClassOptions([]); return; }
-    const { data } = await supabase
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data } = await (supabase as any)
       .from("classes")
       .select("id, name, level, start_time, capacity")
       .eq("school_id", schoolId!)
       .eq("school_year_id", activeYear.id)
       .eq("is_active", true)
+      .eq("is_system", false)
       .order("name");
 
-    const ids = (data ?? []).map((c) => c.id);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const ids = (data ?? []).map((c: any) => c.id);
     let enrolledByClass: Record<string, number> = {};
     if (ids.length > 0) {
       const { data: eRows } = await supabase.from("enrollments").select("class_id").in("class_id", ids).eq("status", "enrolled");
@@ -255,6 +272,94 @@ export default function EnrollmentPage() {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     setClassOptions((data ?? []).map((c: any) => ({ id: c.id, name: c.name, level: c.level ?? "", startTime: c.start_time ?? null, capacity: c.capacity ?? 0, enrolled: enrolledByClass[c.id] ?? 0 })));
+  }
+
+  async function loadPendingPlacements() {
+    if (!activeYear?.id || !schoolId) { setPendingPlacements([]); return; }
+
+    // Check if a placement gate fee type is configured for this school
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: gateFt } = await (supabase as any)
+      .from("fee_types")
+      .select("id, name")
+      .eq("school_id", schoolId)
+      .eq("secures_placement", true)
+      .maybeSingle();
+
+    const gateActive = !!gateFt;
+    setPlacementGateActive(gateActive);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    setPlacementFeeTypeName((gateFt as any)?.name ?? null);
+
+    // Get system (Unassigned) class IDs for this year
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: sysCls } = await (supabase as any)
+      .from("classes")
+      .select("id, level")
+      .eq("school_id", schoolId)
+      .eq("school_year_id", activeYear.id)
+      .eq("is_system", true);
+
+    if (!sysCls || sysCls.length === 0) { setPendingPlacements([]); return; }
+
+    const levelByClassId: Record<string, string> = {};
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (sysCls as any[]).forEach((c: { id: string; level: string }) => { levelByClassId[c.id] = c.level ?? "—"; });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sysIds = (sysCls as any[]).map((c: { id: string }) => c.id);
+
+    const { data: enrRows } = await supabase
+      .from("enrollments")
+      .select("id, student_id, class_id, students(first_name, last_name)")
+      .in("class_id", sysIds)
+      .eq("status", "enrolled");
+
+    if (!enrRows || enrRows.length === 0) { setPendingPlacements([]); return; }
+
+    // Always check payment status — payment is required regardless of gate configuration.
+    // When a specific fee type is configured (gateActive), only that fee type's paid record counts.
+    // Otherwise, any paid billing record in the current school year suffices.
+    const paidStudentIds = new Set<string>();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const studentIds = (enrRows as any[]).map((e: any) => e.student_id);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let paidQuery = (supabase as any)
+      .from("billing_records")
+      .select("student_id")
+      .in("student_id", studentIds)
+      .eq("school_year_id", activeYear.id)
+      .in("status", ["paid"]);
+    if (gateActive && (gateFt as any)?.id) {
+      paidQuery = paidQuery.eq("fee_type_id", (gateFt as any).id);
+    }
+    const { data: paidBrs } = await paidQuery;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ((paidBrs ?? []) as any[]).forEach((b: any) => paidStudentIds.add(b.student_id));
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    setPendingPlacements(((enrRows ?? []) as any[]).map((e) => ({
+      enrollmentId: e.id,
+      studentId: e.student_id,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      studentName: `${(e as any).students?.first_name ?? ""} ${(e as any).students?.last_name ?? ""}`.trim() || "Unknown",
+      level: levelByClassId[e.class_id] ?? "—",
+      hasPaid: paidStudentIds.has(e.student_id),
+    })));
+  }
+
+  async function handlePlace(enrollmentId: string, newClassId: string) {
+    if (!newClassId) return;
+    const placement = pendingPlacements.find((p) => p.enrollmentId === enrollmentId);
+    if (!placement?.hasPaid) return;
+    setPlacing(enrollmentId);
+    const { error: placeErr } = await supabase
+      .from("enrollments")
+      .update({ class_id: newClassId })
+      .eq("id", enrollmentId);
+    setPlacing(null);
+    if (placeErr) { setError(placeErr.message); return; }
+    setPlacementClassId((prev) => { const next = { ...prev }; delete next[enrollmentId]; return next; });
+    await Promise.all([loadPendingPlacements(), loadClasses()]);
   }
 
   async function handleSave() {
@@ -292,7 +397,7 @@ export default function EnrollmentPage() {
     // When advancing to "enrolled", open conversion dialog
     if (next === "enrolled") {
       setConvertInquiry(inquiry);
-      setConvertClassId(inquiry.desiredClassId ?? "");
+      setConvertLevel(inquiry.desiredClassLevel ?? "");
       setConvertDob("");
       setConvertGender("");
       return;
@@ -339,14 +444,24 @@ export default function EnrollmentPage() {
       is_primary: true,
     });
 
-    // Create enrollment
-    if (convertClassId) {
-      await supabase.from("enrollments").insert({
-        student_id: student.id,
-        class_id: convertClassId,
-        school_year_id: activeYear.id,
-        status: "enrolled",
+    // Create enrollment via level-based API (auto-creates Unassigned class if needed)
+    if (convertLevel) {
+      const enrollRes = await fetch("/api/students/enroll", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          studentId: student.id,
+          schoolYearId: activeYear.id,
+          level: convertLevel,
+          status: "enrolled",
+        }),
       });
+      if (!enrollRes.ok) {
+        const j = await enrollRes.json();
+        setFormError(j.error ?? "Enrollment failed.");
+        setSaving(false);
+        return;
+      }
     }
 
     // Mark inquiry as enrolled
@@ -538,7 +653,7 @@ export default function EnrollmentPage() {
     setReturningResults([]);
     setReturningPreloaded([]);
     setReturningSelected(null);
-    setReturningClassId("");
+    setReturningLevel("");
     setReturningOverride("");
     setReturningError(null);
     setReturningReserved(null);
@@ -554,14 +669,12 @@ export default function EnrollmentPage() {
     setReturningSelected(student);
     setReturningError(null);
     setReturningOverride("");
-    // Default class: first class whose level matches the recommended next level
-    const match = classOptions.find((c) => student.recommendedNextLevel && c.level === student.recommendedNextLevel);
-    setReturningClassId(match?.id ?? "");
+    setReturningLevel(student.recommendedNextLevel ?? "");
   }
 
   async function handleReturningEnroll() {
     if (!returningSelected || !activeYear?.id) return;
-    if (!returningClassId) { setReturningError("Please select a class."); return; }
+    if (!returningLevel) { setReturningError("Please select a level."); return; }
 
     const needsOverride =
       returningSelected.derivedStatus === "not_eligible_retained" ||
@@ -581,7 +694,7 @@ export default function EnrollmentPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         studentId: returningSelected.id,
-        classId: returningClassId,
+        level: returningLevel,
         schoolYearId: activeYear.id,
         status: "enrolled",
       }),
@@ -597,7 +710,7 @@ export default function EnrollmentPage() {
     setReturningReserved({
       studentId: returningSelected.id,
       studentName: `${returningSelected.firstName} ${returningSelected.lastName}`,
-      classId: returningClassId,
+      classId: null,
     });
     setShowPaymentForm(false);
     setReservePayment({ amount: "", method: "cash", date: new Date().toISOString().split("T")[0], orNumber: "" });
@@ -775,6 +888,15 @@ export default function EnrollmentPage() {
   }
 
   const uniqueLevels = [...new Set(classOptions.map((c) => c.level).filter(Boolean))].sort();
+
+  // Aggregate capacity + enrollment across all sections per level (system classes excluded from classOptions)
+  const levelStats: Record<string, { capacity: number; enrolled: number }> = {};
+  classOptions.forEach((c) => {
+    if (!c.level) return;
+    if (!levelStats[c.level]) levelStats[c.level] = { capacity: 0, enrolled: 0 };
+    levelStats[c.level].capacity += c.capacity;
+    levelStats[c.level].enrolled += c.enrolled;
+  });
 
   const filtered = inquiries.filter((i) => {
     const matchSearch = !search || i.childName.toLowerCase().includes(search.toLowerCase()) || i.parentName.toLowerCase().includes(search.toLowerCase());
@@ -1164,6 +1286,81 @@ export default function EnrollmentPage() {
         );
       })()}
 
+      {/* Pending Section Placement */}
+      {pendingPlacements.length > 0 && (
+        <Card className="border-amber-300 overflow-hidden">
+          <div className="px-5 py-4 bg-amber-50 border-b border-amber-200">
+            <div className="flex items-center gap-2 mb-1">
+              <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+              <h3 className="font-semibold text-sm text-amber-900">
+                Pending Section Placement ({pendingPlacements.length})
+              </h3>
+            </div>
+            <p className="text-xs text-amber-800 leading-relaxed">
+              These students are enrolled but not yet assigned to a class section.{" "}
+              {placementGateActive && placementFeeTypeName
+                ? <>A paid <strong>{placementFeeTypeName}</strong> is required before placement can proceed.</>
+                : <>A paid billing record for the current school year is required before placement can proceed.</>
+              }
+            </p>
+          </div>
+          <div className="p-4 space-y-2">
+            {pendingPlacements.map((p) => {
+              const levelClasses = classOptions.filter((c) => c.level === p.level);
+              const selectedClassId = placementClassId[p.enrollmentId] ?? "";
+              return (
+                <div
+                  key={p.enrollmentId}
+                  className="flex items-center gap-3 px-4 py-3 rounded-lg border border-border bg-card"
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-medium text-sm">{p.studentName}</span>
+                      {(
+                        p.hasPaid
+                          ? <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 text-xs font-medium">
+                              <Check className="w-3 h-3" /> Paid
+                            </span>
+                          : <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 text-xs font-medium">
+                              Payment required
+                            </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-0.5">{p.level}</p>
+                  </div>
+                  <Select
+                    value={selectedClassId}
+                    onChange={(e) => setPlacementClassId({ ...placementClassId, [p.enrollmentId]: e.target.value })}
+                    className="w-52"
+                    disabled={!p.hasPaid}
+                  >
+                    <option value="">— Select section —</option>
+                    {levelClasses.map((c) => {
+                      const seatsLeft = c.capacity - c.enrolled;
+                      return (
+                        <option key={c.id} value={c.id}>
+                          {c.name}{c.startTime ? ` · ${formatTime(c.startTime)}` : ""} ({seatsLeft > 0 ? `${seatsLeft} seats left` : "Full"})
+                        </option>
+                      );
+                    })}
+                    {levelClasses.length === 0 && (
+                      <option disabled value="">No sections for {p.level}</option>
+                    )}
+                  </Select>
+                  <Button
+                    size="sm"
+                    disabled={!selectedClassId || placing === p.enrollmentId || !p.hasPaid}
+                    onClick={() => handlePlace(p.enrollmentId, selectedClassId)}
+                  >
+                    {placing === p.enrollmentId ? "Placing…" : "Place"}
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+
       {/* Inquiry Edit Modal */}
       <Modal open={!!selectedInquiry} onClose={() => setSelectedInquiry(null)} title="Edit Inquiry">
         {selectedInquiry && (
@@ -1285,15 +1482,28 @@ export default function EnrollmentPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium mb-1">Assign to Class *</label>
-              <Select value={convertClassId} onChange={(e) => setConvertClassId(e.target.value)}>
-                <option value="">— No class yet —</option>
-                {classOptions.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}{c.startTime ? ` · ${formatTime(c.startTime)}` : ""}{c.level ? ` (${c.level})` : ""} — {c.enrolled}/{c.capacity} enrolled
-                  </option>
-                ))}
+              <label className="block text-sm font-medium mb-1">Assign to Level *</label>
+              <Select value={convertLevel} onChange={(e) => setConvertLevel(e.target.value)}>
+                <option value="">— Select level —</option>
+                {uniqueLevels.map((lvl) => {
+                  const stats = levelStats[lvl] ?? { capacity: 0, enrolled: 0 };
+                  const full = stats.capacity > 0 && stats.enrolled >= stats.capacity;
+                  return (
+                    <option key={lvl} value={lvl}>
+                      {lvl} — {stats.enrolled}/{stats.capacity} enrolled{full ? " · Full" : ""}
+                    </option>
+                  );
+                })}
               </Select>
+              {convertLevel && (() => {
+                const st = levelStats[convertLevel];
+                if (!st) return null;
+                const full = st.capacity > 0 && st.enrolled >= st.capacity;
+                return full ? (
+                  <p className="text-xs text-amber-600 mt-1">This level is at capacity. The student will need section assignment via Pending Placement once space opens.</p>
+                ) : null;
+              })()}
+              <p className="text-xs text-muted-foreground mt-1">Section assignment happens separately after enrollment.</p>
             </div>
 
             <div className="flex justify-end gap-2 pt-2">
@@ -1583,6 +1793,24 @@ export default function EnrollmentPage() {
                     ),
                   },
                   {
+                    id: "pending-placement",
+                    icon: UserCheck,
+                    title: "Assign enrolled students to a class section",
+                    searchText: "pending placement section assign class unassigned level enrolled",
+                    body: (
+                      <div className="space-y-2">
+                        <p>When a student is enrolled by level (not yet assigned to a specific section), they appear in the <strong>Pending Section Placement</strong> card on this page.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Scroll down on the Enrollment page to find the amber <strong>Pending Section Placement</strong> card.</span>} />
+                          <Step n={2} text={<span>Each row shows the student's name and level. Use the dropdown to pick the target <strong>class section</strong> — seats remaining are shown next to each option.</span>} />
+                          <Step n={3} text={<span>Click <strong>Place</strong>. The student is moved from the placeholder to the real section immediately.</span>} />
+                        </div>
+                        <Note>Once placed, the student will appear in Attendance and can receive Billing records scoped to their section. Unplaced students are still counted as enrolled in the dashboard.</Note>
+                        <Tip>If no sections exist for a level yet, create them first in the <strong>Classes</strong> page, then come back here to place students.</Tip>
+                      </div>
+                    ),
+                  },
+                  {
                     id: "inquiry-source",
                     icon: Tag,
                     title: "Why inquiry source matters",
@@ -1652,7 +1880,7 @@ export default function EnrollmentPage() {
               {helpSearch ? (
                 <span>Showing results for "<span className="font-medium text-foreground">{helpSearch}</span>"</span>
               ) : (
-                <span>12 topics · click any to expand</span>
+                <span>13 topics · click any to expand</span>
               )}
             </div>
           </div>
@@ -2105,11 +2333,11 @@ export default function EnrollmentPage() {
               s.derivedStatus === "not_continuing";
             const canOverride = userRole === "school_admin" || userRole === "super_admin";
 
-            // Build sorted class list: recommended level first, then rest
-            const sortedClasses = [...classOptions].sort((a, b) => {
-              const aMatch = s.recommendedNextLevel && a.level === s.recommendedNextLevel ? 0 : 1;
-              const bMatch = s.recommendedNextLevel && b.level === s.recommendedNextLevel ? 0 : 1;
-              return aMatch - bMatch || a.name.localeCompare(b.name);
+            // Levels sorted: recommended first, then alphabetical
+            const sortedLevels = [...uniqueLevels].sort((a, b) => {
+              const aRec = a === s.recommendedNextLevel ? 0 : 1;
+              const bRec = b === s.recommendedNextLevel ? 0 : 1;
+              return aRec - bRec || a.localeCompare(b);
             });
 
             return (
@@ -2189,37 +2417,38 @@ export default function EnrollmentPage() {
                   </div>
                 )}
 
-                {/* Class selector — not shown if blocked */}
+                {/* Level selector — not shown if blocked */}
                 {!isBlocked && (
                   <div>
                     <label className="block text-sm font-medium mb-1">
-                      Assign to Class *
+                      Assign to Level *
                       {s.recommendedNextLevel && (
-                        <span className="ml-1.5 text-xs font-normal text-muted-foreground">({s.recommendedNextLevel} classes listed first)</span>
+                        <span className="ml-1.5 text-xs font-normal text-primary">— {s.recommendedNextLevel} recommended</span>
                       )}
                     </label>
                     <Select
-                      value={returningClassId}
-                      onChange={(e) => setReturningClassId(e.target.value)}
+                      value={returningLevel}
+                      onChange={(e) => setReturningLevel(e.target.value)}
                     >
-                      <option value="">— Select class —</option>
-                      {s.recommendedNextLevel && (
-                        <optgroup label={`${s.recommendedNextLevel} (recommended)`}>
-                          {sortedClasses.filter((c) => c.level === s.recommendedNextLevel).map((c) => (
-                            <option key={c.id} value={c.id}>
-                              {c.name}{c.startTime ? ` · ${formatTime(c.startTime)}` : ""} — {c.enrolled}/{c.capacity} enrolled
-                            </option>
-                          ))}
-                        </optgroup>
-                      )}
-                      <optgroup label={s.recommendedNextLevel ? "Other classes" : "All classes"}>
-                        {sortedClasses.filter((c) => !s.recommendedNextLevel || c.level !== s.recommendedNextLevel).map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.name}{c.startTime ? ` · ${formatTime(c.startTime)}` : ""}{c.level ? ` (${c.level})` : ""} — {c.enrolled}/{c.capacity} enrolled
+                      <option value="">— Select level —</option>
+                      {sortedLevels.map((lvl) => {
+                        const stats = levelStats[lvl] ?? { capacity: 0, enrolled: 0 };
+                        const full = stats.capacity > 0 && stats.enrolled >= stats.capacity;
+                        return (
+                          <option key={lvl} value={lvl}>
+                            {lvl}{lvl === s.recommendedNextLevel ? " ★" : ""} — {stats.enrolled}/{stats.capacity} enrolled{full ? " · Full" : ""}
                           </option>
-                        ))}
-                      </optgroup>
+                        );
+                      })}
                     </Select>
+                    {returningLevel && (() => {
+                      const st = levelStats[returningLevel];
+                      if (!st) return null;
+                      const full = st.capacity > 0 && st.enrolled >= st.capacity;
+                      return full ? (
+                        <p className="text-xs text-amber-600 mt-1">This level is at capacity. The student can still be enrolled — assign to a section via Section Placement once space opens.</p>
+                      ) : null;
+                    })()}
                   </div>
                 )}
 
@@ -2241,7 +2470,7 @@ export default function EnrollmentPage() {
                   {!isBlocked && !(needsOverride && !canOverride) && (
                     <Button
                       onClick={handleReturningEnroll}
-                      disabled={returningSaving || !returningClassId || (needsOverride && canOverride && !returningOverride.trim())}
+                      disabled={returningSaving || !returningLevel || (needsOverride && canOverride && !returningOverride.trim())}
                     >
                       {returningSaving ? <><RefreshCw className="w-4 h-4 animate-spin" /> Reserving…</> : <><Check className="w-4 h-4" /> Reserve Slot</>}
                     </Button>

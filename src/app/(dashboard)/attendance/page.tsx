@@ -80,12 +80,14 @@ export default function AttendancePage() {
     setLoading(true);
     if (!activeYear?.id) { setClassOptions([]); setLoading(false); return; }
 
-    const { data, error: err } = await supabase
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error: err } = await (supabase as any)
       .from("classes")
       .select("id, name, start_time")
       .eq("school_id", schoolId!)
       .eq("school_year_id", activeYear.id)
       .eq("is_active", true)
+      .eq("is_system", false)
       .order("start_time");
 
     if (err) { setError(err.message); setLoading(false); return; }

@@ -213,7 +213,8 @@ export default function DashboardPage() {
     });
 
     if (yearId) {
-      const { data: classRows } = await supabase
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: classRows } = await (supabase as any)
         .from("classes")
         .select(`
           id, name, start_time, end_time,
@@ -223,9 +224,11 @@ export default function DashboardPage() {
         .eq("school_id", schoolId!)
         .eq("school_year_id", yearId)
         .eq("is_active", true)
+        .eq("is_system", false)
         .order("start_time");
 
-      const classIds = (classRows ?? []).map((c) => c.id);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const classIds = (classRows ?? []).map((c: any) => c.id);
 
       const { data: attRows } = await supabase
         .from("attendance_records")
@@ -263,7 +266,8 @@ export default function DashboardPage() {
       });
 
       setTodayClasses(
-        (classRows ?? []).map((c) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (classRows ?? []).map((c: any) => {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const teachers: string[] = ((c as any).class_teachers ?? []).map(
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
