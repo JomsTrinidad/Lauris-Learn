@@ -196,6 +196,11 @@ export default function EnrollmentPage() {
   const [toast, setToast] = useState<string | null>(null);
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Prior-year balance check for returning students
+  const [balancePolicy, setBalancePolicy] = useState<"warn" | "block" | "allow">("warn");
+  const [priorYearBalance, setPriorYearBalance] = useState<number | null>(null);
+  const [priorYearBalanceChecking, setPriorYearBalanceChecking] = useState(false);
+
   function showToast(msg: string) { setToast(msg); setTimeout(() => setToast(null), 4000); }
 
   function toggleAllEnrollFees() {
@@ -251,8 +256,21 @@ export default function EnrollmentPage() {
   async function loadAll() {
     setLoading(true);
     setError(null);
-    await Promise.all([loadInquiries(), loadClasses(), loadPendingPlacements()]);
+    await Promise.all([loadInquiries(), loadClasses(), loadPendingPlacements(), loadBalancePolicy()]);
     setLoading(false);
+  }
+
+  async function loadBalancePolicy() {
+    if (!schoolId) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data } = await (supabase as any)
+      .from("schools")
+      .select("enrollment_balance_policy")
+      .eq("id", schoolId)
+      .single();
+    if (data?.enrollment_balance_policy) {
+      setBalancePolicy(data.enrollment_balance_policy as "warn" | "block" | "allow");
+    }
   }
 
   async function loadInquiries() {
@@ -722,11 +740,38 @@ export default function EnrollmentPage() {
     setReturningOverride("");
     setReturningLevel(safeDefault);
     setAccelConfirmed(false);
+    setPriorYearBalance(null);
+    checkPriorYearBalance(student.id);
+  }
+
+  async function checkPriorYearBalance(studentId: string) {
+    if (!schoolId || !activeYear?.id || balancePolicy === "allow") return;
+    setPriorYearBalanceChecking(true);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data } = await (supabase as any)
+      .from("billing_records")
+      .select("amount_due, amount_paid, status")
+      .eq("student_id", studentId)
+      .neq("school_year_id", activeYear.id)
+      .in("status", ["unpaid", "partial", "overdue"]);
+    const total = ((data ?? []) as { amount_due: number; amount_paid: number }[])
+      .reduce((sum, r) => sum + Math.max(0, (r.amount_due ?? 0) - (r.amount_paid ?? 0)), 0);
+    setPriorYearBalance(total > 0 ? total : null);
+    setPriorYearBalanceChecking(false);
   }
 
   async function handleReturningEnroll() {
     if (!returningSelected || !activeYear?.id) return;
     if (!returningLevel) { setReturningError("Please select a level."); return; }
+
+    // Prior-year balance enforcement
+    if (balancePolicy === "block" && priorYearBalance && priorYearBalance > 0) {
+      setReturningError(
+        `This student has an outstanding prior-year balance of ₱${priorYearBalance.toLocaleString("en-PH", { minimumFractionDigits: 2 })}. ` +
+        "Settle the balance in Billing before re-enrolling. (School policy: block enrollment until paid.)"
+      );
+      return;
+    }
 
     // Guard: ensure the submitted level is actually in the allowed set for this student.
     // Prevents stale state or a manipulated client from submitting a blocked level.
@@ -1056,12 +1101,13 @@ export default function EnrollmentPage() {
       setPlacementPayType("installment");
       setTuitionMonths("10");
       setPlacementPayForm({ amount: "", feeTypeId: "", method: "cash", date: new Date().toISOString().split("T")[0], orNumber: "", receiptFile: null });
+      setPlacementPaySaving(false);
       showToast(`Payment recorded for ${studentName}. Full details in Billing → Payments.`);
-      await loadPendingPlacements();
+      loadPendingPlacements();
     } catch (err: unknown) {
       setPlacementPayError(err instanceof Error ? err.message : "Payment recording failed.");
+      setPlacementPaySaving(false);
     }
-    setPlacementPaySaving(false);
   }
 
   async function markNotProceeding(id: string) {
@@ -1165,6 +1211,23 @@ export default function EnrollmentPage() {
       </div>
 
       {error && <ErrorAlert message={error} />}
+
+      {/* Year-status banner — warn when the current year is not open for enrollment */}
+      {activeYear && activeYear.status !== "active" && (
+        <div className="flex items-start gap-3 p-4 rounded-lg border border-orange-200 bg-orange-50">
+          <AlertTriangle className="w-5 h-5 text-orange-500 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-medium text-orange-800">
+              {activeYear.status === "closed" || activeYear.status === "archived"
+                ? `"${activeYear.name}" is closed — new enrollments are not accepted.`
+                : `"${activeYear.name}" is ${activeYear.status === "planned" || activeYear.status === "draft" ? "Planned" : activeYear.status} — it must be Active before enrollments can be created.`}
+            </p>
+            <p className="text-xs text-orange-700 mt-0.5">
+              Go to <strong>Settings → School Year &amp; Terms</strong> to manage the school year lifecycle.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Pending Section Placement — action-required, shown above pipeline */}
       {pendingPlacements.length > 0 && (
@@ -2105,6 +2168,8 @@ export default function EnrollmentPage() {
                         <Tip>If you select a level that <strong>skips</strong> the recommended next level (accelerated placement), an amber confirmation prompt appears. Tick the checkbox to confirm before the Reserve Slot button becomes active.</Tip>
                         <Tip>Students with non-eligible classifications (Graduated, Not Continuing, etc.) show a warning and require an override reason from a school admin before enrolling.</Tip>
                         <Note>If a student is <strong>already enrolled</strong> in the active year, enrollment is blocked outright — no override is possible. Check the Students page to view their current enrollment.</Note>
+                        <Note>If the current school year is <strong>Planned</strong> or <strong>Closed</strong>, an amber banner appears at the top of the page and all enrollment actions are blocked. Activate the school year in Settings first.</Note>
+                        <Note>If the student has an unpaid <strong>prior-year balance</strong>, a warning appears. Whether enrollment is blocked or just warned depends on the <strong>Prior-Year Balance Policy</strong> set in Settings → School Information.</Note>
                       </div>
                     ),
                   },
@@ -2375,7 +2440,7 @@ export default function EnrollmentPage() {
                         Print Receipt
                       </Button>
                     )}
-                    <Button onClick={() => { setReturningOpen(false); setReturningReserved(null); setReservePaymentDone(false); setLastPaymentSummary(null); }}>
+                    <Button onClick={() => { setReturningOpen(false); setReturningReserved(null); setReservePaymentDone(false); setLastPaymentSummary(null); loadPendingPlacements(); }}>
                       Done
                     </Button>
                   </div>
@@ -2919,6 +2984,26 @@ export default function EnrollmentPage() {
                     rows={2}
                   />
                 </div>
+
+                {/* Prior-year balance warning */}
+                {priorYearBalanceChecking && (
+                  <p className="text-xs text-muted-foreground">Checking prior-year balance…</p>
+                )}
+                {!priorYearBalanceChecking && priorYearBalance && priorYearBalance > 0 && (
+                  <div className={`flex items-start gap-3 p-3 rounded-lg border text-sm ${balancePolicy === "block" ? "bg-red-50 border-red-200" : "bg-amber-50 border-amber-200"}`}>
+                    <AlertTriangle className={`w-4 h-4 flex-shrink-0 mt-0.5 ${balancePolicy === "block" ? "text-red-500" : "text-amber-500"}`} />
+                    <div>
+                      <p className={`font-medium ${balancePolicy === "block" ? "text-red-800" : "text-amber-800"}`}>
+                        Prior-year balance of ₱{priorYearBalance.toLocaleString("en-PH", { minimumFractionDigits: 2 })} outstanding
+                      </p>
+                      <p className={`text-xs mt-0.5 ${balancePolicy === "block" ? "text-red-700" : "text-amber-700"}`}>
+                        {balancePolicy === "block"
+                          ? "Enrollment is blocked until this balance is settled in Billing."
+                          : "This balance is collectible as a prior-year balance and will not block enrollment."}
+                      </p>
+                    </div>
+                  </div>
+                )}
 
                 {returningError && <ErrorAlert message={returningError} />}
 

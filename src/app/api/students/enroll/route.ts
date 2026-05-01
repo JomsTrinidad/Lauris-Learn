@@ -65,7 +65,7 @@ export async function POST(req: NextRequest) {
   // Verify student and school year belong to the caller's school
   const [studentRes, yearRes] = await Promise.all([
     admin.from("students").select("school_id").eq("id", studentId).maybeSingle(),
-    admin.from("school_years").select("school_id").eq("id", schoolYearId).maybeSingle(),
+    admin.from("school_years").select("school_id, status").eq("id", schoolYearId).maybeSingle(),
   ]);
 
   if (!studentRes.data || studentRes.data.school_id !== schoolId) {
@@ -73,6 +73,15 @@ export async function POST(req: NextRequest) {
   }
   if (!yearRes.data || yearRes.data.school_id !== schoolId) {
     return NextResponse.json({ error: "School year does not belong to your school." }, { status: 403 });
+  }
+  if (yearRes.data.status !== "active") {
+    const label = yearRes.data.status === "planned" || yearRes.data.status === "draft"
+      ? "planned — activate it in Settings first"
+      : "closed — enrollments are no longer accepted";
+    return NextResponse.json(
+      { error: `This school year is ${label}.` },
+      { status: 422 }
+    );
   }
 
   // ── Resolve classId ────────────────────────────────────────────────────────

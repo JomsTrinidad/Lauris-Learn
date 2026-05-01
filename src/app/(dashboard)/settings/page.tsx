@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
-import { Plus, Pencil, Trash2, Upload, RotateCcw, Library, BookOpen, HelpCircle, X, Search, ChevronDown, ChevronRight, AlertTriangle } from "lucide-react";
+import { Plus, Pencil, Trash2, Upload, RotateCcw, Library, BookOpen, HelpCircle, X, Search, ChevronDown, ChevronRight, AlertTriangle, Check } from "lucide-react";
 import { GradingTemplate, GRADING_TEMPLATES } from "@/lib/grading-templates";
 import { AvatarUpload } from "@/components/ui/avatar-upload";
 import { compressImage, PROFILE_PHOTO_MAX_W, PROFILE_PHOTO_MAX_BYTES } from "@/lib/image-compress";
@@ -17,7 +17,7 @@ import { PageSpinner, ErrorAlert } from "@/components/ui/spinner";
 import { createClient } from "@/lib/supabase/client";
 import { useSchoolContext } from "@/contexts/SchoolContext";
 
-type SchoolYearStatus = "draft" | "active" | "archived";
+type SchoolYearStatus = "draft" | "active" | "archived" | "planned" | "closed";
 
 interface SchoolYear {
   id: string;
@@ -223,7 +223,16 @@ export default function SettingsPage() {
   const [schoolYears, setSchoolYears] = useState<SchoolYear[]>([]);
   const [syModal, setSyModal] = useState(false);
   const [editingSy, setEditingSy] = useState<SchoolYear | null>(null);
-  const [syForm, setSyForm] = useState({ name: "", startDate: "", endDate: "", status: "draft" as SchoolYearStatus });
+  const [syForm, setSyForm] = useState({ name: "", startDate: "", endDate: "", status: "planned" as SchoolYearStatus });
+
+  // Close year modal
+  const [closeYearModal, setCloseYearModal] = useState(false);
+  const [closeYearChecking, setCloseYearChecking] = useState(false);
+  const [closeYearUnclassified, setCloseYearUnclassified] = useState<{ id: string; name: string }[]>([]);
+  const [closeYearForce, setCloseYearForce] = useState(false);
+
+  // Enrollment balance policy
+  const [balancePolicy, setBalancePolicy] = useState<"warn" | "block" | "allow">("warn");
 
   // Academic Periods
   const [academicPeriods, setAcademicPeriods] = useState<AcademicPeriod[]>([]);
@@ -287,7 +296,7 @@ export default function SettingsPage() {
     const sb = supabase as any;
     const [{ data: school }, { data: branches }, { data: years }, { data: hols }, { data: periods }, { data: teacherRows }, { data: codeRow }, { data: scaleRows }, { data: scaleSetRows }] =
       await Promise.all([
-        supabase.from("schools").select("name").eq("id", schoolId).single(),
+        supabase.from("schools").select("name, enrollment_balance_policy").eq("id", schoolId).single(),
         supabase.from("branches").select("name, address, phone").eq("school_id", schoolId).limit(1).maybeSingle(),
         supabase.from("school_years").select("id, name, start_date, end_date, status").eq("school_id", schoolId).order("start_date", { ascending: false }),
         supabase.from("holidays").select("id, name, date, applies_to_all, is_no_class, notes").eq("school_id", schoolId).order("date"),
@@ -305,6 +314,7 @@ export default function SettingsPage() {
       phone: (branches as any)?.phone ?? "",
       email: "",
     });
+    setBalancePolicy(((school as any)?.enrollment_balance_policy ?? "warn") as "warn" | "block" | "allow");
 
     setSchoolYears(
       (years ?? [])
@@ -435,7 +445,10 @@ export default function SettingsPage() {
   async function saveSchoolInfo() {
     if (!schoolId) return;
     setSaving(true);
-    const { error: e1 } = await supabase.from("schools").update({ name: schoolInfo.schoolName }).eq("id", schoolId);
+    const { error: e1 } = await supabase
+      .from("schools")
+      .update({ name: schoolInfo.schoolName, enrollment_balance_policy: balancePolicy })
+      .eq("id", schoolId);
     const { data: existing } = await supabase.from("branches").select("id").eq("school_id", schoolId).limit(1).maybeSingle();
     if (existing?.id) {
       await supabase.from("branches").update({ name: schoolInfo.branchName, address: schoolInfo.address, phone: schoolInfo.phone || null }).eq("id", existing.id);
@@ -449,7 +462,7 @@ export default function SettingsPage() {
   // ── School Years ──
   function openAddSy() {
     setEditingSy(null);
-    setSyForm({ name: "", startDate: "", endDate: "", status: "draft" });
+    setSyForm({ name: "", startDate: "", endDate: "", status: "planned" });
     setSyModal(true);
   }
   function openEditSy(sy: SchoolYear) {
@@ -462,8 +475,9 @@ export default function SettingsPage() {
     setSaving(true);
     setError(null);
 
+    // If setting to active via modal, demote the current active year first
     if (syForm.status === "active") {
-      await supabase.from("school_years").update({ status: "draft" }).eq("school_id", schoolId).eq("status", "active");
+      await supabase.from("school_years").update({ status: "closed" }).eq("school_id", schoolId).eq("status", "active");
     }
 
     if (editingSy) {
@@ -481,16 +495,59 @@ export default function SettingsPage() {
     setSyModal(false);
     setSaving(false);
     await load();
-    // Refresh context after local state is updated to avoid unmount resetting the active section
     if (syForm.status === "active") refreshCtx();
   }
 
-  async function setActiveSy(id: string) {
+  // Activate a planned year: close the current active year (if any), then open the selected one.
+  async function activateSy(id: string) {
     if (!schoolId) return;
-    await supabase.from("school_years").update({ status: "draft" }).eq("school_id", schoolId).eq("status", "active");
+    const currentActive = schoolYears.find((sy) => sy.status === "active");
+    if (currentActive) {
+      const msg = `This will close "${currentActive.name}" and activate the selected year. Proceed?`;
+      if (!confirm(msg)) return;
+    }
+    await supabase.from("school_years").update({ status: "closed" }).eq("school_id", schoolId).eq("status", "active");
     await supabase.from("school_years").update({ status: "active" }).eq("id", id);
     await load();
-    // Call refreshCtx after load() so the page state is stable before context triggers a re-render
+    refreshCtx();
+  }
+
+  // Kick off close-year flow: validate unclassified students, then open modal.
+  async function initiateCloseYear() {
+    if (!schoolId) return;
+    const activeSy = schoolYears.find((sy) => sy.status === "active");
+    if (!activeSy) return;
+    setCloseYearChecking(true);
+    setCloseYearForce(false);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data } = await (supabase as any)
+      .from("enrollments")
+      .select("id, progression_status, students!inner(id, first_name, last_name)")
+      .eq("school_year_id", activeSy.id)
+      .eq("status", "enrolled")
+      .is("progression_status", null);
+    setCloseYearUnclassified(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ((data ?? []) as any[]).map((e: any) => ({
+        id: e.students.id,
+        name: `${e.students.first_name} ${e.students.last_name}`,
+      }))
+    );
+    setCloseYearChecking(false);
+    setCloseYearModal(true);
+  }
+
+  // Execute the close: set active year → closed.
+  async function confirmCloseYear() {
+    if (!schoolId) return;
+    const activeSy = schoolYears.find((sy) => sy.status === "active");
+    if (!activeSy) return;
+    setSaving(true);
+    await supabase.from("school_years").update({ status: "closed" }).eq("id", activeSy.id);
+    setSaving(false);
+    setCloseYearModal(false);
+    setCloseYearForce(false);
+    await load();
     refreshCtx();
   }
 
@@ -1007,6 +1064,17 @@ export default function SettingsPage() {
                   <label className="block text-sm font-medium mb-1">Telephone Number</label>
                   <Input value={schoolInfo.phone} onChange={(e) => setSchoolInfo({ ...schoolInfo, phone: e.target.value })} placeholder="+63 2 1234 5678" />
                 </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Prior-Year Balance Policy</label>
+                  <p className="text-xs text-muted-foreground mb-2">
+                    When enrolling a returning student who has an unpaid balance from a closed school year:
+                  </p>
+                  <Select value={balancePolicy} onChange={(e) => setBalancePolicy(e.target.value as "warn" | "block" | "allow")}>
+                    <option value="warn">Show warning but allow enrollment (recommended)</option>
+                    <option value="block">Block enrollment until prior balance is paid</option>
+                    <option value="allow">Allow enrollment silently</option>
+                  </Select>
+                </div>
                 <div className="flex justify-end pt-2">
                   <Button onClick={saveSchoolInfo} disabled={saving}>{saving ? "Saving…" : "Save Changes"}</Button>
                 </div>
@@ -1071,14 +1139,28 @@ export default function SettingsPage() {
                           <div className="flex-1">
                             <div className="flex items-center gap-2 mb-0.5">
                               <h3 className="font-semibold">{sy.name}</h3>
-                              <Badge variant={sy.status}>{sy.status}</Badge>
+                              <Badge variant={sy.status === "draft" ? "planned" : sy.status === "archived" ? "closed" : sy.status}>
+                                {sy.status === "planned" || sy.status === "draft" ? "Planned"
+                                  : sy.status === "closed" || sy.status === "archived" ? "Closed"
+                                  : sy.status === "active" ? "Active" : sy.status}
+                              </Badge>
                             </div>
                             <p className="text-sm text-muted-foreground">{formatDateRange(sy.startDate, sy.endDate)}</p>
                           </div>
                           <div className="flex items-center gap-2 flex-shrink-0">
-                            {sy.status !== "active" && (
-                              <button onClick={() => setActiveSy(sy.id)} className="text-xs text-primary hover:underline">
-                                Set Active
+                            {/* Lifecycle action buttons */}
+                            {(sy.status === "planned" || sy.status === "draft") && (
+                              <button onClick={() => activateSy(sy.id)} className="text-xs text-primary hover:underline font-medium">
+                                Activate
+                              </button>
+                            )}
+                            {sy.status === "active" && (
+                              <button
+                                onClick={initiateCloseYear}
+                                disabled={closeYearChecking}
+                                className="text-xs text-orange-600 hover:underline font-medium disabled:opacity-50"
+                              >
+                                {closeYearChecking ? "Checking…" : "Close School Year"}
                               </button>
                             )}
                             <button onClick={() => openEditSy(sy)} className="p-1.5 hover:bg-accent rounded-lg transition-colors">
@@ -1703,18 +1785,19 @@ export default function SettingsPage() {
                   {
                     id: "school-years",
                     icon: Plus,
-                    title: "School years — create, set active, delete",
-                    searchText: "school year create add set active draft archived delete status",
+                    title: "School year lifecycle — Planned → Active → Closed",
+                    searchText: "school year create add activate close planned active closed lifecycle status delete",
                     body: (
                       <div className="space-y-2">
-                        <p>School years scope all classes, attendance, and billing. Only one year can be active at a time.</p>
+                        <p>Each school year moves through three stages: <strong>Planned → Active → Closed</strong>. Only one year can be Active at a time — all enrollments and class activity happen in the Active year.</p>
                         <div className="space-y-2 mt-2">
-                          <Step n={1} text={<span>Click <strong>School Year &amp; Terms</strong> in the left nav.</span>} />
-                          <Step n={2} text={<span>To create a new year: click <strong>Add School Year</strong>, enter the name (e.g. "SY 2026–2027"), set start/end dates, and click Save.</span>} />
-                          <Step n={3} text={<span>To activate a year: click <strong>Set as Active</strong> next to the year. This automatically archives the previous active year.</span>} />
-                          <Step n={4} text={<span>To delete a year: click the <strong>trash icon</strong> next to a non-active year. Cannot delete the active year or years with linked classes.</span>} />
+                          <Step n={1} text={<span>Click <strong>Add School Year</strong>, enter the name and dates. New years start as <strong>Planned</strong>.</span>} />
+                          <Step n={2} text={<span>Click <strong>Activate</strong> on a Planned year to make it the current year. The previous Active year is automatically closed.</span>} />
+                          <Step n={3} text={<span>At year end: go to <strong>Students → Year-End Classification</strong> and classify all enrolled students. Then click <strong>Close School Year</strong>.</span>} />
+                          <Step n={4} text={<span>Closing validates that all enrolled students have a year-end outcome. If any are unclassified you can still force-close with a confirmation.</span>} />
                         </div>
-                        <Tip>Create the new school year before running Promote Students — the target year must exist so you can assign students to next year's classes.</Tip>
+                        <Tip>Create the upcoming year as Planned before running Promote Students — the target year must exist so you can assign students to next year&#39;s classes.</Tip>
+                        <Note>Closing a year does NOT require all billing to be settled. Unpaid balances from closed years remain collectible as prior-year balances.</Note>
                       </div>
                     ),
                   },
@@ -1917,18 +2000,76 @@ export default function SettingsPage() {
           <div>
             <label className="block text-sm font-medium mb-1">Status</label>
             <Select value={syForm.status} onChange={(e) => setSyForm({ ...syForm, status: e.target.value as SchoolYearStatus })}>
-              <option value="draft">Draft</option>
+              <option value="planned">Planned</option>
               <option value="active">Active</option>
-              <option value="archived">Archived</option>
+              <option value="closed">Closed</option>
             </Select>
             {syForm.status === "active" && (
-              <p className="text-xs text-orange-600 mt-1">Setting this as Active will demote the current active year to Draft.</p>
+              <p className="text-xs text-orange-600 mt-1">
+                Prefer using the <strong>Activate</strong> button on a Planned year — it validates and transitions the current year safely.
+                Setting Active here will immediately close the current active year.
+              </p>
             )}
           </div>
           <div className="flex justify-end gap-2 pt-2">
             <ModalCancelButton />
             <Button onClick={saveSy} disabled={!syForm.name || !syForm.startDate || !syForm.endDate || saving}>
               {saving ? "Saving…" : "Save"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Close School Year Modal */}
+      <Modal open={closeYearModal} onClose={() => setCloseYearModal(false)} title="Close School Year">
+        <div className="space-y-4">
+          {closeYearUnclassified.length > 0 ? (
+            <>
+              <div className="flex gap-3 p-3 bg-orange-50 border border-orange-200 rounded-lg">
+                <AlertTriangle className="w-5 h-5 text-orange-500 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-medium text-orange-800">
+                    {closeYearUnclassified.length} enrolled student{closeYearUnclassified.length !== 1 ? "s have" : " has"} no year-end classification.
+                  </p>
+                  <p className="text-xs text-orange-700 mt-0.5">
+                    Go to <strong>Students → Year-End Classification</strong> to classify them before closing, or override below.
+                  </p>
+                </div>
+              </div>
+              <div className="max-h-40 overflow-y-auto border border-border rounded-lg divide-y divide-border text-sm">
+                {closeYearUnclassified.map((s) => (
+                  <div key={s.id} className="px-3 py-2 text-muted-foreground">{s.name}</div>
+                ))}
+              </div>
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={closeYearForce}
+                  onChange={(e) => setCloseYearForce(e.target.checked)}
+                  className="w-4 h-4 rounded mt-0.5 flex-shrink-0"
+                />
+                <span className="text-sm">
+                  Close anyway — I understand these students will have no year-end outcome on record.
+                </span>
+              </label>
+            </>
+          ) : (
+            <div className="flex gap-3 p-3 bg-green-50 border border-green-200 rounded-lg">
+              <Check className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+              <p className="text-sm text-green-800">All enrolled students have a year-end classification. Safe to close.</p>
+            </div>
+          )}
+          <p className="text-sm text-muted-foreground">
+            Closing the school year sets it to <strong>Closed</strong>. No new enrollments will be accepted. Unpaid balances from this year remain collectible as prior-year balances.
+          </p>
+          <div className="flex justify-end gap-2 pt-2">
+            <ModalCancelButton />
+            <Button
+              variant="destructive"
+              onClick={confirmCloseYear}
+              disabled={saving || (closeYearUnclassified.length > 0 && !closeYearForce)}
+            >
+              {saving ? "Closing…" : "Close School Year"}
             </Button>
           </div>
         </div>

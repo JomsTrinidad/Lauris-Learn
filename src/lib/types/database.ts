@@ -22,11 +22,12 @@ export type Database = {
           report_footer_text: string | null;
           text_size_scale: "default" | "large" | "extra_large";
           spacing_scale: "compact" | "default" | "relaxed";
+          enrollment_balance_policy: "warn" | "block" | "allow";
           created_at: string;
           updated_at: string;
         };
-        Insert: { id?: string; name: string; trial_start_date?: string | null; trial_end_date?: string | null; trial_status?: "active" | "expired" | "converted"; logo_url?: string | null; primary_color?: string | null; accent_color?: string | null; report_footer_text?: string | null; text_size_scale?: "default" | "large" | "extra_large"; spacing_scale?: "compact" | "default" | "relaxed"; created_at?: string; updated_at?: string };
-        Update: { id?: string; name?: string; trial_start_date?: string | null; trial_end_date?: string | null; trial_status?: "active" | "expired" | "converted"; logo_url?: string | null; primary_color?: string | null; accent_color?: string | null; report_footer_text?: string | null; text_size_scale?: "default" | "large" | "extra_large"; spacing_scale?: "compact" | "default" | "relaxed"; updated_at?: string };
+        Insert: { id?: string; name: string; trial_start_date?: string | null; trial_end_date?: string | null; trial_status?: "active" | "expired" | "converted"; logo_url?: string | null; primary_color?: string | null; accent_color?: string | null; report_footer_text?: string | null; text_size_scale?: "default" | "large" | "extra_large"; spacing_scale?: "compact" | "default" | "relaxed"; enrollment_balance_policy?: "warn" | "block" | "allow"; created_at?: string; updated_at?: string };
+        Update: { id?: string; name?: string; trial_start_date?: string | null; trial_end_date?: string | null; trial_status?: "active" | "expired" | "converted"; logo_url?: string | null; primary_color?: string | null; accent_color?: string | null; report_footer_text?: string | null; text_size_scale?: "default" | "large" | "extra_large"; spacing_scale?: "compact" | "default" | "relaxed"; enrollment_balance_policy?: "warn" | "block" | "allow"; updated_at?: string };
         Relationships: [];
       };
       branches: {
@@ -50,12 +51,12 @@ export type Database = {
           name: string;
           start_date: string;
           end_date: string;
-          status: "draft" | "active" | "archived";
+          status: "draft" | "active" | "archived" | "planned" | "closed";
           created_at: string;
           updated_at: string;
         };
-        Insert: { id?: string; school_id: string; name: string; start_date: string; end_date: string; status?: "draft" | "active" | "archived"; created_at?: string; updated_at?: string };
-        Update: { id?: string; school_id?: string; name?: string; start_date?: string; end_date?: string; status?: "draft" | "active" | "archived"; updated_at?: string };
+        Insert: { id?: string; school_id: string; name: string; start_date: string; end_date: string; status?: "draft" | "active" | "archived" | "planned" | "closed"; created_at?: string; updated_at?: string };
+        Update: { id?: string; school_id?: string; name?: string; start_date?: string; end_date?: string; status?: "draft" | "active" | "archived" | "planned" | "closed"; updated_at?: string };
         Relationships: [{ foreignKeyName: "school_years_school_id_fkey"; columns: ["school_id"]; isOneToOne: false; referencedRelation: "schools"; referencedColumns: ["id"] }];
       };
       profiles: {

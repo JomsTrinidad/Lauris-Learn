@@ -195,6 +195,8 @@ export default function StudentsPage() {
   const [classFilter, setClassFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [returningFilter, setReturningFilter] = useState(false);
+  // Year selector: which school year's enrollment data to display (default = activeYear)
+  const [viewingYearId, setViewingYearId] = useState<string>("");
 
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [addModalOpen, setAddModalOpen] = useState(false);
@@ -252,6 +254,7 @@ export default function StudentsPage() {
 
   useEffect(() => {
     if (!schoolId) { setLoading(false); return; }
+    setViewingYearId(activeYear?.id ?? "");
     loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [schoolId, activeYear?.id]);
@@ -974,6 +977,33 @@ export default function StudentsPage() {
 
   // ─── Derived values ────────────────────────────────────────────────────────
 
+  // Resolve which enrollment to display for a student given the viewing year.
+  // Falls back to the pre-computed values when viewingYearId matches activeYear.
+  const effectiveViewingYearId = viewingYearId || activeYear?.id || null;
+  function getDisplayEnrollment(s: Student) {
+    const yearId = effectiveViewingYearId;
+    if (!yearId || yearId === activeYear?.id) {
+      return { classId: s.classId, className: s.className, enrollmentStatus: s.enrollmentStatus, enrollmentYearId: s.enrollmentYearId };
+    }
+    const found =
+      s.allEnrollments.find((e) => e.schoolYearId === yearId && e.status === "enrolled") ??
+      s.allEnrollments.find((e) => e.schoolYearId === yearId) ?? null;
+    return {
+      classId: found?.classId ?? null,
+      className: found?.className ?? "—",
+      enrollmentStatus: found?.status ?? null,
+      enrollmentYearId: found?.schoolYearId ?? null,
+    };
+  }
+
+  const isHistoricalYearView = !!viewingYearId && viewingYearId !== (activeYear?.id ?? "");
+
+  // Detect students enrolled in 2+ school years simultaneously (mixed-year data)
+  const mixedYearStudentCount = students.filter((s) => {
+    const enrolledYearIds = new Set(s.allEnrollments.filter((e) => e.status === "enrolled").map((e) => e.schoolYearId));
+    return enrolledYearIds.size > 1;
+  }).length;
+
   const totalEnrolled = students.filter((s) => s.enrollmentStatus === "enrolled" && s.enrollmentYearId === activeYear?.id).length;
 
   const returningEnrolledIds = new Set(
@@ -986,11 +1016,12 @@ export default function StudentsPage() {
   const returningEnrolledCount = returningEnrolledIds.size;
 
   const filtered = students.filter((s) => {
+    const disp = getDisplayEnrollment(s);
     const fullName = `${s.firstName} ${s.lastName}`.toLowerCase();
     const code = (s.studentCode ?? "").toLowerCase();
     const matchSearch = !search || fullName.includes(search.toLowerCase()) || s.guardianName.toLowerCase().includes(search.toLowerCase()) || code.includes(search.toLowerCase());
-    const matchClass = !classFilter || s.classId === classFilter;
-    const matchStatus = !statusFilter || s.enrollmentStatus === statusFilter;
+    const matchClass = !classFilter || disp.classId === classFilter;
+    const matchStatus = !statusFilter || disp.enrollmentStatus === statusFilter;
     const matchReturning = !returningFilter || returningEnrolledIds.has(s.id);
     return matchSearch && matchClass && matchStatus && matchReturning;
   });
@@ -1126,6 +1157,32 @@ export default function StudentsPage() {
             </Card>
           </div>
 
+          {/* Mixed-year data warning */}
+          {mixedYearStudentCount > 0 && (
+            <div className="flex items-start gap-3 p-3 rounded-lg border border-amber-200 bg-amber-50 text-sm">
+              <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+              <p className="text-amber-800">
+                <strong>{mixedYearStudentCount} student{mixedYearStudentCount !== 1 ? "s have" : " has"}</strong> an &quot;Enrolled&quot; status in more than one school year simultaneously. This may be legacy data from before lifecycle guardrails were applied. Use the Year selector below to review each year&apos;s enrollments.
+              </p>
+            </div>
+          )}
+
+          {/* Historical year view banner */}
+          {isHistoricalYearView && (
+            <div className="flex items-center gap-3 p-3 rounded-lg border border-blue-200 bg-blue-50 text-sm">
+              <span className="text-blue-800">
+                Showing enrollment data for <strong>{schoolYearList.find((y) => y.id === viewingYearId)?.name ?? "a past year"}</strong>.
+                {" "}Class and status columns reflect that year.
+              </span>
+              <button
+                onClick={() => setViewingYearId(activeYear?.id ?? "")}
+                className="ml-auto text-xs text-blue-700 hover:underline whitespace-nowrap"
+              >
+                Back to Active Year
+              </button>
+            </div>
+          )}
+
           {/* Search & Filters */}
           <div className="flex flex-col sm:flex-row gap-3">
             <div className="flex-1 relative">
@@ -1138,6 +1195,17 @@ export default function StudentsPage() {
                 className="pl-9"
               />
             </div>
+            <Select
+              value={viewingYearId}
+              onChange={(e) => { setViewingYearId(e.target.value); setClassFilter(""); }}
+              className="sm:w-48"
+            >
+              {schoolYearList.map((y) => (
+                <option key={y.id} value={y.id}>
+                  {y.id === activeYear?.id ? `${y.name} (Active)` : y.name}
+                </option>
+              ))}
+            </Select>
             <Select value={classFilter} onChange={(e) => setClassFilter(e.target.value)} className="sm:w-44">
               <option value="">All Classes</option>
               {classOptions.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -1179,7 +1247,9 @@ export default function StudentsPage() {
                       </td>
                     </tr>
                   ) : (
-                    filtered.map((student) => (
+                    filtered.map((student) => {
+                      const disp = getDisplayEnrollment(student);
+                      return (
                       <tr key={student.id} className="border-b border-border last:border-0 hover:bg-muted/50 transition-colors">
                         <td className="px-5 py-4">
                           <div className="flex items-center gap-3">
@@ -1198,20 +1268,20 @@ export default function StudentsPage() {
                           </div>
                         </td>
                         <td className="px-5 py-4">
-                          {student.enrollmentYearId ? (
-                            <span className={`text-xs font-medium ${student.enrollmentYearId === activeYear?.id ? "text-foreground" : "text-muted-foreground"}`}>
-                              {schoolYearList.find((y) => y.id === student.enrollmentYearId)?.name ?? "—"}
+                          {disp.enrollmentYearId ? (
+                            <span className={`text-xs font-medium ${disp.enrollmentYearId === activeYear?.id ? "text-foreground" : "text-muted-foreground"}`}>
+                              {schoolYearList.find((y) => y.id === disp.enrollmentYearId)?.name ?? "—"}
                             </span>
                           ) : (
                             <span className="text-muted-foreground text-xs">—</span>
                           )}
                         </td>
-                        <td className="px-5 py-4 text-muted-foreground">{student.className}</td>
+                        <td className="px-5 py-4 text-muted-foreground">{disp.className}</td>
                         <td className="px-5 py-4">{student.guardianName}</td>
                         <td className="px-5 py-4 text-muted-foreground">{student.guardianPhone}</td>
                         <td className="px-5 py-4">
-                          {student.enrollmentStatus
-                            ? <Badge variant={student.enrollmentStatus}>{student.enrollmentStatus}</Badge>
+                          {disp.enrollmentStatus
+                            ? <Badge variant={disp.enrollmentStatus}>{disp.enrollmentStatus}</Badge>
                             : <span className="text-muted-foreground text-xs">—</span>}
                         </td>
                         <td className="px-5 py-4">
@@ -1251,7 +1321,8 @@ export default function StudentsPage() {
                           </div>
                         </td>
                       </tr>
-                    ))
+                      );
+                    })
                   )}
                 </tbody>
               </table>
@@ -2249,10 +2320,12 @@ export default function StudentsPage() {
                         <p>Several ways to find who you're looking for:</p>
                         <div className="space-y-2 mt-2">
                           <Step n={1} text={<span><strong>Search bar</strong> — searches by student name, student code, or guardian name. Works across all statuses and classes.</span>} />
-                          <Step n={2} text={<span><strong>Class filter</strong> — shows students in a specific class only.</span>} />
-                          <Step n={3} text={<span><strong>Status filter</strong> — narrows to Enrolled, Waitlisted, Inquiry, Withdrawn, or Completed.</span>} />
+                          <Step n={2} text={<span><strong>School Year selector</strong> — defaults to the Active year. Switch to a past year to view that year&apos;s class and enrollment status for each student.</span>} />
+                          <Step n={3} text={<span><strong>Class filter</strong> — shows students in a specific class only. Reflects the selected school year.</span>} />
+                          <Step n={4} text={<span><strong>Status filter</strong> — narrows to Enrolled, Waitlisted, Inquiry, Withdrawn, or Completed.</span>} />
                         </div>
                         <Note>All filters work together. To see all Waitlisted students in Kinder AM, set both the class filter and the status filter at the same time.</Note>
+                        <Note>If an amber banner says students are enrolled in multiple years simultaneously, use the Year selector to review each year&apos;s enrollments and fix any data inconsistencies.</Note>
                       </div>
                     ),
                   },

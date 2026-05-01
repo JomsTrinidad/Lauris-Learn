@@ -5,7 +5,7 @@ type Variant =
   | "enrolled" | "waitlisted" | "inquiry" | "withdrawn" | "completed"
   | "paid" | "partial" | "unpaid" | "overdue" | "cancelled" | "refunded" | "waived"
   | "present" | "late" | "absent" | "excused"
-  | "active" | "draft" | "archived"
+  | "active" | "draft" | "archived" | "planned" | "closed"
   | "scheduled" | "live";
 
 const variantMap: Record<Variant, string> = {
@@ -29,6 +29,8 @@ const variantMap: Record<Variant, string> = {
   active:      "bg-green-100 text-green-700",
   draft:       "bg-yellow-100 text-yellow-700",
   archived:    "bg-gray-100 text-gray-600",
+  planned:     "bg-blue-100 text-blue-700",
+  closed:      "bg-gray-100 text-gray-500",
   scheduled:   "bg-blue-100 text-blue-700",
   live:        "bg-green-100 text-green-700",
 };

@@ -21,7 +21,7 @@ export interface ActiveYear {
   name: string;
   startDate: string;
   endDate: string;
-  status: "draft" | "active" | "archived";
+  status: "draft" | "active" | "archived" | "planned" | "closed";
 }
 
 export interface BrandingConfig {
