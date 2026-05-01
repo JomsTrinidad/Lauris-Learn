@@ -3,7 +3,7 @@ import { useEffect, useState, useRef } from "react";
 import {
   Plus, ArrowRight, Search, TrendingUp, Pencil,
   X, BookOpen, HelpCircle, AlertTriangle, ChevronDown, ChevronRight, UserCheck, Tag,
-  RefreshCw, Check, Users,
+  RefreshCw, Check, Users, CreditCard,
 } from "lucide-react";
 import { DatePicker } from "@/components/ui/datepicker";
 import { formatTime } from "@/lib/utils";
@@ -120,6 +120,15 @@ const STATUS_FLOW: Record<InquiryStatus, InquiryStatus | null> = {
   not_proceeding:       null,
 };
 
+const LEVEL_ORDER = [
+  "Toddler", "Nursery", "Pre-Kinder", "Kinder",
+  "Grade 1", "Grade 2", "Grade 3", "Grade 4", "Grade 5", "Grade 6",
+];
+function levelRank(level: string): number {
+  const i = LEVEL_ORDER.findIndex((l) => l.toLowerCase() === level.toLowerCase());
+  return i === -1 ? 999 : i;
+}
+
 export default function EnrollmentPage() {
   const { schoolId, activeYear, userRole, userId } = useSchoolContext();
   const supabase = createClient();
@@ -135,6 +144,8 @@ export default function EnrollmentPage() {
   const [statusFilter, setStatusFilter] = useState<InquiryStatus | "">("");
   const [levelFilter, setLevelFilter] = useState("");
   const [view, setView] = useState<"pipeline" | "table" | "funnel">("pipeline");
+  const [showSummary, setShowSummary] = useState(false);
+  const [actionItemsOnly, setActionItemsOnly] = useState(false);
 
   const [helpOpen, setHelpOpen] = useState(false);
   const [helpSearch, setHelpSearch] = useState("");
@@ -172,20 +183,44 @@ export default function EnrollmentPage() {
   const [returningPreloaded, setReturningPreloaded] = useState<ReturnStudent[]>([]);
   const [enrollmentNotes, setEnrollmentNotes] = useState("");
   const [showPaymentForm, setShowPaymentForm] = useState(false);
-  const [paymentMode, setPaymentMode] = useState<"simple" | "itemized">("simple");
   const [reservePayment, setReservePayment] = useState({ amount: "", method: "cash", date: new Date().toISOString().split("T")[0], orNumber: "" });
   const [itemizedAmounts, setItemizedAmounts] = useState<Record<string, string>>({});
-  const [feeTypes, setFeeTypes] = useState<{ id: string; name: string; defaultAmount: number | null }[]>([]);
+  const [feeTypes, setFeeTypes] = useState<{ id: string; name: string; defaultAmount: number | null; isEnrollmentMandatory: boolean }[]>([]);
   const [reservePaymentSaving, setReservePaymentSaving] = useState(false);
   const [reservePaymentError, setReservePaymentError] = useState<string | null>(null);
   const [reservePaymentDone, setReservePaymentDone] = useState(false);
+  const [enrollPayChecked, setEnrollPayChecked] = useState<Record<string, boolean>>({});
+  const [enrollPayReceiptFile, setEnrollPayReceiptFile] = useState<File | null>(null);
+  const [lastPaymentSummary, setLastPaymentSummary] = useState<{ studentName: string; items: { name: string; amount: number }[]; method: string; date: string; orNumber: string } | null>(null);
+  const [accelConfirmed, setAccelConfirmed] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function showToast(msg: string) { setToast(msg); setTimeout(() => setToast(null), 4000); }
+
+  function toggleAllEnrollFees() {
+    const optional = feeTypes.filter((ft) => !ft.isEnrollmentMandatory);
+    const allOptChecked = optional.every((ft) => enrollPayChecked[ft.id]);
+    const updates: Record<string, boolean> = {};
+    if (allOptChecked) {
+      // Uncheck optional only; mandatory stays checked (disabled anyway)
+      optional.forEach((ft) => { updates[ft.id] = false; });
+    } else {
+      // Check everything
+      feeTypes.forEach((ft) => { updates[ft.id] = true; });
+    }
+    setEnrollPayChecked((prev) => ({ ...prev, ...updates }));
+  }
 
   const [pendingPlacements, setPendingPlacements] = useState<PendingPlacement[]>([]);
   const [placementClassId, setPlacementClassId] = useState<Record<string, string>>({});
   const [placing, setPlacing] = useState<string | null>(null);
   const [placementGateActive, setPlacementGateActive] = useState(false);
   const [placementFeeTypeName, setPlacementFeeTypeName] = useState<string | null>(null);
+  const [placementPayRow, setPlacementPayRow] = useState<string | null>(null);
+  const [placementPayForm, setPlacementPayForm] = useState<{ amount: string; feeTypeId: string; method: string; date: string; orNumber: string; receiptFile: File | null }>({ amount: "", feeTypeId: "", method: "cash", date: new Date().toISOString().split("T")[0], orNumber: "", receiptFile: null });
+  const [placementPaySaving, setPlacementPaySaving] = useState(false);
+  const [placementPayError, setPlacementPayError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!schoolId) { setLoading(false); return; }
@@ -205,6 +240,11 @@ export default function EnrollmentPage() {
     if (returningOpen && schoolId) { loadFeeTypes(); loadPreloadedStudents(); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [returningOpen, schoolId]);
+
+  useEffect(() => {
+    if (placementPayRow && schoolId) { loadFeeTypes(); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [placementPayRow, schoolId]);
 
   async function loadAll() {
     setLoading(true);
@@ -491,7 +531,7 @@ export default function EnrollmentPage() {
     const displayEnroll = classifiedEnroll ?? latestEnroll;
     const progressionStatus: string | null = classifiedEnroll?.progression_status ?? null;
     const progressionNotes: string | null = classifiedEnroll?.progression_notes ?? null;
-    const recommendedNextLevel: string | null = displayEnroll?.classes?.next_class?.level ?? null;
+    const recommendedNextLevel: string | null = displayEnroll?.classes?.next_level ?? null;
     const activeYearEnroll = activeYearId
       ? enrollments.find((e) => e.school_year_id === activeYearId && e.status !== "withdrawn" && e.status !== "completed")
       : null;
@@ -531,7 +571,7 @@ export default function EnrollmentPage() {
           guardians(full_name, phone, is_primary),
           enrollments(
             id, status, progression_status, progression_notes, school_year_id,
-            classes(name, level, next_class:classes!next_class_id(level)),
+            classes(name, level, next_level),
             school_years(name)
           )
         `)
@@ -560,7 +600,7 @@ export default function EnrollmentPage() {
           guardians(full_name, phone, is_primary),
           enrollments(
             id, status, progression_status, progression_notes, school_year_id,
-            classes(name, level, next_class:classes!next_class_id(level)),
+            classes(name, level, next_level),
             school_years(name)
           )
         `)
@@ -602,7 +642,7 @@ export default function EnrollmentPage() {
         guardians(full_name, phone, is_primary),
         enrollments(
           id, status, progression_status, progression_notes, school_year_id,
-          classes(name, level, next_class:classes!next_class_id(level)),
+          classes(name, level, next_level),
           school_years(name)
         )
       `)
@@ -659,22 +699,42 @@ export default function EnrollmentPage() {
     setReturningReserved(null);
     setEnrollmentNotes("");
     setShowPaymentForm(false);
-    setPaymentMode("simple");
+    setEnrollPayChecked({});
+    setEnrollPayReceiptFile(null);
+    setLastPaymentSummary(null);
     setReservePayment({ amount: "", method: "cash", date: new Date().toISOString().split("T")[0], orNumber: "" });
     setReservePaymentDone(false);
     setReservePaymentError(null);
   }
 
   function selectReturning(student: ReturnStudent) {
+    const isRet = student.derivedStatus === "not_eligible_retained";
+    const curRank = levelRank(student.lastClassLevel ?? "");
+    const allowedLevels = uniqueLevels.filter((lvl) => isRet || levelRank(lvl) > curRank);
+    const safeDefault =
+      student.recommendedNextLevel && allowedLevels.includes(student.recommendedNextLevel)
+        ? student.recommendedNextLevel
+        : "";
     setReturningSelected(student);
     setReturningError(null);
     setReturningOverride("");
-    setReturningLevel(student.recommendedNextLevel ?? "");
+    setReturningLevel(safeDefault);
+    setAccelConfirmed(false);
   }
 
   async function handleReturningEnroll() {
     if (!returningSelected || !activeYear?.id) return;
     if (!returningLevel) { setReturningError("Please select a level."); return; }
+
+    // Guard: ensure the submitted level is actually in the allowed set for this student.
+    // Prevents stale state or a manipulated client from submitting a blocked level.
+    const isRet = returningSelected.derivedStatus === "not_eligible_retained";
+    const curRank = levelRank(returningSelected.lastClassLevel ?? "");
+    const allowedLevels = uniqueLevels.filter((lvl) => isRet || levelRank(lvl) > curRank);
+    if (!allowedLevels.includes(returningLevel)) {
+      setReturningError(`"${returningLevel}" is not a valid level selection for this student.`);
+      return;
+    }
 
     const needsOverride =
       returningSelected.derivedStatus === "not_eligible_retained" ||
@@ -707,11 +767,14 @@ export default function EnrollmentPage() {
       return;
     }
 
+    const reservedName = `${returningSelected.firstName} ${returningSelected.lastName}`;
     setReturningReserved({
       studentId: returningSelected.id,
-      studentName: `${returningSelected.firstName} ${returningSelected.lastName}`,
+      studentName: reservedName,
       classId: null,
     });
+    showToast(`Slot reserved for ${reservedName} (${returningLevel}). Assign a section below.`);
+    setAccelConfirmed(false);
     setShowPaymentForm(false);
     setReservePayment({ amount: "", method: "cash", date: new Date().toISOString().split("T")[0], orNumber: "" });
     setReservePaymentError(null);
@@ -721,22 +784,52 @@ export default function EnrollmentPage() {
   }
 
   async function loadFeeTypes() {
+    // Fetch fee types + school-year-specific prices in parallel
+    const [typesRes, pricesRes] = await Promise.all([
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (supabase as any)
+        .from("fee_types")
+        .select("id, name, default_amount, is_enrollment_mandatory")
+        .eq("school_id", schoolId!)
+        .eq("is_active", true)
+        // mandatory fees first, then alphabetical
+        .order("is_enrollment_mandatory", { ascending: false })
+        .order("name"),
+      activeYear?.id
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ? (supabase as any)
+            .from("fee_type_prices")
+            .select("fee_type_id, amount")
+            .eq("school_id", schoolId!)
+            .eq("school_year_id", activeYear.id)
+        : Promise.resolve({ data: [] }),
+    ]);
+
+    // Build a map of year-specific prices
+    const yearPriceMap: Record<string, number> = {};
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data } = await (supabase as any)
-      .from("fee_types")
-      .select("id, name, default_amount")
-      .eq("school_id", schoolId!)
-      .eq("is_active", true)
-      .order("name");
-    const items = (data ?? []).map((ft: { id: string; name: string; default_amount: number | null }) => ({
-      id: ft.id, name: ft.name, defaultAmount: ft.default_amount ?? null,
-    }));
+    ((pricesRes.data ?? []) as any[]).forEach((p: any) => { yearPriceMap[p.fee_type_id] = Number(p.amount); });
+
+    const items: { id: string; name: string; defaultAmount: number | null; isEnrollmentMandatory: boolean }[] =
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ((typesRes.data ?? []) as any[]).map((ft: any) => {
+        // Year-specific price takes precedence over the global default_amount
+        const yearAmt = yearPriceMap[ft.id] !== undefined ? yearPriceMap[ft.id] : null;
+        return {
+          id: ft.id, name: ft.name,
+          defaultAmount: yearAmt !== null ? yearAmt : (ft.default_amount ?? null),
+          isEnrollmentMandatory: ft.is_enrollment_mandatory ?? false,
+        };
+      });
     setFeeTypes(items);
-    const init: Record<string, string> = {};
-    items.forEach((ft: { id: string; defaultAmount: number | null }) => {
-      init[ft.id] = ft.defaultAmount != null ? ft.defaultAmount.toString() : "";
+    const initAmounts: Record<string, string> = {};
+    const initChecked: Record<string, boolean> = {};
+    items.forEach((ft) => {
+      initAmounts[ft.id] = ft.defaultAmount != null ? ft.defaultAmount.toString() : "";
+      initChecked[ft.id] = ft.isEnrollmentMandatory;
     });
-    setItemizedAmounts(init);
+    setItemizedAmounts(initAmounts);
+    setEnrollPayChecked(initChecked);
   }
 
   async function handleReservationPayment() {
@@ -744,62 +837,28 @@ export default function EnrollmentPage() {
     setReservePaymentSaving(true);
     setReservePaymentError(null);
 
+    const checkedItems = feeTypes.filter((ft) => {
+      const a = parseFloat(itemizedAmounts[ft.id] ?? "");
+      return enrollPayChecked[ft.id] && !isNaN(a) && a > 0;
+    });
+    if (checkedItems.length === 0) {
+      setReservePaymentError("Please enter an amount for at least one fee type.");
+      setReservePaymentSaving(false);
+      return;
+    }
+    if (!reservePayment.date) {
+      setReservePaymentError("Please select a payment date.");
+      setReservePaymentSaving(false);
+      return;
+    }
+
     const currentMonth = new Date().toISOString().substring(0, 7) + "-01";
     const notes = enrollmentNotes.trim() || null;
+    const summaryItems: { name: string; amount: number }[] = [];
 
     try {
-      if (paymentMode === "itemized") {
-        const items = feeTypes.filter((ft) => {
-          const a = parseFloat(itemizedAmounts[ft.id] ?? "");
-          return !isNaN(a) && a > 0;
-        });
-        if (items.length === 0) {
-          setReservePaymentError("Please enter an amount for at least one fee type.");
-          setReservePaymentSaving(false);
-          return;
-        }
-        for (const ft of items) {
-          const amt = parseFloat(itemizedAmounts[ft.id]);
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { data: br, error: brErr } = await (supabase as any)
-            .from("billing_records")
-            .insert({
-              school_id: schoolId,
-              student_id: returningReserved.studentId,
-              class_id: returningReserved.classId,
-              school_year_id: activeYear.id,
-              billing_month: currentMonth,
-              amount_due: amt,
-              status: "paid",
-              description: ft.name,
-              fee_type_id: ft.id,
-              notes,
-            })
-            .select("id")
-            .single();
-          if (brErr) throw new Error(brErr.message);
-
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { error: payErr } = await (supabase as any)
-            .from("payments")
-            .insert({
-              billing_record_id: br.id,
-              amount: amt,
-              payment_method: reservePayment.method,
-              payment_date: reservePayment.date,
-              or_number: reservePayment.orNumber || null,
-              status: "confirmed",
-              recorded_by: userId ?? null,
-            });
-          if (payErr) throw new Error(payErr.message);
-        }
-      } else {
-        const amt = parseFloat(reservePayment.amount);
-        if (isNaN(amt) || amt <= 0) {
-          setReservePaymentError("Please enter a valid amount.");
-          setReservePaymentSaving(false);
-          return;
-        }
+      for (const ft of checkedItems) {
+        const amt = parseFloat(itemizedAmounts[ft.id]);
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data: br, error: brErr } = await (supabase as any)
           .from("billing_records")
@@ -811,8 +870,142 @@ export default function EnrollmentPage() {
             billing_month: currentMonth,
             amount_due: amt,
             status: "paid",
-            description: "Registration / Reservation Fee",
+            description: ft.name,
+            fee_type_id: ft.id,
             notes,
+          })
+          .select("id")
+          .single();
+        if (brErr) throw new Error(brErr.message);
+
+        let receiptPath: string | null = null;
+        if (enrollPayReceiptFile) {
+          const ext = enrollPayReceiptFile.name.split(".").pop() ?? "jpg";
+          const path = `payment-receipts/${schoolId}/${br.id}.${ext}`;
+          const { error: uploadErr } = await supabase.storage
+            .from("updates-media")
+            .upload(path, enrollPayReceiptFile, { upsert: true });
+          if (!uploadErr) receiptPath = path;
+        }
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { error: payErr } = await (supabase as any)
+          .from("payments")
+          .insert({
+            billing_record_id: br.id,
+            amount: amt,
+            payment_method: reservePayment.method,
+            payment_date: reservePayment.date,
+            or_number: reservePayment.orNumber || null,
+            receipt_photo_path: receiptPath,
+            status: "confirmed",
+            recorded_by: userId ?? null,
+          });
+        if (payErr) throw new Error(payErr.message);
+        summaryItems.push({ name: ft.name, amount: amt });
+      }
+
+      setLastPaymentSummary({
+        studentName: returningReserved.studentName,
+        items: summaryItems,
+        method: reservePayment.method,
+        date: reservePayment.date,
+        orNumber: reservePayment.orNumber,
+      });
+      setReservePaymentDone(true);
+    } catch (err: unknown) {
+      setReservePaymentError(err instanceof Error ? err.message : "Payment recording failed.");
+    }
+    setReservePaymentSaving(false);
+  }
+
+  function printEnrollmentReceipt(summary: { studentName: string; items: { name: string; amount: number }[]; method: string; date: string; orNumber: string }) {
+    const total = summary.items.reduce((s, i) => s + i.amount, 0);
+    const methodLabel: Record<string, string> = { cash: "Cash", gcash: "GCash", maya: "Maya", bank_transfer: "Bank Transfer", card: "Card", other: "Other" };
+    const rows = summary.items.map((i) => `<tr><td>${i.name}</td><td class="text-right">₱${i.amount.toLocaleString("en-PH", { minimumFractionDigits: 2 })}</td></tr>`).join("");
+    const win = window.open("", "_blank", "width=640,height=600");
+    if (!win) return;
+    win.document.write(`<!DOCTYPE html><html><head><title>Enrollment Receipt</title><style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:Arial,sans-serif;padding:40px;color:#111;font-size:13px}
+    h1{font-size:18px;margin-bottom:2px}
+    .sub{color:#555;font-size:13px;margin-bottom:20px}
+    .meta{margin-bottom:4px}
+    .label{color:#666;font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+    .value{font-weight:600;font-size:14px;margin-bottom:12px}
+    table{width:100%;border-collapse:collapse;margin:16px 0}
+    th{background:#f5f5f5;padding:8px 10px;text-align:left;font-size:12px;border-bottom:2px solid #ddd}
+    td{padding:8px 10px;border-bottom:1px solid #eee;font-size:13px}
+    .text-right{text-align:right}
+    .total-row td{font-weight:bold;background:#f9f9f9;border-top:2px solid #ddd}
+    .footer{margin-top:32px;font-size:11px;color:#aaa;text-align:center}
+    @media print{body{padding:20px}}
+  </style></head><body>
+    <h1>Enrollment Payment Receipt</h1>
+    <p class="sub">${new Date(summary.date).toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" })}</p>
+    <p class="label">Student</p><p class="value">${summary.studentName}</p>
+    <p class="label">Payment Method</p><p class="value">${methodLabel[summary.method] ?? summary.method}</p>
+    ${summary.orNumber ? `<p class="label">OR Number</p><p class="value">${summary.orNumber}</p>` : ""}
+    <table>
+      <thead><tr><th>Description</th><th class="text-right">Amount</th></tr></thead>
+      <tbody>${rows}</tbody>
+      <tfoot><tr class="total-row"><td>Total</td><td class="text-right">₱${total.toLocaleString("en-PH", { minimumFractionDigits: 2 })}</td></tr></tfoot>
+    </table>
+    <p class="footer">Thank you for your payment.</p>
+  </body></html>`);
+    win.document.close(); win.focus();
+    setTimeout(() => win.print(), 350);
+  }
+
+  async function handlePlacementPayment(enrollmentId: string, studentId: string, studentName: string) {
+    if (!schoolId || !activeYear?.id) return;
+
+    const checkedItems = feeTypes.filter((ft) => {
+      const a = parseFloat(itemizedAmounts[ft.id] ?? "");
+      return enrollPayChecked[ft.id] && !isNaN(a) && a > 0;
+    });
+    if (checkedItems.length === 0) {
+      setPlacementPayError("Please enter an amount for at least one fee type.");
+      return;
+    }
+    if (!placementPayForm.date) {
+      setPlacementPayError("Please select a payment date.");
+      return;
+    }
+
+    setPlacementPaySaving(true);
+    setPlacementPayError(null);
+
+    const currentMonth = new Date().toISOString().substring(0, 7) + "-01";
+    const summaryItems: { name: string; amount: number }[] = [];
+
+    // Upload receipt photo once before the loop
+    let sharedReceiptPath: string | null = null;
+    if (placementPayForm.receiptFile) {
+      const ext = placementPayForm.receiptFile.name.split(".").pop() ?? "jpg";
+      const tempId = crypto.randomUUID();
+      const path = `payment-receipts/${schoolId}/${tempId}.${ext}`;
+      const { error: uploadErr } = await supabase.storage
+        .from("updates-media")
+        .upload(path, placementPayForm.receiptFile, { upsert: true });
+      if (!uploadErr) sharedReceiptPath = path;
+    }
+
+    try {
+      for (const ft of checkedItems) {
+        const amt = parseFloat(itemizedAmounts[ft.id]);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: br, error: brErr } = await (supabase as any)
+          .from("billing_records")
+          .insert({
+            school_id: schoolId,
+            student_id: studentId,
+            school_year_id: activeYear.id,
+            billing_month: currentMonth,
+            amount_due: amt,
+            status: "paid",
+            description: ft.name,
+            fee_type_id: ft.id,
           })
           .select("id")
           .single();
@@ -824,20 +1017,32 @@ export default function EnrollmentPage() {
           .insert({
             billing_record_id: br.id,
             amount: amt,
-            payment_method: reservePayment.method,
-            payment_date: reservePayment.date,
-            or_number: reservePayment.orNumber || null,
+            payment_method: placementPayForm.method,
+            payment_date: placementPayForm.date,
+            or_number: placementPayForm.orNumber || null,
+            receipt_photo_path: sharedReceiptPath,
             status: "confirmed",
             recorded_by: userId ?? null,
           });
         if (payErr) throw new Error(payErr.message);
+        summaryItems.push({ name: ft.name, amount: amt });
       }
 
-      setReservePaymentDone(true);
+      setLastPaymentSummary({
+        studentName,
+        items: summaryItems,
+        method: placementPayForm.method,
+        date: placementPayForm.date,
+        orNumber: placementPayForm.orNumber,
+      });
+      setPlacementPayRow(null);
+      setPlacementPayForm({ amount: "", feeTypeId: "", method: "cash", date: new Date().toISOString().split("T")[0], orNumber: "", receiptFile: null });
+      showToast(`Payment recorded for ${studentName}. Full details in Billing → Payments.`);
+      await loadPendingPlacements();
     } catch (err: unknown) {
-      setReservePaymentError(err instanceof Error ? err.message : "Payment recording failed.");
+      setPlacementPayError(err instanceof Error ? err.message : "Payment recording failed.");
     }
-    setReservePaymentSaving(false);
+    setPlacementPaySaving(false);
   }
 
   async function markNotProceeding(id: string) {
@@ -924,7 +1129,14 @@ export default function EnrollmentPage() {
           <p className="text-muted-foreground text-sm mt-1">Manage inquiries, waitlist, and enrollment pipeline</p>
         </div>
         <div className="flex gap-2">
-          <button onClick={() => { setHelpOpen(true); setHelpSearch(""); }} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors px-2">
+          <button
+            onClick={() => setShowSummary((v) => !v)}
+            className={`flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg border transition-colors ${showSummary ? "border-primary/40 bg-primary/5 text-primary" : "border-border text-muted-foreground hover:text-foreground hover:bg-muted"}`}
+          >
+            <TrendingUp className="w-4 h-4" />
+            Summary Stats
+          </button>
+          <button onClick={() => { setHelpOpen(true); setHelpSearch(""); }} className="flex items-center gap-1.5 px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg border border-border transition-colors">
             <HelpCircle className="w-4 h-4" /> Help
           </button>
           <Button onClick={openFork}>
@@ -935,23 +1147,147 @@ export default function EnrollmentPage() {
 
       {error && <ErrorAlert message={error} />}
 
-      {/* Pipeline summary */}
-      <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
-        {PIPELINE.map((stage) => {
-          const count = inquiries.filter((i) => i.status === stage.status).length;
-          return (
-            <Card
-              key={stage.status}
-              className={`cursor-pointer transition-shadow hover:shadow-md ${statusFilter === stage.status ? "ring-2 ring-primary" : ""}`}
-              onClick={() => setStatusFilter(statusFilter === stage.status ? "" : stage.status)}
-            >
-              <CardContent className="p-3 text-center">
-                <p className="text-2xl font-semibold">{count}</p>
-                <p className="text-xs text-muted-foreground mt-0.5 leading-tight">{stage.label}</p>
-              </CardContent>
-            </Card>
-          );
-        })}
+      {/* Pending Section Placement — action-required, shown above pipeline */}
+      {pendingPlacements.length > 0 && (
+        <Card className="border-amber-300 overflow-hidden">
+          <div className="px-5 py-4 bg-amber-50 border-b border-amber-200">
+            <div className="flex items-center gap-2 mb-1">
+              <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+              <h3 className="font-semibold text-sm text-amber-900">
+                Blocked Enrollments ({pendingPlacements.length})
+              </h3>
+            </div>
+            <p className="text-xs text-amber-800 leading-relaxed">
+              These students are enrolled but need one more step before section placement can happen.{" "}
+              {placementGateActive && placementFeeTypeName
+                ? <>A paid <strong>{placementFeeTypeName}</strong> is required before you can assign them to a section.</>
+                : <>A paid billing record for the current school year is required before section placement can proceed.</>
+              }
+            </p>
+          </div>
+          <div className="p-4 space-y-2">
+            {pendingPlacements.map((p) => {
+              const levelClasses = classOptions.filter((c) => c.level === p.level);
+              const selectedClassId = placementClassId[p.enrollmentId] ?? "";
+              return (
+                <div
+                  key={p.enrollmentId}
+                  className={`flex items-center gap-3 px-4 py-3 rounded-lg border transition-colors ${
+                    p.hasPaid && !selectedClassId
+                      ? "border-green-400 bg-green-50"
+                      : "border-border bg-card"
+                  }`}
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-sm">{p.studentName}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">{p.level}</p>
+                    <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                      {p.hasPaid
+                        ? <>
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-xs font-medium">
+                              <Check className="w-3 h-3" /> Paid
+                            </span>
+                            {!selectedClassId && (
+                              <span className="text-xs text-green-700 font-semibold animate-pulse">
+                                ← Select a section to place
+                              </span>
+                            )}
+                          </>
+                        : <>
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-xs font-medium">
+                              Payment Required
+                            </span>
+                            <button
+                              onClick={() => {
+                                if (feeTypes.length === 0) loadFeeTypes();
+                                setPlacementPayRow(p.enrollmentId);
+                                setPlacementPayError(null);
+                                setPlacementPayForm({ amount: "", feeTypeId: "", method: "cash", date: new Date().toISOString().split("T")[0], orNumber: "", receiptFile: null });
+                              }}
+                              className="inline-flex items-center gap-1 text-xs text-primary hover:underline font-medium"
+                            >
+                              <CreditCard className="w-3 h-3" /> Record Payment
+                            </button>
+                          </>
+                      }
+                    </div>
+                  </div>
+                  <Select
+                    value={selectedClassId}
+                    onChange={(e) => setPlacementClassId({ ...placementClassId, [p.enrollmentId]: e.target.value })}
+                    className={`w-52 ${p.hasPaid && !selectedClassId ? "ring-2 ring-green-400 ring-offset-1 rounded-md" : ""}`}
+                    disabled={!p.hasPaid}
+                  >
+                    <option value="">— Select section —</option>
+                    {levelClasses.map((c) => {
+                      const seatsLeft = c.capacity - c.enrolled;
+                      return (
+                        <option key={c.id} value={c.id}>
+                          {c.name}{c.startTime ? ` · ${formatTime(c.startTime)}` : ""} ({seatsLeft > 0 ? `${seatsLeft} seats left` : "Full"})
+                        </option>
+                      );
+                    })}
+                    {levelClasses.length === 0 && (
+                      <option disabled value="">No sections for {p.level}</option>
+                    )}
+                  </Select>
+                  <Button
+                    size="sm"
+                    disabled={!selectedClassId || placing === p.enrollmentId || !p.hasPaid}
+                    onClick={() => handlePlace(p.enrollmentId, selectedClassId)}
+                  >
+                    {placing === p.enrollmentId ? "Placing…" : "Place"}
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+
+      {/* Pipeline summary — compact filter strip always visible; counts behind toggle */}
+      <div className="space-y-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs text-muted-foreground">Filter by stage:</span>
+          <button
+            onClick={() => setStatusFilter("")}
+            className={`px-2.5 py-1 text-xs rounded-lg border transition-colors font-medium ${!statusFilter ? "border-primary bg-primary/5 text-primary" : "border-border text-muted-foreground hover:bg-muted"}`}
+          >
+            All
+          </button>
+          {PIPELINE.map((stage) => {
+            const count = inquiries.filter((i) => i.status === stage.status).length;
+            return (
+              <button
+                key={stage.status}
+                onClick={() => setStatusFilter(statusFilter === stage.status ? "" : stage.status)}
+                className={`px-2.5 py-1 text-xs rounded-lg border transition-colors font-medium ${statusFilter === stage.status ? "border-primary bg-primary/5 text-primary" : "border-border text-muted-foreground hover:bg-muted"}`}
+              >
+                {stage.label}
+                <span className="ml-1 opacity-60">{count}</span>
+              </button>
+            );
+          })}
+        </div>
+        {showSummary && (
+          <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+            {PIPELINE.map((stage) => {
+              const count = inquiries.filter((i) => i.status === stage.status).length;
+              return (
+                <Card
+                  key={stage.status}
+                  className={`cursor-pointer transition-shadow hover:shadow-md ${statusFilter === stage.status ? "ring-2 ring-primary" : ""}`}
+                  onClick={() => setStatusFilter(statusFilter === stage.status ? "" : stage.status)}
+                >
+                  <CardContent className="p-3 text-center">
+                    <p className="text-2xl font-semibold">{count}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5 leading-tight">{stage.label}</p>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Search + filters + view toggle */}
@@ -982,32 +1318,43 @@ export default function EnrollmentPage() {
             ))}
           </div>
         </div>
-        {uniqueLevels.length > 0 && (
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-xs text-muted-foreground">Level:</span>
-            <button
-              onClick={() => setLevelFilter("")}
-              className={`px-2.5 py-1 text-xs rounded-lg border transition-colors font-medium ${!levelFilter ? "border-primary bg-primary/5 text-primary" : "border-border text-muted-foreground hover:bg-muted"}`}
-            >
-              All
-            </button>
-            {uniqueLevels.map((lvl) => (
+        <div className="flex items-center gap-3 flex-wrap">
+          {uniqueLevels.length > 0 && (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-xs text-muted-foreground">Level:</span>
               <button
-                key={lvl}
-                onClick={() => setLevelFilter(levelFilter === lvl ? "" : lvl)}
-                className={`px-2.5 py-1 text-xs rounded-lg border transition-colors font-medium ${levelFilter === lvl ? "border-primary bg-primary/5 text-primary" : "border-border text-muted-foreground hover:bg-muted"}`}
+                onClick={() => setLevelFilter("")}
+                className={`px-2.5 py-1 text-xs rounded-lg border transition-colors font-medium ${!levelFilter ? "border-primary bg-primary/5 text-primary" : "border-border text-muted-foreground hover:bg-muted"}`}
               >
-                {lvl}
+                All
               </button>
-            ))}
-          </div>
-        )}
+              {uniqueLevels.map((lvl) => (
+                <button
+                  key={lvl}
+                  onClick={() => setLevelFilter(levelFilter === lvl ? "" : lvl)}
+                  className={`px-2.5 py-1 text-xs rounded-lg border transition-colors font-medium ${levelFilter === lvl ? "border-primary bg-primary/5 text-primary" : "border-border text-muted-foreground hover:bg-muted"}`}
+                >
+                  {lvl}
+                </button>
+              ))}
+            </div>
+          )}
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground cursor-pointer select-none ml-auto">
+            <input
+              type="checkbox"
+              checked={actionItemsOnly}
+              onChange={(e) => setActionItemsOnly(e.target.checked)}
+              className="rounded border-border"
+            />
+            Show action items only
+          </label>
+        </div>
       </div>
 
       {/* Pipeline View */}
       {view === "pipeline" && (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {PIPELINE.filter((s) => s.status !== "not_proceeding").map((stage) => {
+          {PIPELINE.filter((s) => s.status !== "not_proceeding" && (!actionItemsOnly || s.status !== "enrolled")).map((stage) => {
             const stageItems = filtered.filter((i) => i.status === stage.status);
             return (
               <div key={stage.status}>
@@ -1031,11 +1378,11 @@ export default function EnrollmentPage() {
                         {inquiry.nextFollowUp && (
                           <p className="text-xs text-orange-600 mb-2">Follow up: {inquiry.nextFollowUp}</p>
                         )}
-                        <div className="flex gap-2">
+                        <div className="flex items-center gap-2 mt-1">
                           {STATUS_FLOW[inquiry.status] && (
                             <button
                               onClick={() => advanceStatus(inquiry)}
-                              className="flex items-center gap-1 text-xs text-primary hover:underline"
+                              className="flex items-center gap-1 text-xs bg-primary/10 hover:bg-primary/20 text-primary px-2.5 py-1 rounded-md transition-colors font-medium"
                             >
                               {STATUS_FLOW[inquiry.status] === "enrolled" ? "Enroll Student" : `Move to ${getStatusLabel(STATUS_FLOW[inquiry.status]!)}`}
                               <ArrowRight className="w-3 h-3" />
@@ -1077,7 +1424,7 @@ export default function EnrollmentPage() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((i) => (
+                {filtered.filter((i) => !actionItemsOnly || (i.status !== "enrolled" && i.status !== "not_proceeding")).map((i) => (
                   <tr key={i.id} className="border-b border-border last:border-0 hover:bg-muted/50 transition-colors">
                     <td className="px-5 py-4 font-medium">{i.childName}</td>
                     <td className="px-5 py-4">{i.parentName}</td>
@@ -1286,80 +1633,6 @@ export default function EnrollmentPage() {
         );
       })()}
 
-      {/* Pending Section Placement */}
-      {pendingPlacements.length > 0 && (
-        <Card className="border-amber-300 overflow-hidden">
-          <div className="px-5 py-4 bg-amber-50 border-b border-amber-200">
-            <div className="flex items-center gap-2 mb-1">
-              <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
-              <h3 className="font-semibold text-sm text-amber-900">
-                Pending Section Placement ({pendingPlacements.length})
-              </h3>
-            </div>
-            <p className="text-xs text-amber-800 leading-relaxed">
-              These students are enrolled but not yet assigned to a class section.{" "}
-              {placementGateActive && placementFeeTypeName
-                ? <>A paid <strong>{placementFeeTypeName}</strong> is required before placement can proceed.</>
-                : <>A paid billing record for the current school year is required before placement can proceed.</>
-              }
-            </p>
-          </div>
-          <div className="p-4 space-y-2">
-            {pendingPlacements.map((p) => {
-              const levelClasses = classOptions.filter((c) => c.level === p.level);
-              const selectedClassId = placementClassId[p.enrollmentId] ?? "";
-              return (
-                <div
-                  key={p.enrollmentId}
-                  className="flex items-center gap-3 px-4 py-3 rounded-lg border border-border bg-card"
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-medium text-sm">{p.studentName}</span>
-                      {(
-                        p.hasPaid
-                          ? <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 text-xs font-medium">
-                              <Check className="w-3 h-3" /> Paid
-                            </span>
-                          : <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 text-xs font-medium">
-                              Payment required
-                            </span>
-                      )}
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-0.5">{p.level}</p>
-                  </div>
-                  <Select
-                    value={selectedClassId}
-                    onChange={(e) => setPlacementClassId({ ...placementClassId, [p.enrollmentId]: e.target.value })}
-                    className="w-52"
-                    disabled={!p.hasPaid}
-                  >
-                    <option value="">— Select section —</option>
-                    {levelClasses.map((c) => {
-                      const seatsLeft = c.capacity - c.enrolled;
-                      return (
-                        <option key={c.id} value={c.id}>
-                          {c.name}{c.startTime ? ` · ${formatTime(c.startTime)}` : ""} ({seatsLeft > 0 ? `${seatsLeft} seats left` : "Full"})
-                        </option>
-                      );
-                    })}
-                    {levelClasses.length === 0 && (
-                      <option disabled value="">No sections for {p.level}</option>
-                    )}
-                  </Select>
-                  <Button
-                    size="sm"
-                    disabled={!selectedClassId || placing === p.enrollmentId || !p.hasPaid}
-                    onClick={() => handlePlace(p.enrollmentId, selectedClassId)}
-                  >
-                    {placing === p.enrollmentId ? "Placing…" : "Place"}
-                  </Button>
-                </div>
-              );
-            })}
-          </div>
-        </Card>
-      )}
 
       {/* Inquiry Edit Modal */}
       <Modal open={!!selectedInquiry} onClose={() => setSelectedInquiry(null)} title="Edit Inquiry">
@@ -1573,23 +1846,43 @@ export default function EnrollmentPage() {
                 type HelpTopic = { id: string; icon: React.ElementType; title: string; searchText: string; body: React.ReactNode };
                 const topics: HelpTopic[] = [
                   {
-                    id: "add-inquiry",
-                    icon: Plus,
-                    title: "Log a new inquiry",
-                    searchText: "add inquiry new log walk-in facebook referral source parent child",
+                    id: "page-overview",
+                    icon: BookOpen,
+                    title: "What this page is for",
+                    searchText: "overview purpose enrollment pipeline waitlist assessment offered slot billing add student profile",
                     body: (
                       <div className="space-y-2">
-                        <p>Do this the moment a parent expresses interest — by phone, walk-in, social media message, or referral.</p>
+                        <p>This is where you manage everything related to enrolling students — from the first inquiry all the way to class placement.</p>
+                        <p className="mt-1">All of the following happen here, not in the Students page:</p>
+                        <div className="mt-2 space-y-1.5 pl-1">
+                          <p className="text-xs">• <strong>Inquiry</strong> — a parent expresses interest</p>
+                          <p className="text-xs">• <strong>Assessment / Waitlist</strong> — you&apos;re evaluating or holding a spot</p>
+                          <p className="text-xs">• <strong>Offered Slot</strong> — a class seat has been offered</p>
+                          <p className="text-xs">• <strong>Enrollment confirmed</strong> — student record, guardian, and class assignment are all created</p>
+                          <p className="text-xs">• <strong>Section placement</strong> — assigning the enrolled student to a specific section</p>
+                        </div>
+                        <Note><strong>Add Student Profile</strong> (in the Students page) is not for enrollment. It creates a profile with no school year, class, or billing — use it only when you need to store information before enrollment is ready.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "add-inquiry",
+                    icon: Plus,
+                    title: "Enroll New Student — log an inquiry to start",
+                    searchText: "enroll new student add inquiry log walk-in facebook referral source parent child pipeline",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Use this for any child who is new to the school. The inquiry is your first record of their interest — you move it through the pipeline until enrollment is confirmed.</p>
                         <div className="space-y-2 mt-2">
-                          <Step n={1} text={<span>Click <strong>Add Inquiry</strong> (top right).</span>} />
+                          <Step n={1} text={<span>Click <strong>Start Enrollment → Enroll New Student</strong> (top right).</span>} />
                           <Step n={2} text={<span>Enter the <strong>child's name</strong> and <strong>parent/guardian name</strong> — these are required.</span>} />
                           <Step n={3} text={<span>Add a <strong>contact number</strong> or email so you can follow up later.</span>} />
                           <Step n={4} text={<span>Select the <strong>desired class</strong> if the parent has a preference. This feeds into the Analytics view's class demand table.</span>} />
                           <Step n={5} text={<span>Select the <strong>inquiry source</strong> (Facebook, Referral, Walk-in, etc.). This powers the source breakdown in Analytics — fill it in consistently for useful data.</span>} />
                           <Step n={6} text={<span>Set a <strong>follow-up date</strong> if you agreed to call them back on a specific day.</span>} />
-                          <Step n={7} text={<span>Click <strong>Save Inquiry</strong>. The card appears in the Inquiry column of the pipeline.</span>} />
+                          <Step n={7} text={<span>Click <strong>Save</strong>. The card appears in the Inquiry column of the pipeline.</span>} />
                         </div>
-                        <Note>You don't need all details upfront. You can log just name + contact now and fill in the rest later by clicking <strong>Details</strong> on the card.</Note>
+                        <Note>You don&apos;t need all details upfront. Log just name + contact now and fill in the rest later by clicking <strong>Details</strong> on the card.</Note>
                       </div>
                     ),
                   },
@@ -1638,19 +1931,19 @@ export default function EnrollmentPage() {
                   {
                     id: "enroll-student",
                     icon: UserCheck,
-                    title: "Formally enroll a student",
-                    searchText: "enroll student convert confirm enrollment class assign create student record",
+                    title: "Confirm enrollment — create the official student record",
+                    searchText: "enroll student convert confirm enrollment class assign create student record official",
                     body: (
                       <div className="space-y-2">
-                        <p>When a parent confirms and you're ready to create the student's official record, use the Enroll action — don't create the student manually in the Students page.</p>
+                        <p><strong>Enrollment is the official process</strong> — it assigns the student to a school year, class, and billing. Always enroll through this page, not by creating a student manually in Students.</p>
                         <div className="space-y-2 mt-2">
                           <Step n={1} text={<span>Find the inquiry at the <strong>Offered Slot</strong> stage and click <strong>Enroll Student →</strong>.</span>} />
                           <Step n={2} text={<span>A confirmation modal opens. Optionally enter the child's <strong>date of birth</strong> and <strong>gender</strong> now (you can add more details from the Students page later).</span>} />
                           <Step n={3} text={<span>Select the <strong>class</strong> to assign the student to. The dropdown shows current enrolment vs. capacity so you can see which classes have seats.</span>} />
-                          <Step n={4} text={<span>Click <strong>Confirm Enrollment</strong>. The system automatically creates: a student record, a guardian record using the parent info from the inquiry, and an enrollment linking the student to the class.</span>} />
+                          <Step n={4} text={<span>Click <strong>Confirm Enrollment</strong>. The system automatically creates: a student record, a guardian record using the parent info from the inquiry, and an enrollment linking the student to the class and school year.</span>} />
                         </div>
-                        <Note>After enrollment, go to <strong>Students</strong> to add the full student profile (address, additional guardians, medical notes, etc.) and to send the parent portal invite.</Note>
-                        <Tip>If you skip assigning a class during enrollment, the student is created without a class. You can assign them from the Students page later, but they won't appear in attendance or billing until enrolled in a class.</Tip>
+                        <Tip>Enrollment assigns the school year, class, and billing — without it, the student won&apos;t appear in attendance or billing even if their profile exists in Students.</Tip>
+                        <Note>After enrollment, go to <strong>Students</strong> to complete the profile (address, medical notes, additional guardians) and send the parent portal invite.</Note>
                       </div>
                     ),
                   },
@@ -1699,7 +1992,7 @@ export default function EnrollmentPage() {
                       <div className="space-y-2">
                         <p>A follow-up date is a reminder you set for yourself — when to call or message the parent next.</p>
                         <div className="space-y-2 mt-2">
-                          <Step n={1} text={<span>Set or update it in the <strong>Add Inquiry</strong> form or the <strong>Details / Edit modal</strong> using the Next Follow Up date picker.</span>} />
+                          <Step n={1} text={<span>Set or update it in the <strong>Enroll New Student</strong> form or the <strong>Details / Edit modal</strong> using the Next Follow Up date picker.</span>} />
                           <Step n={2} text={<span>When set, it shows in <strong>orange</strong> on the pipeline card ("Follow up: YYYY-MM-DD") as a visual cue.</span>} />
                           <Step n={3} text={<span>In <strong>Table view</strong> the Follow Up column is sortable by eye — scan for today's or past dates to see who needs a call.</span>} />
                         </div>
@@ -1775,37 +2068,61 @@ export default function EnrollmentPage() {
                   {
                     id: "returning-student",
                     icon: UserCheck,
-                    title: "Enroll a returning student",
-                    searchText: "returning student re-enroll eligible classification year-end existing",
+                    title: "Enroll Returning Student — re-enroll a student from a past year",
+                    searchText: "returning student re-enroll eligible classification year-end existing promote",
                     body: (
                       <div className="space-y-2">
-                        <p>Use <strong>Enroll Returning Student</strong> when a student from a previous year is coming back — this reuses their existing profile and avoids creating a duplicate.</p>
+                        <p>Use <strong>Enroll Returning Student</strong> when a student from a previous school year is coming back. This reuses their existing profile and avoids creating a duplicate record.</p>
                         <div className="space-y-2 mt-2">
-                          <Step n={1} text={<span>Click <strong>Start Enrollment</strong> → <strong>Enroll Returning Student</strong>.</span>} />
+                          <Step n={1} text={<span>Click <strong>Start Enrollment → Enroll Returning Student</strong>.</span>} />
                           <Step n={2} text={<span>Search by student name, nickname, student code, or parent name. Results appear after 2 characters.</span>} />
                           <Step n={3} text={<span>Students tagged as <strong>Eligible — ready to enroll</strong> (green) are cleared from Year-End Classification. These are your primary targets.</span>} />
-                          <Step n={4} text={<span>Select a student to proceed. The class selector defaults to classes matching the <strong>recommended next level</strong> but you can choose any class.</span>} />
-                          <Step n={5} text={<span>Click <strong>Reserve Slot</strong>. The slot is reserved but not confirmed until payment is made. Use <strong>Record Payment</strong> in the next screen to collect a registration fee and secure the slot.</span>} />
+                          <Step n={4} text={<span>Select a student. The <strong>Assign to Level</strong> dropdown only shows levels higher than the student's current level — downgrades are blocked. The recommended next level is pre-selected and marked with ★.</span>} />
+                          <Step n={5} text={<span>Click <strong>Reserve Slot</strong>. A confirmation toast appears and the student moves to the <strong>Blocked Enrollments</strong> panel at the top of the page.</span>} />
+                          <Step n={6} text={<span>Click <strong>Record Payment</strong> in the reservation confirmation screen. The fee breakdown shows all active fee types — mandatory fees are pre-checked. Enter the amount collected for each, pick the payment method and date, then click <strong>Confirm Payment</strong>. Each fee creates a separate billing record automatically.</span>} />
                         </div>
-                        <Tip>Students with non-eligible classifications (Retained, Graduated, etc.) show a warning and require an override reason from a school admin before enrolling.</Tip>
+                        <Tip>Fee type amounts are pre-filled from the school-year prices you set in <strong>Billing → Setup → Fee Types</strong>. Edit them per payment if the actual amount differs.</Tip>
+                        <Tip>Students classified as <strong>Retained</strong> can be assigned to the same or a lower level — all levels are shown in the dropdown.</Tip>
+                        <Tip>If you select a level that <strong>skips</strong> the recommended next level (accelerated placement), an amber confirmation prompt appears. Tick the checkbox to confirm before the Reserve Slot button becomes active.</Tip>
+                        <Tip>Students with non-eligible classifications (Graduated, Not Continuing, etc.) show a warning and require an override reason from a school admin before enrolling.</Tip>
                         <Note>If a student is <strong>already enrolled</strong> in the active year, enrollment is blocked outright — no override is possible. Check the Students page to view their current enrollment.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "promote-reenroll",
+                    icon: ArrowRight,
+                    title: "Promote / Re-enroll — move a student to their next class",
+                    searchText: "promote re-enroll year-end classification eligible next class level advance",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Promoting a student means enrolling them in a new class for the new school year, based on their Year-End Classification outcome.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Go to <strong>Students → Year-End Classification</strong> tab and classify each student (Eligible, Retain, Graduate, etc.) at the end of the school year.</span>} />
+                          <Step n={2} text={<span>In the new school year, go to <strong>Students</strong> and open the student&apos;s profile panel.</span>} />
+                          <Step n={3} text={<span>In the <strong>Enrollments</strong> section, click <strong>+ Add Enrollment</strong> and select the new class.</span>} />
+                          <Step n={4} text={<span>Or, use <strong>Start Enrollment → Enroll Returning Student</strong> on this page to do the same thing — it will pre-suggest the recommended next level.</span>} />
+                        </div>
+                        <Tip>Students classified as <strong>Eligible</strong> are your first priority for re-enrollment — they appear with a green badge in the Returning Student search results.</Tip>
+                        <Note>Promotion does not happen automatically — each student needs to be re-enrolled individually (or in bulk via the Returning Student flow).</Note>
                       </div>
                     ),
                   },
                   {
                     id: "pending-placement",
                     icon: UserCheck,
-                    title: "Assign enrolled students to a class section",
-                    searchText: "pending placement section assign class unassigned level enrolled",
+                    title: "Blocked Enrollments — assign students to a class section",
+                    searchText: "blocked enrollment pending placement section assign class unassigned level payment required",
                     body: (
                       <div className="space-y-2">
-                        <p>When a student is enrolled by level (not yet assigned to a specific section), they appear in the <strong>Pending Section Placement</strong> card on this page.</p>
+                        <p>When a student is enrolled but not yet assigned to a specific section, they appear in the <strong>Blocked Enrollments</strong> panel at the top of this page.</p>
                         <div className="space-y-2 mt-2">
-                          <Step n={1} text={<span>Scroll down on the Enrollment page to find the amber <strong>Pending Section Placement</strong> card.</span>} />
-                          <Step n={2} text={<span>Each row shows the student's name and level. Use the dropdown to pick the target <strong>class section</strong> — seats remaining are shown next to each option.</span>} />
-                          <Step n={3} text={<span>Click <strong>Place</strong>. The student is moved from the placeholder to the real section immediately.</span>} />
+                          <Step n={1} text={<span>Each row shows the student&apos;s name, level, and payment status. A <strong>Payment Required</strong> badge means you need to record a payment before you can assign a section.</span>} />
+                          <Step n={2} text={<span>If payment is needed, click <strong>Record Payment</strong> to open the fee breakdown. Check the fees collected, enter the amount for each, then confirm. Mandatory fees are pre-selected.</span>} />
+                          <Step n={3} text={<span>Once paid (green <strong>Paid</strong> badge), use the dropdown to select a <strong>class section</strong> — available seats are shown next to each option.</span>} />
+                          <Step n={4} text={<span>Click <strong>Place</strong>. The student moves to the selected section immediately.</span>} />
                         </div>
-                        <Note>Once placed, the student will appear in Attendance and can receive Billing records scoped to their section. Unplaced students are still counted as enrolled in the dashboard.</Note>
+                        <Note>Once placed, the student will appear in Attendance and can receive Billing records for their section. Students showing as blocked are still counted as enrolled in the dashboard.</Note>
                         <Tip>If no sections exist for a level yet, create them first in the <strong>Classes</strong> page, then come back here to place students.</Tip>
                       </div>
                     ),
@@ -1974,10 +2291,21 @@ export default function EnrollmentPage() {
               <Plus className="w-5 h-5 text-muted-foreground" />
             </div>
             <div>
-              <p className="font-semibold text-sm">Add New Inquiry</p>
-              <p className="text-xs text-muted-foreground mt-0.5">Log a new inquiry for a child who is not yet in the system.</p>
+              <p className="font-semibold text-sm">Enroll New Student</p>
+              <p className="text-xs text-muted-foreground mt-0.5">For a child new to the school. Logs their inquiry and moves them through the admissions pipeline to enrollment.</p>
             </div>
           </button>
+
+          <div className="border-t border-border pt-3 mt-1">
+            <p className="text-xs text-muted-foreground mb-2 font-medium">Re-enrolling a returning student?</p>
+            <button
+              onClick={() => { setForkOpen(false); window.location.href = "/students"; }}
+              className="w-full flex items-center gap-3 px-3 py-2 rounded-lg border border-border hover:border-primary hover:bg-primary/5 transition-colors text-left text-xs"
+            >
+              <ArrowRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+              <span><strong>Promote / Re-enroll</strong> — go to Students → Year-End Classification to classify students, then use <strong>Add Enrollment</strong> on their profile.</span>
+            </button>
+          </div>
         </div>
       </Modal>
 
@@ -1990,7 +2318,9 @@ export default function EnrollmentPage() {
           setReturningReserved(null);
           setEnrollmentNotes("");
           setShowPaymentForm(false);
-          setPaymentMode("simple");
+          setEnrollPayChecked({});
+          setEnrollPayReceiptFile(null);
+          setLastPaymentSummary(null);
           setReservePaymentDone(false);
           setReservePaymentError(null);
         }}
@@ -2020,8 +2350,13 @@ export default function EnrollmentPage() {
                       </p>
                     </div>
                   </div>
-                  <div className="flex justify-end">
-                    <Button onClick={() => { setReturningOpen(false); setReturningReserved(null); setReservePaymentDone(false); }}>
+                  <div className="flex justify-end gap-2">
+                    {lastPaymentSummary && (
+                      <Button variant="outline" onClick={() => printEnrollmentReceipt(lastPaymentSummary!)}>
+                        Print Receipt
+                      </Button>
+                    )}
+                    <Button onClick={() => { setReturningOpen(false); setReturningReserved(null); setReservePaymentDone(false); setLastPaymentSummary(null); }}>
                       Done
                     </Button>
                   </div>
@@ -2030,16 +2365,16 @@ export default function EnrollmentPage() {
             }
 
             if (showPaymentForm) {
-              const itemizedTotal = feeTypes.reduce((sum, ft) => {
-                const v = parseFloat(itemizedAmounts[ft.id] ?? "");
-                return sum + (isNaN(v) ? 0 : v);
-              }, 0);
-              const canSubmit = paymentMode === "itemized"
-                ? itemizedTotal > 0 && !!reservePayment.date
-                : !!reservePayment.amount && !!reservePayment.date;
+              const checkedTotal = feeTypes
+                .filter((ft) => enrollPayChecked[ft.id])
+                .reduce((sum, ft) => {
+                  const v = parseFloat(itemizedAmounts[ft.id] ?? "");
+                  return sum + (isNaN(v) ? 0 : v);
+                }, 0);
+              const canSubmit = checkedTotal > 0 && !!reservePayment.date;
 
               return (
-                <div className="space-y-4">
+                <div className="space-y-3">
                   <button
                     onClick={() => setShowPaymentForm(false)}
                     className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
@@ -2048,79 +2383,67 @@ export default function EnrollmentPage() {
                   </button>
                   <p className="text-sm font-medium">Record initial payment for <strong>{returningReserved.studentName}</strong></p>
 
-                  {/* Payment mode toggle */}
-                  <div className="flex rounded-lg border border-border overflow-hidden text-sm">
-                    <button
-                      type="button"
-                      onClick={() => setPaymentMode("simple")}
-                      className={`flex-1 py-2 transition-colors ${paymentMode === "simple" ? "bg-primary text-white font-medium" : "bg-muted text-muted-foreground hover:bg-accent"}`}
-                    >
-                      Single payment
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPaymentMode("itemized")}
-                      className={`flex-1 py-2 transition-colors ${paymentMode === "itemized" ? "bg-primary text-white font-medium" : "bg-muted text-muted-foreground hover:bg-accent"}`}
-                    >
-                      Itemize by fee type
-                    </button>
-                  </div>
-
-                  {/* Simple mode: single amount */}
-                  {paymentMode === "simple" && (
+                  {feeTypes.length === 0 ? (
+                    <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                      No fee types defined. Add fee types in <strong>Billing → Setup → Fee Types</strong> first.
+                    </p>
+                  ) : (
                     <div>
-                      <label className="block text-sm font-medium mb-1">Amount *</label>
-                      <Input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        placeholder="0.00"
-                        value={reservePayment.amount}
-                        onChange={(e) => setReservePayment({ ...reservePayment, amount: e.target.value })}
-                      />
-                    </div>
-                  )}
-
-                  {/* Itemized mode: per fee type */}
-                  {paymentMode === "itemized" && (
-                    <div className="space-y-2">
-                      {feeTypes.length === 0 ? (
-                        <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                          No fee types defined yet. Add fee types in Billing → Setup → Fee Types, or use Single Payment instead.
-                        </p>
-                      ) : (
-                        <>
-                          <div className="border border-border rounded-lg overflow-hidden">
-                            {feeTypes.map((ft, i) => (
-                              <div key={ft.id} className={`flex items-center gap-3 px-3 py-2.5 ${i > 0 ? "border-t border-border" : ""}`}>
-                                <span className="flex-1 text-sm">{ft.name}</span>
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  step="0.01"
-                                  placeholder="0.00"
-                                  value={itemizedAmounts[ft.id] ?? ""}
-                                  onChange={(e) => setItemizedAmounts({ ...itemizedAmounts, [ft.id]: e.target.value })}
-                                  className="w-32 text-right"
-                                />
-                              </div>
-                            ))}
-                            <div className="flex items-center gap-3 px-3 py-2.5 border-t border-border bg-muted/50">
-                              <span className="flex-1 text-sm font-semibold">Total</span>
-                              <span className="w-32 text-right text-sm font-semibold">
-                                ₱{itemizedTotal.toLocaleString("en-PH", { minimumFractionDigits: 2 })}
-                              </span>
-                            </div>
+                      {(() => {
+                        const optional = feeTypes.filter((ft) => !ft.isEnrollmentMandatory);
+                        const allOptChecked = optional.length > 0 && optional.every((ft) => enrollPayChecked[ft.id]);
+                        return optional.length > 0 ? (
+                          <div className="flex justify-end mb-1">
+                            <button
+                              type="button"
+                              onClick={toggleAllEnrollFees}
+                              className="text-xs text-primary hover:underline font-medium"
+                            >
+                              {allOptChecked ? "Unselect optional" : "Select all"}
+                            </button>
                           </div>
-                        </>
-                      )}
+                        ) : null;
+                      })()}
+                    <div className="border border-border rounded-lg overflow-hidden">
+                      {feeTypes.map((ft, i) => (
+                        <div key={ft.id} className={`flex items-center gap-2.5 px-3 py-1.5 ${i > 0 ? "border-t border-border" : ""}`}>
+                          <input
+                            type="checkbox"
+                            id={`ep-${ft.id}`}
+                            checked={!!enrollPayChecked[ft.id]}
+                            disabled={ft.isEnrollmentMandatory}
+                            onChange={(e) => setEnrollPayChecked((prev) => ({ ...prev, [ft.id]: e.target.checked }))}
+                            className="w-4 h-4 accent-primary flex-shrink-0"
+                          />
+                          <label htmlFor={`ep-${ft.id}`} className={`flex-1 text-sm min-w-0 cursor-pointer ${ft.isEnrollmentMandatory ? "font-medium" : "text-muted-foreground"}`}>
+                            {ft.name}
+                            {ft.isEnrollmentMandatory && <span className="ml-1.5 text-xs text-muted-foreground font-normal">required</span>}
+                          </label>
+                          <div className="relative flex-shrink-0">
+                            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">₱</span>
+                            <Input
+                              type="number" min="0" step="0.01" placeholder="0.00"
+                              value={itemizedAmounts[ft.id] ?? ""}
+                              onChange={(e) => setItemizedAmounts({ ...itemizedAmounts, [ft.id]: e.target.value })}
+                              className="w-28 text-right pl-6 h-8 text-sm"
+                              disabled={!enrollPayChecked[ft.id]}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                      <div className="flex items-center gap-2.5 px-3 py-1.5 border-t border-border bg-muted/40">
+                        <span className="flex-1 text-sm font-semibold">Total</span>
+                        <span className="w-28 text-right text-sm font-semibold pr-0.5">
+                          ₱{checkedTotal.toLocaleString("en-PH", { minimumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                    </div>
                     </div>
                   )}
 
-                  {/* Common fields: method, date, OR# */}
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-sm font-medium mb-1">Payment Method *</label>
+                      <label className="block text-xs font-medium mb-1">Payment Method *</label>
                       <Select value={reservePayment.method} onChange={(e) => setReservePayment({ ...reservePayment, method: e.target.value })}>
                         <option value="cash">Cash</option>
                         <option value="gcash">GCash</option>
@@ -2131,17 +2454,31 @@ export default function EnrollmentPage() {
                       </Select>
                     </div>
                     <div>
-                      <label className="block text-sm font-medium mb-1">Date *</label>
+                      <label className="block text-xs font-medium mb-1">Date *</label>
                       <DatePicker value={reservePayment.date} onChange={(v) => setReservePayment({ ...reservePayment, date: v })} />
                     </div>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-1">OR Number <span className="text-muted-foreground font-normal">(optional)</span></label>
-                    <Input
-                      placeholder="e.g. OR-001"
-                      value={reservePayment.orNumber}
-                      onChange={(e) => setReservePayment({ ...reservePayment, orNumber: e.target.value })}
-                    />
+                    <div>
+                      <label className="block text-xs font-medium mb-1">OR Number <span className="text-muted-foreground font-normal">(optional)</span></label>
+                      <Input
+                        placeholder="e.g. OR-001"
+                        value={reservePayment.orNumber}
+                        onChange={(e) => setReservePayment({ ...reservePayment, orNumber: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium mb-1">Receipt Photo <span className="text-muted-foreground font-normal">(optional)</span></label>
+                      {enrollPayReceiptFile ? (
+                        <div className="flex items-center gap-2 p-2 bg-muted rounded-lg text-xs">
+                          <span className="flex-1 truncate">{enrollPayReceiptFile.name}</span>
+                          <button onClick={() => setEnrollPayReceiptFile(null)} className="text-muted-foreground hover:text-destructive transition-colors"><X className="w-3.5 h-3.5" /></button>
+                        </div>
+                      ) : (
+                        <label className="flex items-center gap-2 px-3 py-2 border border-dashed border-border rounded-lg text-xs text-muted-foreground cursor-pointer hover:bg-muted transition-colors">
+                          <input type="file" accept="image/*" className="hidden" onChange={(e) => setEnrollPayReceiptFile(e.target.files?.[0] ?? null)} />
+                          <span>Attach photo</span>
+                        </label>
+                      )}
+                    </div>
                   </div>
 
                   {reservePaymentError && <ErrorAlert message={reservePaymentError} />}
@@ -2333,12 +2670,21 @@ export default function EnrollmentPage() {
               s.derivedStatus === "not_continuing";
             const canOverride = userRole === "school_admin" || userRole === "super_admin";
 
-            // Levels sorted: recommended first, then alphabetical
-            const sortedLevels = [...uniqueLevels].sort((a, b) => {
-              const aRec = a === s.recommendedNextLevel ? 0 : 1;
-              const bRec = b === s.recommendedNextLevel ? 0 : 1;
-              return aRec - bRec || a.localeCompare(b);
-            });
+            // Retained students may go to same/lower level; all others block downgrade
+            const isRetained = s.derivedStatus === "not_eligible_retained";
+            const currentRank = levelRank(s.lastClassLevel ?? "");
+            const recommendedRank = s.recommendedNextLevel ? levelRank(s.recommendedNextLevel) : currentRank + 1;
+
+            // Levels sorted: recommended first, then by progression order; downgrade levels hidden unless retained
+            const sortedLevels = [...uniqueLevels]
+              .filter((lvl) => isRetained || levelRank(lvl) > currentRank)
+              .sort((a, b) => {
+                const aRec = a === s.recommendedNextLevel ? 0 : 1;
+                const bRec = b === s.recommendedNextLevel ? 0 : 1;
+                return aRec - bRec || levelRank(a) - levelRank(b);
+              });
+
+            const isAccelerated = !!returningLevel && !!s.recommendedNextLevel && levelRank(returningLevel) > recommendedRank;
 
             return (
               <div className="space-y-4">
@@ -2357,17 +2703,37 @@ export default function EnrollmentPage() {
                     {s.studentCode && <span className="font-mono text-xs text-muted-foreground ml-2">{s.studentCode}</span>}
                   </p>
                   <p className="text-muted-foreground text-xs">{s.guardianName} · {s.guardianPhone}</p>
-                  <p className="text-muted-foreground text-xs">Last enrolled: {s.lastSchoolYearName} · {s.lastClassName}</p>
+                  <p className="text-muted-foreground text-xs">
+                    Last enrolled: {s.lastSchoolYearName} · {s.lastClassName}
+                    {s.lastClassLevel && s.lastClassLevel !== "—" && (
+                      <span className="ml-1 text-muted-foreground">({s.lastClassLevel})</span>
+                    )}
+                  </p>
                   {s.recommendedNextLevel && (
                     <p className="text-xs text-primary font-medium">→ Recommended next level: {s.recommendedNextLevel}</p>
                   )}
                 </div>
 
+                {/* Warn when the saved recommended level has no active class this school year */}
+                {s.recommendedNextLevel && !sortedLevels.includes(s.recommendedNextLevel) && !isBlocked && (
+                  <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+                    <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5 text-amber-600" />
+                    <div>
+                      <p className="font-semibold">Recommended level not available</p>
+                      <p className="text-xs mt-0.5">
+                        The promotion path for this student points to <strong>{s.recommendedNextLevel}</strong>, but there are no active classes at that level for {activeYear?.name}. Select a level manually, or create a class for {s.recommendedNextLevel} in the Classes page first.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
                 {/* Derived status banners */}
                 {s.derivedStatus === "eligible_not_enrolled" && (
-                  <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
-                    <Check className="w-4 h-4 flex-shrink-0" />
-                    <span>This student is <strong>eligible for next level</strong>. {s.progressionNotes && `(${s.progressionNotes})`}</span>
+                  <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700 space-y-1">
+                    <div className="flex items-center gap-2">
+                      <Check className="w-4 h-4 flex-shrink-0" />
+                      <span>This student is <strong>eligible for next level</strong>.</span>
+                    </div>
                   </div>
                 )}
                 {s.derivedStatus === "no_classification" && (
@@ -2395,7 +2761,6 @@ export default function EnrollmentPage() {
                         {s.derivedStatus === "graduated" && "Student is marked as graduated"}
                         {s.derivedStatus === "not_continuing" && "Student is not continuing"}
                       </p>
-                      {s.progressionNotes && <p className="text-xs mt-0.5">{s.progressionNotes}</p>}
                       {canOverride
                         ? <p className="text-xs mt-1">You can override this as school admin. An override reason is required.</p>
                         : <p className="text-xs mt-1">Only a school admin can override this classification to proceed with enrollment.</p>
@@ -2428,7 +2793,7 @@ export default function EnrollmentPage() {
                     </label>
                     <Select
                       value={returningLevel}
-                      onChange={(e) => setReturningLevel(e.target.value)}
+                      onChange={(e) => { setReturningLevel(e.target.value); setAccelConfirmed(false); }}
                     >
                       <option value="">— Select level —</option>
                       {sortedLevels.map((lvl) => {
@@ -2449,6 +2814,32 @@ export default function EnrollmentPage() {
                         <p className="text-xs text-amber-600 mt-1">This level is at capacity. The student can still be enrolled — assign to a section via Section Placement once space opens.</p>
                       ) : null;
                     })()}
+                    {isRetained && (
+                      <p className="text-xs text-muted-foreground mt-1">All levels available — student is classified as Retained.</p>
+                    )}
+                    {isAccelerated && (
+                      <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800 space-y-2">
+                        <div className="flex items-start gap-2">
+                          <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5 text-amber-600" />
+                          <div>
+                            <p className="font-semibold">Accelerated placement — level skipped</p>
+                            <p className="text-xs mt-0.5">
+                              The recommended next level is <strong>{s.recommendedNextLevel}</strong>, but you are assigning to <strong>{returningLevel}</strong>.
+                              This skips a level. Are you sure this is correct?
+                            </p>
+                          </div>
+                        </div>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={accelConfirmed}
+                            onChange={(e) => setAccelConfirmed(e.target.checked)}
+                            className="w-4 h-4 accent-amber-600"
+                          />
+                          <span className="text-xs font-medium">Yes, I confirm this accelerated placement</span>
+                        </label>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -2470,7 +2861,7 @@ export default function EnrollmentPage() {
                   {!isBlocked && !(needsOverride && !canOverride) && (
                     <Button
                       onClick={handleReturningEnroll}
-                      disabled={returningSaving || !returningLevel || (needsOverride && canOverride && !returningOverride.trim())}
+                      disabled={returningSaving || !returningLevel || (needsOverride && canOverride && !returningOverride.trim()) || (isAccelerated && !accelConfirmed)}
                     >
                       {returningSaving ? <><RefreshCw className="w-4 h-4 animate-spin" /> Reserving…</> : <><Check className="w-4 h-4" /> Reserve Slot</>}
                     </Button>
@@ -2482,8 +2873,151 @@ export default function EnrollmentPage() {
         </div>
       </Modal>
 
-      {/* Add Inquiry Modal */}
-      <Modal open={modalOpen} onClose={() => { setModalOpen(false); setForm(EMPTY_FORM); setFormError(null); }} title="Add Inquiry">
+      {/* Placement Payment Modal */}
+      {(() => {
+        const pp = pendingPlacements.find((p) => p.enrollmentId === placementPayRow);
+        const ppTotal = feeTypes
+          .filter((ft) => enrollPayChecked[ft.id])
+          .reduce((sum, ft) => {
+            const v = parseFloat(itemizedAmounts[ft.id] ?? "");
+            return sum + (isNaN(v) ? 0 : v);
+          }, 0);
+        const ppCanSubmit = ppTotal > 0 && !!placementPayForm.date;
+        return (
+          <Modal
+            open={!!placementPayRow}
+            onClose={() => { setPlacementPayRow(null); setPlacementPayError(null); }}
+            title={pp ? `Record Payment — ${pp.studentName}` : "Record Payment"}
+            className="max-w-lg"
+          >
+            {pp && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-4 p-2.5 bg-muted rounded-lg text-sm">
+                  <div><span className="text-muted-foreground">Student: </span><strong>{pp.studentName}</strong></div>
+                  <div className="text-muted-foreground">·</div>
+                  <div><span className="text-muted-foreground">Level: </span>{pp.level}</div>
+                </div>
+
+                {/* Fee breakdown */}
+                {feeTypes.length === 0 ? (
+                  <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                    No fee types defined. Add fee types in <strong>Billing → Setup → Fee Types</strong> first.
+                  </p>
+                ) : (
+                  <div>
+                    {(() => {
+                      const optional = feeTypes.filter((ft) => !ft.isEnrollmentMandatory);
+                      const allOptChecked = optional.length > 0 && optional.every((ft) => enrollPayChecked[ft.id]);
+                      return optional.length > 0 ? (
+                        <div className="flex justify-end mb-1">
+                          <button
+                            type="button"
+                            onClick={toggleAllEnrollFees}
+                            className="text-xs text-primary hover:underline font-medium"
+                          >
+                            {allOptChecked ? "Unselect optional" : "Select all"}
+                          </button>
+                        </div>
+                      ) : null;
+                    })()}
+                  <div className="border border-border rounded-lg overflow-hidden">
+                    {feeTypes.map((ft, i) => (
+                      <div
+                        key={ft.id}
+                        className={`flex items-center gap-2.5 px-3 py-1.5 ${i > 0 ? "border-t border-border" : ""}`}
+                      >
+                        <input
+                          type="checkbox"
+                          id={`pp-${ft.id}`}
+                          checked={!!enrollPayChecked[ft.id]}
+                          disabled={ft.isEnrollmentMandatory}
+                          onChange={(e) => setEnrollPayChecked((prev) => ({ ...prev, [ft.id]: e.target.checked }))}
+                          className="w-4 h-4 accent-primary flex-shrink-0"
+                        />
+                        <label
+                          htmlFor={`pp-${ft.id}`}
+                          className={`flex-1 text-sm min-w-0 cursor-pointer ${ft.isEnrollmentMandatory ? "font-medium" : "text-muted-foreground"}`}
+                        >
+                          {ft.name}
+                          {ft.isEnrollmentMandatory && <span className="ml-1.5 text-xs text-muted-foreground font-normal">required</span>}
+                        </label>
+                        <div className="relative flex-shrink-0">
+                          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">₱</span>
+                          <Input
+                            type="number" min="0" step="0.01" placeholder="0.00"
+                            value={itemizedAmounts[ft.id] ?? ""}
+                            onChange={(e) => setItemizedAmounts({ ...itemizedAmounts, [ft.id]: e.target.value })}
+                            className="w-28 text-right pl-6 h-8 text-sm"
+                            disabled={!enrollPayChecked[ft.id]}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                    <div className="flex items-center gap-2.5 px-3 py-1.5 border-t border-border bg-muted/40">
+                      <span className="flex-1 text-sm font-semibold">Total</span>
+                      <span className="w-28 text-right text-sm font-semibold pr-0.5">
+                        ₱{ppTotal.toLocaleString("en-PH", { minimumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                  </div>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium mb-1">Payment Method</label>
+                    <Select value={placementPayForm.method} onChange={(e) => setPlacementPayForm((prev) => ({ ...prev, method: e.target.value }))}>
+                      <option value="cash">Cash</option>
+                      <option value="gcash">GCash</option>
+                      <option value="maya">Maya</option>
+                      <option value="bank_transfer">Bank Transfer</option>
+                      <option value="card">Card</option>
+                      <option value="other">Other</option>
+                    </Select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium mb-1">Date *</label>
+                    <DatePicker value={placementPayForm.date} onChange={(v) => setPlacementPayForm((prev) => ({ ...prev, date: v }))} />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium mb-1">OR # <span className="text-muted-foreground font-normal">(optional)</span></label>
+                    <Input
+                      placeholder="Official receipt number"
+                      value={placementPayForm.orNumber}
+                      onChange={(e) => setPlacementPayForm((prev) => ({ ...prev, orNumber: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium mb-1">Receipt Photo <span className="text-muted-foreground font-normal">(optional)</span></label>
+                    {placementPayForm.receiptFile ? (
+                      <div className="flex items-center gap-2 p-2 bg-muted rounded-lg text-xs">
+                        <span className="flex-1 truncate">{placementPayForm.receiptFile.name}</span>
+                        <button onClick={() => setPlacementPayForm((prev) => ({ ...prev, receiptFile: null }))} className="text-muted-foreground hover:text-destructive transition-colors"><X className="w-3.5 h-3.5" /></button>
+                      </div>
+                    ) : (
+                      <label className="flex items-center gap-2 px-3 py-2 border border-dashed border-border rounded-lg text-xs text-muted-foreground cursor-pointer hover:bg-muted transition-colors">
+                        <input type="file" accept="image/*" className="hidden" onChange={(e) => setPlacementPayForm((prev) => ({ ...prev, receiptFile: e.target.files?.[0] ?? null }))} />
+                        <span>Attach photo</span>
+                      </label>
+                    )}
+                  </div>
+                </div>
+
+                {placementPayError && <ErrorAlert message={placementPayError} />}
+                <div className="flex justify-end gap-2 pt-2 border-t border-border">
+                  <Button variant="outline" onClick={() => { setPlacementPayRow(null); setPlacementPayError(null); }}>Cancel</Button>
+                  <Button onClick={() => handlePlacementPayment(pp.enrollmentId, pp.studentId, pp.studentName)} disabled={placementPaySaving || !ppCanSubmit}>
+                    {placementPaySaving ? <><RefreshCw className="w-4 h-4 animate-spin" /> Saving…</> : <><Check className="w-4 h-4" /> Confirm Payment</>}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </Modal>
+        );
+      })()}
+
+      {/* Enroll New Student — Inquiry Modal */}
+      <Modal open={modalOpen} onClose={() => { setModalOpen(false); setForm(EMPTY_FORM); setFormError(null); }} title="Enroll New Student — Log Inquiry">
         <div className="space-y-4">
           {formError && <ErrorAlert message={formError} />}
           <div className="grid grid-cols-2 gap-4">
@@ -2546,10 +3080,18 @@ export default function EnrollmentPage() {
 
           <div className="flex justify-end gap-2 pt-2">
             <ModalCancelButton />
-            <Button onClick={handleSave} disabled={saving || !form.childName || !form.parentName}>{saving ? "Saving…" : "Save Inquiry"}</Button>
+            <Button onClick={handleSave} disabled={saving || !form.childName || !form.parentName}>{saving ? "Saving…" : "Save"}</Button>
           </div>
         </div>
       </Modal>
+
+      {/* ── Toast ── */}
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-foreground text-background text-sm font-medium px-5 py-3 rounded-xl shadow-lg animate-in fade-in slide-in-from-bottom-2">
+          <Check className="w-4 h-4 flex-shrink-0 text-green-400" />
+          {toast}
+        </div>
+      )}
     </div>
   );
 }

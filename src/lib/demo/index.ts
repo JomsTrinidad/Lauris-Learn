@@ -202,7 +202,7 @@ function billingStatus(monthIdx: number, totalMonths: number, studentIdx: number
 
 // ─── Scenario configs ─────────────────────────────────────────────────────────
 
-interface ClassDef { name: string; level: string; startTime: string; endTime: string; capacity: number; }
+interface ClassDef { name: string; level: string; nextLevel: string; startTime: string; endTime: string; capacity: number; }
 
 interface ScenarioDef {
   label:           string;
@@ -226,10 +226,10 @@ const SCENARIOS: Record<DemoScenario, ScenarioDef> = {
     label: "Small Preschool",
     description: "General walkthrough — 4 classes, ~38 students, complete setup",
     classes: [
-      { name: "Toddler Playgroup",   level: "Toddler",    startTime: "08:00", endTime: "10:30", capacity: 12 },
-      { name: "Pre-Kinder A",        level: "Pre-Kinder", startTime: "08:00", endTime: "11:00", capacity: 15 },
-      { name: "Kinder A",            level: "Kinder",     startTime: "08:00", endTime: "11:30", capacity: 15 },
-      { name: "Kinder B",            level: "Kinder",     startTime: "13:00", endTime: "16:00", capacity: 15 },
+      { name: "Toddler Playgroup",   level: "Toddler",    nextLevel: "Pre-Kinder", startTime: "08:00", endTime: "10:30", capacity: 12 },
+      { name: "Pre-Kinder A",        level: "Pre-Kinder", nextLevel: "Kinder",     startTime: "08:00", endTime: "11:00", capacity: 15 },
+      { name: "Kinder A",            level: "Kinder",     nextLevel: "GRADUATE",   startTime: "08:00", endTime: "11:30", capacity: 15 },
+      { name: "Kinder B",            level: "Kinder",     nextLevel: "GRADUATE",   startTime: "13:00", endTime: "16:00", capacity: 15 },
     ],
     studentsPerClass: [9, 10, 10, 9],
     parentCount: 10,
@@ -246,14 +246,14 @@ const SCENARIOS: Record<DemoScenario, ScenarioDef> = {
     label: "Compliance-Heavy School",
     description: "Media-heavy documentation and reporting — 8 classes, ~80 students",
     classes: [
-      { name: "Nursery A",     level: "Nursery",    startTime: "08:00", endTime: "10:30", capacity: 15 },
-      { name: "Nursery B",     level: "Nursery",    startTime: "08:00", endTime: "10:30", capacity: 15 },
-      { name: "Pre-Kinder A",  level: "Pre-Kinder", startTime: "08:00", endTime: "11:00", capacity: 15 },
-      { name: "Pre-Kinder B",  level: "Pre-Kinder", startTime: "08:00", endTime: "11:00", capacity: 15 },
-      { name: "Kinder A",      level: "Kinder",     startTime: "08:00", endTime: "11:30", capacity: 15 },
-      { name: "Kinder B",      level: "Kinder",     startTime: "08:00", endTime: "11:30", capacity: 15 },
-      { name: "Grade 1 A",     level: "Grade 1",    startTime: "07:30", endTime: "12:00", capacity: 18 },
-      { name: "Grade 1 B",     level: "Grade 1",    startTime: "07:30", endTime: "12:00", capacity: 18 },
+      { name: "Nursery A",     level: "Nursery",    nextLevel: "Pre-Kinder", startTime: "08:00", endTime: "10:30", capacity: 15 },
+      { name: "Nursery B",     level: "Nursery",    nextLevel: "Pre-Kinder", startTime: "08:00", endTime: "10:30", capacity: 15 },
+      { name: "Pre-Kinder A",  level: "Pre-Kinder", nextLevel: "Kinder",     startTime: "08:00", endTime: "11:00", capacity: 15 },
+      { name: "Pre-Kinder B",  level: "Pre-Kinder", nextLevel: "Kinder",     startTime: "08:00", endTime: "11:00", capacity: 15 },
+      { name: "Kinder A",      level: "Kinder",     nextLevel: "Grade 1",    startTime: "08:00", endTime: "11:30", capacity: 15 },
+      { name: "Kinder B",      level: "Kinder",     nextLevel: "Grade 1",    startTime: "08:00", endTime: "11:30", capacity: 15 },
+      { name: "Grade 1 A",     level: "Grade 1",    nextLevel: "GRADUATE",   startTime: "07:30", endTime: "12:00", capacity: 18 },
+      { name: "Grade 1 B",     level: "Grade 1",    nextLevel: "GRADUATE",   startTime: "07:30", endTime: "12:00", capacity: 18 },
     ],
     studentsPerClass: [10, 9, 10, 10, 10, 10, 11, 10],
     parentCount: 15,
@@ -270,8 +270,8 @@ const SCENARIOS: Record<DemoScenario, ScenarioDef> = {
     label: "New Trial School",
     description: "Onboarding & incomplete setup — 2 classes, 15 students, minimal data",
     classes: [
-      { name: "Playgroup",  level: "Playgroup",  startTime: "08:00", endTime: "10:30", capacity: 15 },
-      { name: "Pre-Kinder", level: "Pre-Kinder", startTime: "08:00", endTime: "11:00", capacity: 15 },
+      { name: "Playgroup",  level: "Playgroup",  nextLevel: "Pre-Kinder", startTime: "08:00", endTime: "10:30", capacity: 15 },
+      { name: "Pre-Kinder", level: "Pre-Kinder", nextLevel: "GRADUATE",   startTime: "08:00", endTime: "11:00", capacity: 15 },
     ],
     studentsPerClass: [8, 7],
     parentCount: 5,
@@ -406,17 +406,16 @@ export async function generateDemoData(
   const mo = 0;
 
   // ── 5. Fee types ────────────────────────────────────────────────────────────
-  const FEE_TYPE_DEFS: Array<{ name: string; defaultAmount: number }> = [
-    { name: "Tuition Fee",       defaultAmount: cfg.tuitionAmount },
-    { name: "Registration Fee",  defaultAmount: 500 },
-    { name: "Miscellaneous Fee", defaultAmount: 500 },
-    { name: "Books & Materials", defaultAmount: 800 },
-    { name: "Uniform Fee",       defaultAmount: 1200 },
-    { name: "Activity Fee",      defaultAmount: 300 },
-    { name: "Field Trip Fee",    defaultAmount: 350 },
-    { name: "Late Payment Fee",  defaultAmount: 200 },
-    { name: "Discount",          defaultAmount: 0 },
-    { name: "Other",             defaultAmount: 0 },
+  const FEE_TYPE_DEFS: Array<{ name: string; defaultAmount: number; mandatory: boolean; archivedPrice?: number; activePrice?: number }> = [
+    { name: "Tuition Fee",       defaultAmount: cfg.tuitionAmount, mandatory: true  },
+    { name: "Registration Fee",  defaultAmount: 500,               mandatory: true,  archivedPrice: 500,  activePrice: 500  },
+    { name: "Miscellaneous Fee", defaultAmount: 350,               mandatory: true,  archivedPrice: 350,  activePrice: 350  },
+    { name: "Books & Materials", defaultAmount: 1800,              mandatory: true,  archivedPrice: 1800, activePrice: 1800 },
+    { name: "Uniform Fee",       defaultAmount: 1200,              mandatory: false, archivedPrice: 1200, activePrice: 1200 },
+    { name: "Activity Fee",      defaultAmount: 250,               mandatory: false, archivedPrice: 250,  activePrice: 250  },
+    { name: "Field Trip Fee",    defaultAmount: 0,                 mandatory: false, archivedPrice: 0,    activePrice: 0    },
+    { name: "Late Payment Fee",  defaultAmount: 0,                 mandatory: false },
+    { name: "Other",             defaultAmount: 0,                 mandatory: false },
   ];
 
   // Fetch existing fee types so we never insert duplicates (idempotent on re-run)
@@ -427,14 +426,41 @@ export async function generateDemoData(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let ftData: Array<{ id: string; name: string }> = existingFt ?? [];
   if (feeTypesToInsert.length > 0) {
-    const { data: newFt } = await (admin as any)
+    const { data: newFt, error: ftErr } = await (admin as any)
       .from("fee_types")
-      .insert(feeTypesToInsert.map(({ name, defaultAmount }) => ({
+      .insert(feeTypesToInsert.map(({ name, defaultAmount, mandatory }) => ({
         school_id: schoolId, name, is_active: true, default_amount: defaultAmount,
+        is_enrollment_mandatory: mandatory,
       })))
       .select("id, name");
+    if (ftErr) throw new Error(`Insert into fee_types failed: ${ftErr.message}`);
     ftData = [...ftData, ...(newFt ?? [])];
   }
+
+  // Seed school-year-specific prices for both years (Tuition Fee excluded — comes from tuition_configs)
+  // Wrapped in try-catch: non-fatal if fee_type_prices table doesn't exist yet (migration 049 pending)
+  const feeTypePriceRows: Record<string, unknown>[] = [];
+  for (const def of FEE_TYPE_DEFS) {
+    if (def.name === "Tuition Fee") continue;
+    const ftId = ftData.find((f: any) => f.name === def.name)?.id;
+    if (!ftId) continue;
+    if (def.archivedPrice != null) {
+      feeTypePriceRows.push({ fee_type_id: ftId, school_year_id: archivedYearId, school_id: schoolId, amount: def.archivedPrice });
+    }
+    if (def.activePrice != null) {
+      feeTypePriceRows.push({ fee_type_id: ftId, school_year_id: schoolYearId, school_id: schoolId, amount: def.activePrice });
+    }
+  }
+  if (feeTypePriceRows.length > 0) {
+    try {
+      await (admin as any)
+        .from("fee_type_prices")
+        .upsert(feeTypePriceRows, { onConflict: "fee_type_id,school_year_id" });
+    } catch {
+      // fee_type_prices table may not exist yet — fee types still created, prices skipped
+    }
+  }
+
   const tuitionFeeTypeId: string | null = ftData.find((f: any) => f.name === "Tuition Fee")?.id ?? null;
   const miscFeeTypeId: string | null    = ftData.find((f: any) => f.name === "Miscellaneous Fee")?.id ?? null;
 
@@ -497,7 +523,7 @@ export async function generateDemoData(
     .from("classes")
     .insert(cfg.classes.map((c) => ({
       school_id: schoolId, school_year_id: archivedYearId, academic_period_id: archivedRegularPeriodId,
-      name: c.name, level: c.level, start_time: c.startTime, end_time: c.endTime, capacity: c.capacity, is_active: true,
+      name: c.name, level: c.level, next_level: c.nextLevel, start_time: c.startTime, end_time: c.endTime, capacity: c.capacity, is_active: true,
     })))
     .select("id, name");
   if (classErr) throw new Error(`classes insert: ${classErr.message}`);
@@ -508,7 +534,7 @@ export async function generateDemoData(
     .from("classes")
     .insert(cfg.classes.map((c) => ({
       school_id: schoolId, school_year_id: schoolYearId, academic_period_id: regularPeriodId,
-      name: c.name, level: c.level, start_time: c.startTime, end_time: c.endTime, capacity: c.capacity, is_active: true,
+      name: c.name, level: c.level, next_level: c.nextLevel, start_time: c.startTime, end_time: c.endTime, capacity: c.capacity, is_active: true,
     })))
     .select("id");
   const nextClassIds: string[] = (nextClassData ?? []).map((c: any) => c.id);

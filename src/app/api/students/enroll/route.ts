@@ -30,6 +30,9 @@ export async function POST(req: NextRequest) {
   if (!classId && !level) {
     return NextResponse.json({ error: "Either classId or level is required." }, { status: 400 });
   }
+  if (level && level.length > 100) {
+    return NextResponse.json({ error: "Level value is too long." }, { status: 400 });
+  }
   const status: EnrollStatus = VALID_STATUSES.includes(rawStatus as EnrollStatus)
     ? (rawStatus as EnrollStatus)
     : "enrolled";
@@ -89,6 +92,26 @@ export async function POST(req: NextRequest) {
     }
     resolvedClassId = classId;
   } else {
+    // Verify the level exists in at least one active non-system class for this school+year.
+    // This prevents arbitrary level strings from creating garbage placeholder classes.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: levelRows } = await (admin as any)
+      .from("classes")
+      .select("id")
+      .eq("school_id", schoolId)
+      .eq("school_year_id", schoolYearId)
+      .eq("level", level)
+      .eq("is_active", true)
+      .eq("is_system", false)
+      .limit(1);
+
+    if (!levelRows || levelRows.length === 0) {
+      return NextResponse.json(
+        { error: `No active class found for level "${level}" this school year. Create a class for this level first.` },
+        { status: 422 }
+      );
+    }
+
     // Level-based enrollment: find or create the Unassigned placeholder class
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: existing } = await (admin as any)

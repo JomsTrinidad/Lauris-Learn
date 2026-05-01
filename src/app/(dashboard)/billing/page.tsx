@@ -946,7 +946,7 @@ export default function BillingPage() {
           </div>
           {setupSubTab === "tuition" && <SetupTuitionTab schoolId={schoolId} />}
           {setupSubTab === "adjustments" && <SetupAdjustmentsTab schoolId={schoolId} />}
-          {setupSubTab === "advanced" && <SetupFeeTypesTab schoolId={schoolId} />}
+          {setupSubTab === "advanced" && <SetupFeeTypesTab schoolId={schoolId} schoolYearId={activeYear?.id} schoolYearName={activeYear?.name} />}
         </div>
       )}
 

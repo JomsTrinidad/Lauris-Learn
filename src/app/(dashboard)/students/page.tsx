@@ -4,7 +4,7 @@ import {
   Search, Plus, Pencil, ChevronDown, ChevronUp,
   Link as LinkIcon, Copy, Check, BookOpen,
   ArrowRight, RefreshCw, Users, GraduationCap,
-  HelpCircle, AlertTriangle, ChevronRight, X, UserPlus, FileText,
+  HelpCircle, AlertTriangle, ChevronRight, X, UserPlus, UserCheck, FileText,
 } from "lucide-react";
 import { DatePicker } from "@/components/ui/datepicker";
 import { AvatarUpload } from "@/components/ui/avatar-upload";
@@ -246,7 +246,6 @@ export default function StudentsPage() {
   const [promoteSaving, setPromoteSaving] = useState(false);
   const [promoteResult, setPromoteResult] = useState<ClassifyResult | null>(null);
   const [selectedClassId, setSelectedClassId] = useState("");
-  const [selectedClassIsGraduating, setSelectedClassIsGraduating] = useState(false);
 
   // ─── Effects ───────────────────────────────────────────────────────────────
 
@@ -346,7 +345,7 @@ export default function StudentsPage() {
         allergies, medical_conditions, emergency_contact_name, emergency_contact_phone,
         authorized_pickups, primary_language, special_needs, teacher_notes, admin_notes,
         guardians(id, full_name, relationship, phone, email, is_primary, communication_preference),
-        enrollments(id, status, class_id, school_year_id, academic_period_id, start_date, end_date, progression_status, progression_notes, classes(name, next_class:classes!next_class_id(level)), academic_periods(name), school_years(name))
+        enrollments(id, status, class_id, school_year_id, academic_period_id, start_date, end_date, progression_status, progression_notes, classes(name, next_level), academic_periods(name), school_years(name))
       `)
       .eq("school_id", schoolId!)
       .eq("is_active", true)
@@ -424,7 +423,7 @@ export default function StudentsPage() {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           progressionNotes: (activeEnrollment as any)?.progression_notes ?? classifiedEnroll?.progression_notes ?? null,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          recommendedNextLevel: (activeEnrollment as any)?.classes?.next_class?.level ?? classifiedEnroll?.classes?.next_class?.level ?? null,
+          recommendedNextLevel: (activeEnrollment as any)?.classes?.next_level ?? classifiedEnroll?.classes?.next_level ?? null,
           photoUrl: sx.photo_url ?? null,
         };
       })
@@ -843,7 +842,6 @@ export default function StudentsPage() {
     setPromoteResult(null);
     setPromoteSearch("");
     setSelectedClassId("");
-    setSelectedClassIsGraduating(false);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: enrollments, error: enrollErr } = await (supabase as any)
@@ -851,7 +849,7 @@ export default function StudentsPage() {
       .select(`
         id, student_id, class_id,
         students(first_name, last_name),
-        classes(id, name, level, next_class_id, next_class:classes!next_class_id(id, name, level))
+        classes(id, name, level, next_level)
       `)
       .eq("school_year_id", src)
       .eq("status", "enrolled")
@@ -863,8 +861,8 @@ export default function StudentsPage() {
     const built: PromoteRow[] = ((enrollments ?? []) as any[]).map((e: any) => {
       const student = e.students;
       const cls = e.classes;
-      const nextCls = cls?.next_class;
       const studentName = student ? `${student.first_name} ${student.last_name}` : e.student_id;
+      const nextLevel = cls?.next_level ?? "";
       return {
         studentId: e.student_id,
         studentName,
@@ -872,8 +870,8 @@ export default function StudentsPage() {
         currentClassId: e.class_id,
         currentClassName: cls?.name ?? "—",
         currentClassLevel: cls?.level ?? "",
-        nextLevel: (nextCls?.level ?? cls?.level ?? "") as string,
-        classification: "unset" as ClassificationAction,
+        nextLevel,
+        classification: (nextLevel === "GRADUATE" ? "graduated" : nextLevel && nextLevel !== "NON_PROMOTIONAL" ? "eligible" : "unset") as ClassificationAction,
       };
     });
 
@@ -917,7 +915,8 @@ export default function StudentsPage() {
     // Auto-populate notes from classification + level context
     function autoNotes(r: PromoteRow): string {
       switch (r.classification) {
-        case "eligible":             return r.nextLevel ? `Eligible for ${r.nextLevel}` : "Eligible for next level";
+        case "eligible":             return r.nextLevel && r.nextLevel !== "GRADUATE" && r.nextLevel !== "NON_PROMOTIONAL"
+                                      ? `Eligible for ${r.nextLevel}` : "Eligible for next level";
         case "not_eligible_retained": return `Retained in ${r.currentClassLevel || "current level"}`;
         case "not_eligible_other":   return "Not eligible — other reason";
         case "graduated":            return `Graduated from ${r.currentClassLevel || "current level"}`;
@@ -997,11 +996,21 @@ export default function StudentsPage() {
     return acc;
   }, []).sort((a, b) => a.currentClassName.localeCompare(b.currentClassName));
 
+  // Classes whose promotion path is unset — used for warning banner and picker badges
+  const classIdsWithMissingPath = new Set(
+    promoteRows.filter((r) => !r.nextLevel).map((r) => r.currentClassId)
+  );
+
   const selectedClassGroup = classBulkGroups.find((g) => g.currentClassId === selectedClassId) ?? null;
   const classPromoteRows   = selectedClassId ? promoteRows.filter((r) => r.currentClassId === selectedClassId) : [];
   const filteredPromoteRows = classPromoteRows.filter((r) =>
     !promoteSearch || r.studentName.toLowerCase().includes(promoteSearch.toLowerCase())
   );
+
+  // Derived from the class's own Promotion Path (same for all rows in the class)
+  const classNextLevel = classPromoteRows[0]?.nextLevel ?? "";
+  // Graduating only when the class itself is the terminal level
+  const isGraduatingClass = classNextLevel === "GRADUATE";
 
   const eligibleCount   = classPromoteRows.filter((r) => r.classification === "eligible").length;
   const retainedCount   = classPromoteRows.filter((r) => r.classification === "not_eligible_retained").length;
@@ -1032,9 +1041,14 @@ export default function StudentsPage() {
             Help
           </button>
           {activeTab === "students" && (
-            <Button onClick={() => { setForm(EMPTY_FORM); setFormError(null); setAddModalOpen(true); }}>
-              <Plus className="w-4 h-4" /> Add Student
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" onClick={() => { setForm(EMPTY_FORM); setFormError(null); setAddModalOpen(true); }}>
+                <Plus className="w-4 h-4" /> Add Student Profile
+              </Button>
+              <Button onClick={() => { window.location.href = "/enrollment"; }}>
+                <UserCheck className="w-4 h-4" /> Enroll Student
+              </Button>
+            </div>
           )}
         </div>
       </div>
@@ -1143,7 +1157,7 @@ export default function StudentsPage() {
                   {filtered.length === 0 ? (
                     <tr>
                       <td colSpan={8} className="text-center py-10 text-muted-foreground">
-                        {students.length === 0 ? 'No students yet. Click "Add Student" to get started.' : "No students match your filters."}
+                        {students.length === 0 ? 'No students yet. Use "Enroll Student" to enroll through the pipeline, or "Add Student Profile" to create a record only.' : "No students match your filters."}
                       </td>
                     </tr>
                   ) : (
@@ -1268,7 +1282,7 @@ export default function StudentsPage() {
                   )}
 
                   <p className="text-xs text-muted-foreground">
-                    Classifications are saved on the student's current enrollment. No new enrollments are created — enroll students separately for the next year.
+                    Saves to the current enrollment. Does not create new enrollments.
                   </p>
                 </CardContent>
               </Card>
@@ -1282,28 +1296,45 @@ export default function StudentsPage() {
                 </div>
               )}
 
+              {/* Missing promotion path warning */}
+              {classIdsWithMissingPath.size > 0 && !selectedClassId && !promoteResult && (
+                <div className="flex items-start gap-2.5 px-4 py-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                  <span>
+                    <strong>Promotion Path not set</strong> on {classBulkGroups
+                      .filter((g) => classIdsWithMissingPath.has(g.currentClassId))
+                      .map((g) => g.currentClassName).join(", ")}.
+                    {" "}Edit each class in <strong>Classes</strong> to assign a Promotion Path.
+                  </span>
+                </div>
+              )}
+
               {/* Class picker */}
               {promoteRows.length > 0 && !selectedClassId && !promoteResult && (
                 <Card>
                   <CardContent className="p-4 space-y-3">
                     <div>
-                      <p className="text-sm font-semibold">Select a class to classify</p>
-                      <p className="text-xs text-muted-foreground mt-1">Work through one class at a time. After saving you can come back here to classify the next class.</p>
+                      <p className="text-sm font-semibold">Select a class to review</p>
+                      <p className="text-xs text-muted-foreground mt-1">Work through one class at a time.</p>
                     </div>
                     <div className="flex flex-col gap-2">
-                      {classBulkGroups.map((g) => (
-                        <button
-                          key={g.currentClassId}
-                          onClick={() => setSelectedClassId(g.currentClassId)}
-                          className="flex items-center justify-between px-4 py-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors text-left"
-                        >
-                          <div>
-                            <span className="text-sm font-medium">{g.currentClassName}</span>
-                            {g.currentClassLevel && <span className="text-xs text-muted-foreground ml-1.5">({g.currentClassLevel})</span>}
-                          </div>
-                          <span className="text-xs text-muted-foreground">{g.studentCount} student{g.studentCount !== 1 ? "s" : ""} →</span>
-                        </button>
-                      ))}
+                      {classBulkGroups.map((g) => {
+                        const missingPath = classIdsWithMissingPath.has(g.currentClassId);
+                        return (
+                          <button
+                            key={g.currentClassId}
+                            onClick={() => setSelectedClassId(g.currentClassId)}
+                            className="flex items-center justify-between px-4 py-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors text-left"
+                          >
+                            <div className="flex items-center gap-2">
+                              {missingPath && <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />}
+                              <span className="text-sm font-medium">{g.currentClassName}</span>
+                              {g.currentClassLevel && <span className="text-xs text-muted-foreground">({g.currentClassLevel})</span>}
+                            </div>
+                            <span className="text-xs text-muted-foreground">{g.studentCount} student{g.studentCount !== 1 ? "s" : ""} →</span>
+                          </button>
+                        );
+                      })}
                     </div>
                   </CardContent>
                 </Card>
@@ -1311,46 +1342,75 @@ export default function StudentsPage() {
 
               {selectedClassGroup && !promoteResult && (
                 <>
-                  {/* Step 1 — Bulk classification for selected class */}
+                  {/* Step 1 — Review recommendations */}
                   <Card>
                     <CardContent className="p-4 space-y-3">
                       <div>
-                        <p className="text-sm font-semibold">Step 1 — Set the starting classification for this class</p>
+                        <p className="text-sm font-semibold">Step 1 — Review Promotion Recommendations</p>
                         <p className="text-xs text-muted-foreground mt-1">
-                          This instantly pre-fills every student in Step 2 below. You can still override individual students before saving.
+                          Recommendations are pre-filled from the class Promotion Path. Review only — handle exceptions in Step 2.
                         </p>
                       </div>
-                      <div className="px-3 py-2.5 rounded-lg bg-muted/50">
-                        <div className="flex items-center gap-3">
-                          <div className="flex-1 min-w-0">
-                            <span className="text-sm font-medium">{selectedClassGroup.currentClassName}</span>
-                            {selectedClassGroup.currentClassLevel && <span className="text-xs text-muted-foreground ml-1.5">({selectedClassGroup.currentClassLevel})</span>}
-                            <span className="text-xs text-muted-foreground ml-1.5">· {selectedClassGroup.studentCount} student{selectedClassGroup.studentCount !== 1 ? "s" : ""}</span>
+
+                      {/* Read-only summary */}
+                      <div className="rounded-lg border border-border bg-muted/30 px-4 py-3 space-y-2">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="space-y-1.5">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-sm font-medium">{selectedClassGroup.currentClassName}</span>
+                              {selectedClassGroup.currentClassLevel && (
+                                <span className="text-xs text-muted-foreground">({selectedClassGroup.currentClassLevel})</span>
+                              )}
+                            </div>
+                            <div className="text-xs space-y-0.5">
+                              <p>
+                                <span className="text-muted-foreground">Promotion Path: </span>
+                                <span className="font-medium">
+                                  {classNextLevel === "GRADUATE" ? "Graduate / Moving Up"
+                                    : classNextLevel === "NON_PROMOTIONAL" ? "Non-promotional"
+                                    : classNextLevel || <span className="text-amber-600">⚠ Not set</span>}
+                                </span>
+                              </p>
+                              <p>
+                                <span className="text-muted-foreground">Recommended Outcome: </span>
+                                <span className={`font-medium ${
+                                  classNextLevel === "GRADUATE" ? "text-green-700" :
+                                  classNextLevel === "NON_PROMOTIONAL" ? "text-amber-600" :
+                                  classNextLevel ? "text-primary" : "text-amber-600"
+                                }`}>
+                                  {classNextLevel === "GRADUATE" ? "Graduated / Moving Up"
+                                    : classNextLevel === "NON_PROMOTIONAL" ? "Needs Review"
+                                    : classNextLevel ? `Eligible for ${classNextLevel}`
+                                    : "Promotion Path Not Set"}
+                                </span>
+                              </p>
+                            </div>
                           </div>
-                          <div className="w-60 flex-shrink-0">
-                            <Select
-                              value={selectedClassGroup.bulkClassification}
-                              onChange={(e) => {
-                                const val = e.target.value as ClassificationAction | "";
-                                applyBulkClassification(selectedClassGroup.currentClassId, val);
-                                setSelectedClassIsGraduating(val === "graduated");
-                              }}
-                              className="text-sm h-8"
-                            >
-                              <option value="">— Choose —</option>
-                              <option value="eligible">Eligible for next level</option>
-                              <option value="graduated">Graduated</option>
-                            </Select>
-                          </div>
+                          <span className="text-xs text-muted-foreground whitespace-nowrap mt-0.5 flex-shrink-0">
+                            {selectedClassGroup.studentCount} student{selectedClassGroup.studentCount !== 1 ? "s" : ""}
+                          </span>
                         </div>
-                        {selectedClassGroup.bulkClassification !== "" && (
-                          <p className="text-xs text-primary mt-1.5 pl-0.5">
-                            ✓ {selectedClassGroup.studentCount} student{selectedClassGroup.studentCount !== 1 ? "s" : ""} pre-filled in Step 2 — review individually below to override
-                          </p>
-                        )}
+                        <p className="text-xs text-primary border-t border-border/50 pt-2">
+                          ✓ Pre-filled for all {selectedClassGroup.studentCount} student{selectedClassGroup.studentCount !== 1 ? "s" : ""}
+                        </p>
                       </div>
+
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-xs text-muted-foreground">
+                          Update Promotion Path in Classes to change this for all students.
+                        </p>
+                        <button
+                          onClick={() => loadStudentsForPromote()}
+                          disabled={promoteRowsLoading}
+                          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 disabled:opacity-50"
+                        >
+                          <RefreshCw className={`w-3 h-3 ${promoteRowsLoading ? "animate-spin" : ""}`} />
+                          Refresh
+                        </button>
+                      </div>
+
                       <button
-                        onClick={() => { setSelectedClassId(""); setSelectedClassIsGraduating(false); setPromoteSearch(""); }}
+                        onClick={() => { setSelectedClassId(""); setPromoteSearch(""); }}
                         className="text-xs text-muted-foreground hover:text-foreground transition-colors"
                       >
                         ← Back to class list
@@ -1362,11 +1422,11 @@ export default function StudentsPage() {
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-sm font-semibold">
-                        Step 2 — Review and override individual students
+                        Step 2 — Handle Exceptions
                         {" "}({filteredPromoteRows.length} student{filteredPromoteRows.length !== 1 ? "s" : ""})
                       </p>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        Pre-filled from Step 1 — change any student's classification here before saving.
+                        Update only students who need an exception.
                       </p>
                     </div>
                   </div>
@@ -1389,15 +1449,14 @@ export default function StudentsPage() {
                           <tr className="bg-muted border-b border-border">
                             <th className="text-left px-4 py-3 font-medium text-muted-foreground">Student</th>
                             <th className="text-left px-4 py-3 font-medium text-muted-foreground">
-                              Next Level
+                              Recommended Next Level
                               {targetYear && <p className="text-xs font-normal text-muted-foreground/60 mt-0.5">{targetYear.name}</p>}
                             </th>
-                            <th className="text-left px-4 py-3 font-medium text-muted-foreground">Classification</th>
+                            <th className="text-left px-4 py-3 font-medium text-muted-foreground">Outcome</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-border">
                           {filteredPromoteRows.map((row) => {
-                            const isGraduatingClass = selectedClassIsGraduating;
                             return (
                             <tr key={row.studentId} className={`transition-colors ${row.classification === "unset" ? "hover:bg-muted/30" : "hover:bg-muted/40"}`}>
                               <td className="px-4 py-3 font-medium">{row.studentName}</td>
@@ -1406,8 +1465,14 @@ export default function StudentsPage() {
                                   <span className="text-xs text-muted-foreground">—</span>
                                 ) : row.classification === "not_eligible_retained" ? (
                                   <span className="text-xs font-medium">{row.currentClassLevel || "—"}</span>
+                                ) : row.nextLevel === "GRADUATE" ? (
+                                  <span className="text-xs font-medium">Graduate / Moving Up</span>
+                                ) : row.nextLevel === "NON_PROMOTIONAL" ? (
+                                  <span className="text-xs text-muted-foreground italic">Non-promotional</span>
+                                ) : row.nextLevel ? (
+                                  <span className="text-xs font-medium">{row.nextLevel}</span>
                                 ) : (
-                                  <span className="text-xs font-medium">{row.nextLevel || "—"}</span>
+                                  <span className="text-xs text-amber-600 font-medium">Promotion Path Not Set</span>
                                 )}
                               </td>
                               <td className="px-4 py-3">
@@ -1709,11 +1774,16 @@ export default function StudentsPage() {
       {/* Add / Edit Student Modals */}
       {[
         { open: editModalOpen, onClose: () => { setEditModalOpen(false); setEditingStudent(null); }, title: "Edit Student", fErr: editFormError, setFErr: setEditFormError, f: editForm, setF: setEditForm, onSave: handleEdit, isEdit: true, photoFile: editPhotoFile, setPhotoFile: setEditPhotoFile },
-        { open: addModalOpen, onClose: () => { setAddModalOpen(false); setForm(EMPTY_FORM); }, title: "Add Student", fErr: formError, setFErr: setFormError, f: form, setF: setForm, onSave: handleAdd, isEdit: false, photoFile: addPhotoFile, setPhotoFile: setAddPhotoFile },
+        { open: addModalOpen, onClose: () => { setAddModalOpen(false); setForm(EMPTY_FORM); }, title: "Add Student Profile", fErr: formError, setFErr: setFormError, f: form, setF: setForm, onSave: handleAdd, isEdit: false, photoFile: addPhotoFile, setPhotoFile: setAddPhotoFile },
       ].map(({ open, onClose, title, fErr, setFErr, f, setF, onSave, isEdit, photoFile, setPhotoFile }) => (
         <Modal key={title} open={open} onClose={onClose} title={title} className="max-w-2xl">
           <div className="space-y-4">
             {fErr && <ErrorAlert message={fErr} />}
+            {!isEdit && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800">
+                <strong>Profile only</strong> — creates a student record without a school year, class, or billing. To enroll a student properly, use <strong>Enroll Student</strong> from the Students page header instead.
+              </div>
+            )}
 
             <div className="flex items-center gap-4">
               <AvatarUpload
@@ -2020,22 +2090,44 @@ export default function StudentsPage() {
                 type HelpTopic = { id: string; icon: React.ElementType; title: string; searchText: string; body: React.ReactNode };
                 const topics: HelpTopic[] = [
                   {
-                    id: "add-student",
-                    icon: UserPlus,
-                    title: "Add a new student",
-                    searchText: "add new student create enroll register name guardian parent",
+                    id: "enrollment-vs-profile",
+                    icon: UserCheck,
+                    title: "Add Student Profile vs. Enroll Student — which to use",
+                    searchText: "enroll enrollment add student profile difference new returning class billing school year waitlist pending",
                     body: (
                       <div className="space-y-2">
-                        <p>Use this when a student is confirmed and ready to be added to the system. If they're still just expressing interest, log them in <strong>Enrollment</strong> instead.</p>
-                        <div className="space-y-2 mt-2">
-                          <Step n={1} text={<span>Click <strong>Add Student</strong> (top right).</span>} />
-                          <Step n={2} text={<span>Enter <strong>First Name</strong>, <strong>Last Name</strong>, and the <strong>Parent/Guardian name</strong> — these three are required.</span>} />
-                          <Step n={3} text={<span>Select a <strong>class</strong> to enroll the student in. If you're not sure yet, leave it blank and assign later.</span>} />
-                          <Step n={4} text={<span>Fill in the guardian's <strong>contact number</strong> and <strong>email</strong> — the email is used to send the parent portal invite.</span>} />
-                          <Step n={5} text={<span>Expand <strong>Medical & Special Needs</strong>, <strong>Emergency Contact</strong>, or other sections for additional details. These are optional but useful for teachers.</span>} />
-                          <Step n={6} text={<span>Click <strong>Save Student</strong>.</span>} />
+                        <p className="font-semibold text-foreground text-xs">Simple rule: if it involves a school year, use Enrollment. If it does not, use Add Student Profile.</p>
+                        <div className="mt-2 space-y-3">
+                          <div className="rounded-lg border border-border p-3 space-y-1">
+                            <p className="text-xs font-semibold">Add Student Profile</p>
+                            <p className="text-xs text-muted-foreground">Creates a basic student record only — no school year, no class, no billing. Use this when you need to store student information without enrolling them yet.</p>
+                          </div>
+                          <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 space-y-1">
+                            <p className="text-xs font-semibold">Enroll Student</p>
+                            <p className="text-xs text-muted-foreground">Use for everything that involves a school year — including waitlisting, class assignment, and billing. Pre-registration is an enrollment with status <em>Waitlisted</em>.</p>
+                          </div>
                         </div>
-                        <Note>If the student came through the Enrollment pipeline, use <strong>Enroll Student →</strong> from the Enrollment page instead. That flow automatically creates the student, guardian, and enrollment record in one step.</Note>
+                        <Note>The <strong>Enroll Student</strong> button at the top of this page takes you to the Enrollment page.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "add-student-profile",
+                    icon: UserPlus,
+                    title: "Add Student Profile — how to use it",
+                    searchText: "add student profile record no school year no class how to save",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Creates a student record without a school year, class, or billing. Use this only when you need to store information and enrollment isn&apos;t happening yet.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Click <strong>Add Student Profile</strong> (top right, outline button).</span>} />
+                          <Step n={2} text={<span>Enter <strong>First Name</strong>, <strong>Last Name</strong>, and the <strong>Parent/Guardian name</strong> — required.</span>} />
+                          <Step n={3} text={<span>Fill in the guardian&apos;s <strong>contact number</strong> and <strong>email</strong> — needed later to send the parent portal invite.</span>} />
+                          <Step n={4} text={<span>Expand optional sections (Medical, Emergency Contact, etc.) for additional details.</span>} />
+                          <Step n={5} text={<span>Click <strong>Save Student</strong>.</span>} />
+                        </div>
+                        <Tip>When you&apos;re ready to enroll this student, use <strong>Enroll Student → Enroll Returning Student</strong> to assign them to a school year and class.</Tip>
+                        <Note>Students added this way will not appear in attendance, billing, or class lists until they are enrolled.</Note>
                       </div>
                     ),
                   },
@@ -2148,19 +2240,21 @@ export default function StudentsPage() {
                   {
                     id: "promote",
                     icon: GraduationCap,
-                    title: "Classify students at year-end",
-                    searchText: "classify classification year-end eligible retain graduate not continuing bulk end year",
+                    title: "Review and confirm promotion outcomes at year-end",
+                    searchText: "classify classification year-end eligible retain graduate not continuing end year promotion path next level section placement review recommendations exceptions outcome refresh",
                     body: (
                       <div className="space-y-2">
-                        <p>At the end of a school year or term, use the <strong>Year-End Classification</strong> tab to record each student's eligibility outcome in bulk.</p>
+                        <p>Promotion outcomes are pre-filled from each class&apos;s Promotion Path. Review recommendations and handle individual exceptions.</p>
                         <div className="space-y-2 mt-2">
-                          <Step n={1} text={<span>Click the <strong>Year-End Classification</strong> tab at the top of this page.</span>} />
-                          <Step n={2} text={<span>Use <strong>Step 1</strong> to apply one classification to all students in a class at once.</span>} />
-                          <Step n={3} text={<span>Review and adjust individual students in <strong>Step 2</strong>. Each student gets one of five outcomes: <strong>Eligible</strong>, <strong>Retain</strong>, <strong>Other reason</strong>, <strong>Graduate</strong>, or <strong>Withdrawn</strong>.</span>} />
-                          <Step n={4} text={<span>Click <strong>Save Year-End Classifications</strong>. The outcome is saved on each student's current enrollment record.</span>} />
+                          <Step n={1} text={<span>Open <strong>Year-End Classification</strong> and select a class.</span>} />
+                          <Step n={2} text={<span><strong>Step 1</strong> shows the Promotion Path and recommended outcome. No action needed here.</span>} />
+                          <Step n={3} text={<span>Wrong recommendation? Update the Promotion Path in <strong>Classes</strong>, then click <strong>Refresh</strong> in Step 1.</span>} />
+                          <Step n={4} text={<span><strong>Step 2</strong>: override individual students only — Retain, Withdraw, or Graduate as needed.</span>} />
+                          <Step n={5} text={<span>Click <strong>Save Year-End Classifications</strong>.</span>} />
                         </div>
-                        <Tip>Classifications do not create new enrollment records — they only tag the current enrollment. To enroll a classified student in the next year, use <strong>Add Enrollment</strong> from their profile.</Tip>
-                        <Note>Students classified as <strong>Eligible</strong> will show a green banner in the Add Enrollment modal as a reminder that they have been cleared for the next level.</Note>
+                        <Note><strong>Recommended Next Level</strong> shows a level, not a section. Section assignment happens at enrollment.</Note>
+                        <Note>Promotion Path Not Set (amber)? Edit the class in <strong>Classes</strong> first.</Note>
+                        <Tip>Classifications don&apos;t create enrollments. Enroll returning students separately.</Tip>
                       </div>
                     ),
                   },

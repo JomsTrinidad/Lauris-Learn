@@ -70,14 +70,7 @@ interface ClassRecord {
   isActive: boolean;
   meetingLink: string;
   messengerLink: string;
-  nextClassId: string | null;
-}
-
-interface AllClassOption {
-  id: string;
-  name: string;
-  level: string;
-  schoolYearName: string;
+  nextLevel: string | null;
 }
 
 interface TeacherOption {
@@ -95,12 +88,12 @@ interface ClassForm {
   isActive: boolean;
   meetingLink: string;
   messengerLink: string;
-  nextClassId: string;
+  nextLevel: string;
 }
 
 const EMPTY_FORM: ClassForm = {
   name: "", level: "", startTime: "08:00", endTime: "10:00",
-  teacherId: "", capacity: "20", isActive: true, meetingLink: "", messengerLink: "", nextClassId: "",
+  teacherId: "", capacity: "20", isActive: true, meetingLink: "", messengerLink: "", nextLevel: "",
 };
 
 export default function ClassesPage() {
@@ -109,7 +102,6 @@ export default function ClassesPage() {
 
   const [classes, setClasses] = useState<ClassRecord[]>([]);
   const [teachers, setTeachers] = useState<TeacherOption[]>([]);
-  const [allClasses, setAllClasses] = useState<AllClassOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -131,28 +123,8 @@ export default function ClassesPage() {
   async function loadAll() {
     setLoading(true);
     setError(null);
-    await Promise.all([loadClasses(), loadTeachers(), loadAllClasses()]);
+    await Promise.all([loadClasses(), loadTeachers()]);
     setLoading(false);
-  }
-
-  async function loadAllClasses() {
-    if (!schoolId || !activeYear?.id) return;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data } = await (supabase as any)
-      .from("classes")
-      .select("id, name, level, school_years(name)")
-      .eq("school_id", schoolId)
-      .eq("school_year_id", activeYear.id)
-      .eq("is_active", true)
-      .eq("is_system", false)
-      .order("name");
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    setAllClasses(((data ?? []) as any[]).map((c: any) => ({
-      id: c.id,
-      name: c.name,
-      level: c.level ?? "",
-      schoolYearName: c.school_years?.name ?? "",
-    })));
   }
 
   async function loadClasses() {
@@ -162,7 +134,7 @@ export default function ClassesPage() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: classRows, error: classErr } = await (supabase as any)
       .from("classes")
-      .select(`id, name, level, start_time, end_time, capacity, is_active, meeting_link, messenger_link, next_class_id,
+      .select(`id, name, level, start_time, end_time, capacity, is_active, meeting_link, messenger_link, next_level,
         class_teachers(teacher_id, teacher:profiles(full_name))`)
       .eq("school_id", schoolId!)
       .eq("school_year_id", yearId)
@@ -198,7 +170,7 @@ export default function ClassesPage() {
           isActive: c.is_active,
           meetingLink: c.meeting_link ?? "",
           messengerLink: c.messenger_link ?? "",
-          nextClassId: c.next_class_id ?? null,
+          nextLevel: c.next_level ?? null,
           teacherId: ct?.teacher_id ?? null,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           teacherName: (ct?.teacher as any)?.full_name ?? "—",
@@ -239,7 +211,7 @@ export default function ClassesPage() {
       isActive: cls.isActive,
       meetingLink: cls.meetingLink,
       messengerLink: cls.messengerLink,
-      nextClassId: cls.nextClassId ?? "",
+      nextLevel: cls.nextLevel ?? "",
     });
     setFormError(null);
     setModalOpen(true);
@@ -251,6 +223,7 @@ export default function ClassesPage() {
     if (form.startTime >= form.endTime) { setFormError("Start time must be before end time."); return; }
     const cap = parseInt(form.capacity);
     if (!cap || cap < 1) { setFormError("Capacity must be at least 1."); return; }
+    if (!form.nextLevel) { setFormError("Promotion Path is required. Select the next level, \"Graduate / Moving Up\" if this is the final level, or \"Non-promotional\" for summer or enrichment classes."); return; }
     if (!activeYear?.id) { setFormError("No active school year. Set one in Settings."); return; }
 
     setSaving(true);
@@ -281,7 +254,7 @@ export default function ClassesPage() {
       is_active: form.isActive,
       meeting_link: form.meetingLink.trim() || null,
       messenger_link: form.messengerLink.trim() || null,
-      next_class_id: form.nextClassId || null,
+      next_level: form.nextLevel || null,
     };
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -334,6 +307,16 @@ export default function ClassesPage() {
 
       {error && <ErrorAlert message={error} />}
 
+      {classes.some((c) => !c.nextLevel) && (
+        <div className="flex items-start gap-2.5 px-4 py-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+          <span>
+            <strong>Promotion Path not set</strong> on {classes.filter((c) => !c.nextLevel).map((c) => c.name).join(", ")}.
+            {" "}Students in these classes will show a warning during Year-End Classification. Edit each class to assign a path.
+          </span>
+        </div>
+      )}
+
       {!activeYear && (
         <div className="px-4 py-2 bg-yellow-50 border border-yellow-200 rounded-lg text-sm text-yellow-700">
           No active school year. Go to Settings → School Years to set one before adding classes.
@@ -381,6 +364,17 @@ export default function ClassesPage() {
                       <span className="text-muted-foreground">Available slots</span>
                       <span className={atCapacity ? "text-red-600 font-medium" : "text-green-600"}>
                         {atCapacity ? "Full" : `${slots} ${slots === 1 ? "slot" : "slots"}`}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground">Promotes to</span>
+                      <span className={
+                        !cls.nextLevel ? "text-amber-600 font-medium text-xs" :
+                        cls.nextLevel === "NON_PROMOTIONAL" ? "text-muted-foreground italic text-xs" : "text-xs"
+                      }>
+                        {cls.nextLevel === "GRADUATE" ? "Graduate / Moving Up"
+                          : cls.nextLevel === "NON_PROMOTIONAL" ? "Non-promotional"
+                          : cls.nextLevel ?? "⚠ Not set"}
                       </span>
                     </div>
                   </div>
@@ -627,18 +621,24 @@ export default function ClassesPage() {
                   {
                     id: "promotion-path",
                     icon: GraduationCap,
-                    title: "Set the promotion path (next class)",
-                    searchText: "promotion path next class promote year end graduate suggest advance",
+                    title: "Set the promotion path (next level)",
+                    searchText: "promotion path next level promote year end graduate moving up non-promotional summer bridge enrichment mixed-age after-school trial readiness retention repeat section placement",
                     body: (
                       <div className="space-y-2">
-                        <p>The promotion path tells the system which class students in this class should move to next year. This drives the default suggestions in the Promote Students workflow.</p>
+                        <p>Sets the level students move into at year-end. Section assignment happens when you enroll returning students.</p>
                         <div className="space-y-2 mt-2">
-                          <Step n={1} text={<span>Open the class edit modal.</span>} />
-                          <Step n={2} text={<span>In <strong>Promotion Path (Next Class)</strong>, select the class students will typically move to.</span>} />
-                          <Step n={3} text={<span>Save. The next year's classes must already exist for them to appear in this dropdown.</span>} />
+                          <Step n={1} text={<span>Edit a class and open <strong>Promotion Path</strong>.</span>} />
+                          <Step n={2} text={<span>Under <strong>Next Level</strong>, pick the target level. Select the current level to allow retention.</span>} />
+                          <Step n={3} text={<span>Choose <strong>Graduate / Moving Up</strong> if students finish the program here.</span>} />
+                          <Step n={4} text={<span>Choose <strong>Non-promotional</strong> for classes that don&apos;t affect year-end placement.</span>} />
+                          <Step n={5} text={<span>Save. The &ldquo;Promotes to&rdquo; row on the class card confirms the setting.</span>} />
                         </div>
-                        <Note>During the Students → Promote Students workflow, the system pre-fills each student's next class based on this setting. You can still override it per student before confirming.</Note>
-                        <Tip>Set promotion paths at the start of the year once you've created the new year's classes. That way the Promote Students bulk action is mostly one click.</Tip>
+                        <Note>
+                          <strong>Non-promotional</strong> is for classes outside the main level sequence:{" "}
+                          Summer Class · Bridge Class · Enrichment Class · Trial / Readiness Class · Mixed-age Program · After-school Program.
+                        </Note>
+                        <Note>Promotion Path is required. Year-End Classification reads from this field.</Note>
+                        <Tip>Fill in <strong>Level / Age Group</strong> on every class first — the Next Level dropdown is built from those values.</Tip>
                       </div>
                     ),
                   },
@@ -807,18 +807,24 @@ export default function ClassesPage() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-1">Promotion Path (Next Class)</label>
-            <Select value={form.nextClassId} onChange={(e) => setForm({ ...form, nextClassId: e.target.value })}>
-              <option value="">— None —</option>
-              {allClasses
-                .filter((c) => !editingClass || c.id !== editingClass.id)
-                .map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}{c.level ? ` (${c.level})` : ""}
-                  </option>
-                ))}
+            <label className="block text-sm font-medium mb-1">Promotion Path *</label>
+            <Select value={form.nextLevel} onChange={(e) => setForm({ ...form, nextLevel: e.target.value })}>
+              <option value="">— Select next level —</option>
+              <optgroup label="Next Level">
+                {[...new Set(classes.map((c) => c.level).filter((l): l is string => !!l))]
+                  .sort()
+                  .map((l) => (
+                    <option key={l} value={l}>{l}</option>
+                  ))}
+              </optgroup>
+              <optgroup label="Special Cases">
+                <option value="GRADUATE">Graduate / Moving Up</option>
+                <option value="NON_PROMOTIONAL">Non-promotional</option>
+              </optgroup>
             </Select>
-            <p className="text-xs text-muted-foreground mt-1">Students who complete this class will be suggested this next class during promotion.</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              Use <strong>Non-promotional</strong> for summer, bridge, enrichment, mixed-age, or after-school classes that should not determine next school-year placement.
+            </p>
           </div>
 
           <div className="flex items-center gap-2">

@@ -48,7 +48,7 @@ export interface AcademicPeriod {
   id: string; name: string; schoolYearId: string; schoolYearName: string;
   startDate: string; endDate: string;
 }
-export interface SetupFeeType { id: string; name: string; description: string; isActive: boolean; securesPlacement: boolean; }
+export interface SetupFeeType { id: string; name: string; description: string; isActive: boolean; securesPlacement: boolean; isEnrollmentMandatory: boolean; }
 export interface TuitionConfig {
   id: string; academicPeriodId: string; periodName: string; level: string;
   totalAmount: number; months: number; classId: string | null; className: string | null; monthlyAmount: number;
