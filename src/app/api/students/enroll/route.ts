@@ -186,38 +186,74 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Insert the enrollment — return id for audit log
-  const { data: inserted, error: insertErr } = await admin.from("enrollments").insert({
-    student_id:         studentId,
-    class_id:           resolvedClassId,
-    school_year_id:     schoolYearId,
-    academic_period_id: academicPeriodId,
-    status,
-    start_date:         startDate,
-    end_date:           endDate,
-  }).select("id").single();
+  // Check if the student already has an enrollment for this school year.
+  // If so, update the existing record (class change) instead of inserting a duplicate,
+  // which would violate the UNIQUE (student_id, school_year_id) constraint.
+  const { data: existing } = await admin
+    .from("enrollments")
+    .select("id")
+    .eq("student_id", studentId)
+    .eq("school_year_id", schoolYearId)
+    .maybeSingle();
 
-  if (insertErr) {
-    if (insertErr.code === "23505") {
-      return NextResponse.json(
-        { error: "This student is already enrolled for this school year." },
-        { status: 409 }
-      );
+  let enrollmentId: string;
+
+  if (existing?.id) {
+    // Update existing enrollment to the new class
+    const { error: updateErr } = await admin
+      .from("enrollments")
+      .update({
+        class_id:           resolvedClassId,
+        academic_period_id: academicPeriodId ?? undefined,
+        status,
+        ...(startDate ? { start_date: startDate } : {}),
+        ...(endDate   ? { end_date:   endDate   } : {}),
+      })
+      .eq("id", existing.id);
+
+    if (updateErr) {
+      console.error("[students/enroll] Update failed:", updateErr);
+      return NextResponse.json({ error: updateErr.message }, { status: 500 });
     }
-    console.error("[students/enroll] Insert failed:", insertErr);
-    return NextResponse.json({ error: insertErr.message }, { status: 500 });
-  }
+    enrollmentId = existing.id;
 
-  // Audit — service-role bypasses auth.uid() so triggers can't fire; write manually
-  await insertAuditLog(admin, {
-    schoolId,
-    actorUserId: user.id,
-    actorRole:   caller.role,
-    tableName:   "enrollments",
-    recordId:    inserted?.id ?? null,
-    action:      "INSERT",
-    newValues:   { student_id: studentId, class_id: resolvedClassId, level, school_year_id: schoolYearId, status },
-  });
+    await insertAuditLog(admin, {
+      schoolId,
+      actorUserId: user.id,
+      actorRole:   caller.role,
+      tableName:   "enrollments",
+      recordId:    enrollmentId,
+      action:      "UPDATE",
+      newValues:   { class_id: resolvedClassId, status, school_year_id: schoolYearId },
+    });
+  } else {
+    // Insert new enrollment
+    const { data: inserted, error: insertErr } = await admin.from("enrollments").insert({
+      student_id:         studentId,
+      class_id:           resolvedClassId,
+      school_year_id:     schoolYearId,
+      academic_period_id: academicPeriodId,
+      status,
+      start_date:         startDate,
+      end_date:           endDate,
+    }).select("id").single();
+
+    if (insertErr) {
+      console.error("[students/enroll] Insert failed:", insertErr);
+      return NextResponse.json({ error: insertErr.message }, { status: 500 });
+    }
+    enrollmentId = inserted!.id;
+
+    await insertAuditLog(admin, {
+      schoolId,
+      actorUserId: user.id,
+      actorRole:   caller.role,
+      tableName:   "enrollments",
+      recordId:    enrollmentId,
+      action:      "INSERT",
+      newValues:   { student_id: studentId, class_id: resolvedClassId, level, school_year_id: schoolYearId, status },
+    });
+  }
 
   // Mark the source enrollment as placed (only for pending-placement flow)
   if (sourceEnrollmentId) {

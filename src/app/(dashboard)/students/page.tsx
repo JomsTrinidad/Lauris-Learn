@@ -56,7 +56,7 @@ interface AcademicPeriod { id: string; name: string; }
 interface EnrollmentEntry {
   id: string; classId: string; className: string;
   periodId: string | null; periodName: string | null;
-  schoolYearId: string;
+  schoolYearId: string; schoolYearName: string;
   status: EnrollmentStatus; startDate: string | null; endDate: string | null;
 }
 
@@ -211,6 +211,7 @@ export default function StudentsPage() {
   const [enrollmentForm, setEnrollmentForm] = useState({ periodId: "", classId: "", status: "enrolled", startDate: "", endDate: "" });
   const [enrollmentFormError, setEnrollmentFormError] = useState<string | null>(null);
   const [enrollmentSaving, setEnrollmentSaving] = useState(false);
+  const [enrollmentStatusUpdating, setEnrollmentStatusUpdating] = useState<string | null>(null);
 
   const [inviteStudent, setInviteStudent] = useState<Student | null>(null);
   const [inviteLink, setInviteLink] = useState<string | null>(null);
@@ -345,7 +346,7 @@ export default function StudentsPage() {
         allergies, medical_conditions, emergency_contact_name, emergency_contact_phone,
         authorized_pickups, primary_language, special_needs, teacher_notes, admin_notes,
         guardians(id, full_name, relationship, phone, email, is_primary, communication_preference),
-        enrollments(id, status, class_id, school_year_id, academic_period_id, start_date, end_date, progression_status, progression_notes, classes(name, next_level), academic_periods(name), school_years(name))
+        enrollments(id, status, class_id, school_year_id, academic_period_id, start_date, end_date, created_at, progression_status, progression_notes, classes(name, next_level), academic_periods(name), school_years(name))
       `)
       .eq("school_id", schoolId!)
       .eq("is_active", true)
@@ -376,10 +377,13 @@ export default function StudentsPage() {
           periodId: e.academic_period_id ?? null,
           periodName: e.academic_periods?.name ?? null,
           schoolYearId: e.school_year_id,
+          schoolYearName: e.school_years?.name ?? "",
           status: e.status as EnrollmentStatus,
           startDate: e.start_date ?? null,
           endDate: e.end_date ?? null,
-        }));
+        })).sort((a: EnrollmentEntry, b: EnrollmentEntry) =>
+          b.schoolYearName.localeCompare(a.schoolYearName)
+        );
 
         // Most recent enrollment with a classification (prefer active year, then any prior)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -418,16 +422,22 @@ export default function StudentsPage() {
           specialNeeds: sx.special_needs ?? null,
           teacherNotes: sx.teacher_notes ?? null,
           adminNotes: sx.admin_notes ?? null,
+          // Only fall back to classifiedEnroll's progression if it's the same enrollment as the active one.
+          // If the student already moved to a newer class, the old "Eligible" classification is stale.
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          progressionStatus: (activeEnrollment as any)?.progression_status ?? classifiedEnroll?.progression_status ?? null,
+          progressionStatus: (activeEnrollment as any)?.progression_status ??
+            (classifiedEnroll && classifiedEnroll.id === activeEnrollment?.id ? classifiedEnroll.progression_status : null),
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          progressionNotes: (activeEnrollment as any)?.progression_notes ?? classifiedEnroll?.progression_notes ?? null,
+          progressionNotes: (activeEnrollment as any)?.progression_notes ??
+            (classifiedEnroll && classifiedEnroll.id === activeEnrollment?.id ? classifiedEnroll.progression_notes : null),
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          recommendedNextLevel: (activeEnrollment as any)?.classes?.next_level ?? classifiedEnroll?.classes?.next_level ?? null,
+          recommendedNextLevel: (activeEnrollment as any)?.classes?.next_level ??
+            (classifiedEnroll && classifiedEnroll.id === activeEnrollment?.id ? classifiedEnroll?.classes?.next_level : null),
           photoUrl: sx.photo_url ?? null,
         };
       })
     );
+
   }
 
   async function loadClasses() {
@@ -679,6 +689,14 @@ export default function StudentsPage() {
     setEnrollmentSaving(false);
     setEnrollmentModal(null);
     await loadAll();
+  }
+
+  async function handleUpdateEnrollmentStatus(enrollmentId: string, newStatus: string) {
+    setEnrollmentStatusUpdating(enrollmentId);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase as any).from("enrollments").update({ status: newStatus }).eq("id", enrollmentId);
+    setEnrollmentStatusUpdating(null);
+    await loadStudents();
   }
 
   async function handleGenerateInvite(student: Student) {
@@ -1727,12 +1745,13 @@ export default function StudentsPage() {
                     <div key={e.id} className="flex items-center justify-between gap-2">
                       <div>
                         <span className="font-medium">{e.className}</span>
+                        {e.schoolYearName && <span className="text-muted-foreground ml-1.5 text-xs">· {e.schoolYearName}</span>}
                         {e.periodName && <span className="text-muted-foreground ml-1.5 text-xs">· {e.periodName}</span>}
                         {(e.startDate || e.endDate) && (
                           <span className="text-muted-foreground ml-1.5 text-xs">· {e.startDate ?? "?"} – {e.endDate ?? "?"}</span>
                         )}
                       </div>
-                      <Badge variant={e.status}>{e.status}</Badge>
+                      <Badge variant={e.status as "enrolled" | "completed" | "withdrawn" | "waitlisted" | "inquiry"}>{e.status}</Badge>
                     </div>
                   ))}
                 </div>

@@ -73,6 +73,7 @@ export default function BillingPage() {
   // Payment modal
   const [paymentModal, setPaymentModal] = useState<BillingRecord | null>(null);
   const [payment, setPayment] = useState<PaymentForm>(EMPTY_PAYMENT);
+  const [paymentType, setPaymentType] = useState<"full" | "installment">("installment");
   const [paymentSequenceWarning, setPaymentSequenceWarning] = useState<string | null>(null);
   const [paymentOverrideReason, setPaymentOverrideReason] = useState("");
 
@@ -400,7 +401,10 @@ export default function BillingPage() {
   }
 
   async function openPaymentModal(record: BillingRecord) {
-    setPaymentModal(record); setPayment(EMPTY_PAYMENT); setFormError(null);
+    setPaymentModal(record);
+    setPayment(EMPTY_PAYMENT);
+    setPaymentType("installment");
+    setFormError(null);
     setPaymentSequenceWarning(null); setPaymentOverrideReason("");
     if (!record.billingMonth || !schoolId) return;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -440,6 +444,7 @@ export default function BillingPage() {
         setSaving(false);
         setPaymentModal(null);
         setPayment(EMPTY_PAYMENT);
+        setPaymentType("installment");
         setPaymentSequenceWarning(null);
         setPaymentOverrideReason("");
         showToast(`Payment of ${formatCurrency(amount)} recorded. To view payment details, go to the Payments tab.`);
@@ -469,7 +474,7 @@ export default function BillingPage() {
     const newStatus = computeStatus("unpaid", paymentModal.amountDue, newPaid, paymentModal.dueDate);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (supabase as any).from("billing_records").update({ status: newStatus }).eq("id", paymentModal.id);
-    setSaving(false); setPaymentModal(null); setPayment(EMPTY_PAYMENT);
+    setSaving(false); setPaymentModal(null); setPayment(EMPTY_PAYMENT); setPaymentType("installment");
     setPaymentSequenceWarning(null); setPaymentOverrideReason("");
     showToast(`Payment of ${formatCurrency(amount)} recorded successfully. To view payment details, go to the Payments tab.`);
     await refreshData();
@@ -978,7 +983,7 @@ export default function BillingPage() {
       </Modal>
 
       {/* ── Payment Modal ── */}
-      <Modal open={!!paymentModal} onClose={() => { setPaymentModal(null); setPayment(EMPTY_PAYMENT); setPaymentSequenceWarning(null); setPaymentOverrideReason(""); setFormError(null); }} title="Record Payment">
+      <Modal open={!!paymentModal} onClose={() => { setPaymentModal(null); setPayment(EMPTY_PAYMENT); setPaymentType("installment"); setPaymentSequenceWarning(null); setPaymentOverrideReason(""); setFormError(null); }} title="Record Payment">
         {paymentModal && (
           <div className="space-y-4">
             <div className="p-3 bg-muted rounded-lg text-sm space-y-1">
@@ -996,10 +1001,39 @@ export default function BillingPage() {
               </div>
             )}
             {formError && <ErrorAlert message={formError} />}
+            <div>
+              <label className="block text-sm font-medium mb-1.5">Payment Type *</label>
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  { value: "full", label: "Full Payment", sub: formatCurrency(paymentModal.amountDue - paymentModal.amountPaid) },
+                  { value: "installment", label: "Installment", sub: "Enter partial amount" },
+                ].map(({ value, label, sub }) => (
+                  <button key={value} type="button"
+                    onClick={() => {
+                      const balance = paymentModal.amountDue - paymentModal.amountPaid;
+                      setPayment((p) => ({
+                        ...p,
+                        amount: value === "full" ? balance.toFixed(2) : (p.amount === balance.toFixed(2) ? "" : p.amount),
+                      }));
+                      setPaymentType(value as "full" | "installment");
+                    }}
+                    className={`flex flex-col items-start px-4 py-2.5 rounded-lg border text-left transition-colors ${paymentType === value ? "border-primary bg-primary/5 text-primary" : "border-border bg-background text-foreground hover:bg-muted"}`}>
+                    <span className="text-sm font-medium">{label}</span>
+                    <span className={`text-xs mt-0.5 ${paymentType === value ? "text-primary/70" : "text-muted-foreground"}`}>{sub}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-sm font-medium mb-1.5">Amount (PHP) *</label>
-                <Input type="number" value={payment.amount} onChange={(e) => setPayment((p) => ({ ...p, amount: e.target.value }))} placeholder="0.00" min="0" step="0.01" />
+                <Input type="number" value={payment.amount}
+                  onChange={(e) => {
+                    setPayment((p) => ({ ...p, amount: e.target.value }));
+                    if (paymentType === "full") setPaymentType("installment");
+                  }}
+                  placeholder="0.00" min="0" step="0.01"
+                  readOnly={paymentType === "full"} className={paymentType === "full" ? "bg-muted text-muted-foreground" : ""} />
                 {payment.amount && parseFloat(payment.amount) > 0 && parseFloat(payment.amount) < paymentModal.amountDue - paymentModal.amountPaid - 0.01 && (
                   <p className="text-xs text-muted-foreground mt-1">Partial — {formatCurrency(paymentModal.amountDue - paymentModal.amountPaid - parseFloat(payment.amount))} remains after</p>
                 )}
@@ -1041,7 +1075,7 @@ export default function BillingPage() {
               )}
             </div>
             <div className="flex justify-end gap-2 pt-2">
-              <Button variant="outline" onClick={() => { setPaymentModal(null); setPayment(EMPTY_PAYMENT); setPaymentSequenceWarning(null); setPaymentOverrideReason(""); setFormError(null); }}>Cancel</Button>
+              <Button variant="outline" onClick={() => { setPaymentModal(null); setPayment(EMPTY_PAYMENT); setPaymentType("installment"); setPaymentSequenceWarning(null); setPaymentOverrideReason(""); setFormError(null); }}>Cancel</Button>
               <Button onClick={handlePayment} disabled={saving}>{saving ? "Saving…" : "Record Payment"}</Button>
             </div>
           </div>

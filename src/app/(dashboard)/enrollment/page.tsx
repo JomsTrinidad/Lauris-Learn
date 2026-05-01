@@ -221,6 +221,8 @@ export default function EnrollmentPage() {
   const [placementPayForm, setPlacementPayForm] = useState<{ amount: string; feeTypeId: string; method: string; date: string; orNumber: string; receiptFile: File | null }>({ amount: "", feeTypeId: "", method: "cash", date: new Date().toISOString().split("T")[0], orNumber: "", receiptFile: null });
   const [placementPaySaving, setPlacementPaySaving] = useState(false);
   const [placementPayError, setPlacementPayError] = useState<string | null>(null);
+  const [placementPayType, setPlacementPayType] = useState<"full" | "installment">("installment");
+  const [tuitionMonths, setTuitionMonths] = useState("10");
 
   useEffect(() => {
     if (!schoolId) { setLoading(false); return; }
@@ -858,7 +860,26 @@ export default function EnrollmentPage() {
 
     try {
       for (const ft of checkedItems) {
-        const amt = parseFloat(itemizedAmounts[ft.id]);
+        const monthlyRate = parseFloat(itemizedAmounts[ft.id]);
+        const isTuition = ft.name.toLowerCase().includes("tuition");
+        // Full payment = pay entire year upfront; monthly = pay this month, rest billed separately
+        const months = parseInt(tuitionMonths) || 1;
+        const amtDue = (isTuition && placementPayType === "full") ? monthlyRate * months : monthlyRate;
+        const description = (isTuition && placementPayType === "full")
+          ? `${ft.name} (Full Year — ${months} months)`
+          : ft.name;
+
+        let receiptPath: string | null = null;
+        if (enrollPayReceiptFile) {
+          const ext = enrollPayReceiptFile.name.split(".").pop() ?? "jpg";
+          const tempId = crypto.randomUUID();
+          const path = `payment-receipts/${schoolId}/${tempId}.${ext}`;
+          const { error: uploadErr } = await supabase.storage
+            .from("updates-media")
+            .upload(path, enrollPayReceiptFile, { upsert: true });
+          if (!uploadErr) receiptPath = path;
+        }
+
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data: br, error: brErr } = await (supabase as any)
           .from("billing_records")
@@ -868,9 +889,9 @@ export default function EnrollmentPage() {
             class_id: returningReserved.classId,
             school_year_id: activeYear.id,
             billing_month: currentMonth,
-            amount_due: amt,
+            amount_due: amtDue,
             status: "paid",
-            description: ft.name,
+            description,
             fee_type_id: ft.id,
             notes,
           })
@@ -878,22 +899,12 @@ export default function EnrollmentPage() {
           .single();
         if (brErr) throw new Error(brErr.message);
 
-        let receiptPath: string | null = null;
-        if (enrollPayReceiptFile) {
-          const ext = enrollPayReceiptFile.name.split(".").pop() ?? "jpg";
-          const path = `payment-receipts/${schoolId}/${br.id}.${ext}`;
-          const { error: uploadErr } = await supabase.storage
-            .from("updates-media")
-            .upload(path, enrollPayReceiptFile, { upsert: true });
-          if (!uploadErr) receiptPath = path;
-        }
-
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { error: payErr } = await (supabase as any)
           .from("payments")
           .insert({
             billing_record_id: br.id,
-            amount: amt,
+            amount: amtDue,
             payment_method: reservePayment.method,
             payment_date: reservePayment.date,
             or_number: reservePayment.orNumber || null,
@@ -902,7 +913,7 @@ export default function EnrollmentPage() {
             recorded_by: userId ?? null,
           });
         if (payErr) throw new Error(payErr.message);
-        summaryItems.push({ name: ft.name, amount: amt });
+        summaryItems.push({ name: description, amount: amtDue });
       }
 
       setLastPaymentSummary({
@@ -993,7 +1004,13 @@ export default function EnrollmentPage() {
 
     try {
       for (const ft of checkedItems) {
-        const amt = parseFloat(itemizedAmounts[ft.id]);
+        const monthlyRate = parseFloat(itemizedAmounts[ft.id]);
+        const isTuition = ft.name.toLowerCase().includes("tuition");
+        const months = parseInt(tuitionMonths) || 1;
+        const amtDue = (isTuition && placementPayType === "full") ? monthlyRate * months : monthlyRate;
+        const description = (isTuition && placementPayType === "full")
+          ? `${ft.name} (Full Year — ${months} months)`
+          : ft.name;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data: br, error: brErr } = await (supabase as any)
           .from("billing_records")
@@ -1002,9 +1019,9 @@ export default function EnrollmentPage() {
             student_id: studentId,
             school_year_id: activeYear.id,
             billing_month: currentMonth,
-            amount_due: amt,
+            amount_due: amtDue,
             status: "paid",
-            description: ft.name,
+            description,
             fee_type_id: ft.id,
           })
           .select("id")
@@ -1016,7 +1033,7 @@ export default function EnrollmentPage() {
           .from("payments")
           .insert({
             billing_record_id: br.id,
-            amount: amt,
+            amount: amtDue,
             payment_method: placementPayForm.method,
             payment_date: placementPayForm.date,
             or_number: placementPayForm.orNumber || null,
@@ -1025,7 +1042,7 @@ export default function EnrollmentPage() {
             recorded_by: userId ?? null,
           });
         if (payErr) throw new Error(payErr.message);
-        summaryItems.push({ name: ft.name, amount: amt });
+        summaryItems.push({ name: description, amount: amtDue });
       }
 
       setLastPaymentSummary({
@@ -1036,6 +1053,8 @@ export default function EnrollmentPage() {
         orNumber: placementPayForm.orNumber,
       });
       setPlacementPayRow(null);
+      setPlacementPayType("installment");
+      setTuitionMonths("10");
       setPlacementPayForm({ amount: "", feeTypeId: "", method: "cash", date: new Date().toISOString().split("T")[0], orNumber: "", receiptFile: null });
       showToast(`Payment recorded for ${studentName}. Full details in Billing → Payments.`);
       await loadPendingPlacements();
@@ -2369,7 +2388,10 @@ export default function EnrollmentPage() {
                 .filter((ft) => enrollPayChecked[ft.id])
                 .reduce((sum, ft) => {
                   const v = parseFloat(itemizedAmounts[ft.id] ?? "");
-                  return sum + (isNaN(v) ? 0 : v);
+                  if (isNaN(v)) return sum;
+                  const isTuition = ft.name.toLowerCase().includes("tuition");
+                  const m = parseInt(tuitionMonths) || 1;
+                  return sum + (isTuition && placementPayType === "full" ? v * m : v);
                 }, 0);
               const canSubmit = checkedTotal > 0 && !!reservePayment.date;
 
@@ -2393,7 +2415,7 @@ export default function EnrollmentPage() {
                         const optional = feeTypes.filter((ft) => !ft.isEnrollmentMandatory);
                         const allOptChecked = optional.length > 0 && optional.every((ft) => enrollPayChecked[ft.id]);
                         return optional.length > 0 ? (
-                          <div className="flex justify-end mb-1">
+                          <div className="flex justify-start mb-1">
                             <button
                               type="button"
                               onClick={toggleAllEnrollFees}
@@ -2405,32 +2427,76 @@ export default function EnrollmentPage() {
                         ) : null;
                       })()}
                     <div className="border border-border rounded-lg overflow-hidden">
-                      {feeTypes.map((ft, i) => (
-                        <div key={ft.id} className={`flex items-center gap-2.5 px-3 py-1.5 ${i > 0 ? "border-t border-border" : ""}`}>
-                          <input
-                            type="checkbox"
-                            id={`ep-${ft.id}`}
-                            checked={!!enrollPayChecked[ft.id]}
-                            disabled={ft.isEnrollmentMandatory}
-                            onChange={(e) => setEnrollPayChecked((prev) => ({ ...prev, [ft.id]: e.target.checked }))}
-                            className="w-4 h-4 accent-primary flex-shrink-0"
-                          />
-                          <label htmlFor={`ep-${ft.id}`} className={`flex-1 text-sm min-w-0 cursor-pointer ${ft.isEnrollmentMandatory ? "font-medium" : "text-muted-foreground"}`}>
-                            {ft.name}
-                            {ft.isEnrollmentMandatory && <span className="ml-1.5 text-xs text-muted-foreground font-normal">required</span>}
-                          </label>
-                          <div className="relative flex-shrink-0">
-                            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">₱</span>
-                            <Input
-                              type="number" min="0" step="0.01" placeholder="0.00"
-                              value={itemizedAmounts[ft.id] ?? ""}
-                              onChange={(e) => setItemizedAmounts({ ...itemizedAmounts, [ft.id]: e.target.value })}
-                              className="w-28 text-right pl-6 h-8 text-sm"
-                              disabled={!enrollPayChecked[ft.id]}
-                            />
+                      {feeTypes.map((ft, i) => {
+                        const isTuition = ft.name.toLowerCase().includes("tuition");
+                        const tuitionAmt = parseFloat(itemizedAmounts[ft.id] ?? "0") || 0;
+                        return (
+                          <div key={ft.id}>
+                            <div className={`flex items-center gap-2.5 px-3 py-1.5 ${i > 0 ? "border-t border-border" : ""}`}>
+                              <input
+                                type="checkbox"
+                                id={`ep-${ft.id}`}
+                                checked={!!enrollPayChecked[ft.id]}
+                                disabled={ft.isEnrollmentMandatory}
+                                onChange={(e) => setEnrollPayChecked((prev) => ({ ...prev, [ft.id]: e.target.checked }))}
+                                className="w-4 h-4 accent-primary flex-shrink-0"
+                              />
+                              <label htmlFor={`ep-${ft.id}`} className={`flex-1 text-sm min-w-0 cursor-pointer ${ft.isEnrollmentMandatory ? "font-medium" : "text-muted-foreground"}`}>
+                                {ft.name}
+                                {ft.isEnrollmentMandatory && <span className="ml-1.5 text-xs text-muted-foreground font-normal">required</span>}
+                              </label>
+                              <div className="relative flex-shrink-0">
+                                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">₱</span>
+                                <Input
+                                  type="number" min="0" step="0.01" placeholder="0.00"
+                                  value={itemizedAmounts[ft.id] ?? ""}
+                                  onChange={(e) => setItemizedAmounts({ ...itemizedAmounts, [ft.id]: e.target.value })}
+                                  className="w-28 text-right pl-6 h-8 text-sm"
+                                  disabled={!enrollPayChecked[ft.id]}
+                                />
+                              </div>
+                            </div>
+                            {isTuition && enrollPayChecked[ft.id] && tuitionAmt > 0 && (
+                              <div className="border-t border-border bg-muted/20 px-3 py-2.5 space-y-2">
+                                <p className="text-xs text-muted-foreground font-medium">Tuition payment plan</p>
+                                <div className="flex gap-2">
+                                  {([
+                                    { value: "full" as const, label: "Full Payment", sub: "Pay full year upfront" },
+                                    { value: "installment" as const, label: "Monthly", sub: "Pay per month" },
+                                  ]).map(({ value, label, sub }) => (
+                                    <button key={value} type="button"
+                                      onClick={() => setPlacementPayType(value)}
+                                      className={`flex flex-col items-start px-3 py-2 rounded-lg border text-left transition-colors flex-1 ${placementPayType === value ? "border-primary bg-primary/5 text-primary" : "border-border bg-background text-foreground hover:bg-muted"}`}>
+                                      <span className="text-xs font-medium">{label}</span>
+                                      <span className={`text-xs mt-0.5 ${placementPayType === value ? "text-primary/70" : "text-muted-foreground"}`}>{sub}</span>
+                                    </button>
+                                  ))}
+                                </div>
+                                {placementPayType === "full" && (
+                                  <div className="space-y-1.5">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-xs text-muted-foreground">₱{tuitionAmt.toLocaleString("en-PH", { minimumFractionDigits: 2 })} ×</span>
+                                      <Input
+                                        type="number" min="1" max="24" step="1"
+                                        value={tuitionMonths}
+                                        onChange={(e) => setTuitionMonths(e.target.value)}
+                                        className="w-16 h-7 text-xs text-center px-2"
+                                      />
+                                      <span className="text-xs text-muted-foreground">months</span>
+                                    </div>
+                                    <p className="text-sm font-semibold text-primary">
+                                      Total: ₱{(tuitionAmt * (parseInt(tuitionMonths) || 0)).toLocaleString("en-PH", { minimumFractionDigits: 2 })}
+                                    </p>
+                                  </div>
+                                )}
+                                {placementPayType === "installment" && (
+                                  <p className="text-xs text-muted-foreground">₱{tuitionAmt.toLocaleString("en-PH", { minimumFractionDigits: 2 })} billed each month — remaining months collected via Billing.</p>
+                                )}
+                              </div>
+                            )}
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                       <div className="flex items-center gap-2.5 px-3 py-1.5 border-t border-border bg-muted/40">
                         <span className="flex-1 text-sm font-semibold">Total</span>
                         <span className="w-28 text-right text-sm font-semibold pr-0.5">
@@ -2876,17 +2942,23 @@ export default function EnrollmentPage() {
       {/* Placement Payment Modal */}
       {(() => {
         const pp = pendingPlacements.find((p) => p.enrollmentId === placementPayRow);
+        const months = parseInt(tuitionMonths) || 1;
         const ppTotal = feeTypes
           .filter((ft) => enrollPayChecked[ft.id])
           .reduce((sum, ft) => {
             const v = parseFloat(itemizedAmounts[ft.id] ?? "");
-            return sum + (isNaN(v) ? 0 : v);
+            if (isNaN(v)) return sum;
+            const isTuition = ft.name.toLowerCase().includes("tuition");
+            return sum + (isTuition && placementPayType === "full" ? v * months : v);
           }, 0);
-        const ppCanSubmit = ppTotal > 0 && !!placementPayForm.date;
+        const tuitionFt = feeTypes.find((ft) => ft.name.toLowerCase().includes("tuition") && enrollPayChecked[ft.id]);
+        const tuitionAmt = tuitionFt ? (parseFloat(itemizedAmounts[tuitionFt.id] ?? "0") || 0) : 0;
+        const tuitionFullOk = placementPayType === "installment" || !tuitionFt || tuitionAmt === 0 || months >= 1;
+        const ppCanSubmit = ppTotal > 0 && !!placementPayForm.date && tuitionFullOk;
         return (
           <Modal
             open={!!placementPayRow}
-            onClose={() => { setPlacementPayRow(null); setPlacementPayError(null); }}
+            onClose={() => { setPlacementPayRow(null); setPlacementPayError(null); setPlacementPayType("installment"); setTuitionMonths("10"); }}
             title={pp ? `Record Payment — ${pp.studentName}` : "Record Payment"}
             className="max-w-lg"
           >
@@ -2909,7 +2981,7 @@ export default function EnrollmentPage() {
                       const optional = feeTypes.filter((ft) => !ft.isEnrollmentMandatory);
                       const allOptChecked = optional.length > 0 && optional.every((ft) => enrollPayChecked[ft.id]);
                       return optional.length > 0 ? (
-                        <div className="flex justify-end mb-1">
+                        <div className="flex justify-start mb-1">
                           <button
                             type="button"
                             onClick={toggleAllEnrollFees}
@@ -2921,38 +2993,79 @@ export default function EnrollmentPage() {
                       ) : null;
                     })()}
                   <div className="border border-border rounded-lg overflow-hidden">
-                    {feeTypes.map((ft, i) => (
-                      <div
-                        key={ft.id}
-                        className={`flex items-center gap-2.5 px-3 py-1.5 ${i > 0 ? "border-t border-border" : ""}`}
-                      >
-                        <input
-                          type="checkbox"
-                          id={`pp-${ft.id}`}
-                          checked={!!enrollPayChecked[ft.id]}
-                          disabled={ft.isEnrollmentMandatory}
-                          onChange={(e) => setEnrollPayChecked((prev) => ({ ...prev, [ft.id]: e.target.checked }))}
-                          className="w-4 h-4 accent-primary flex-shrink-0"
-                        />
-                        <label
-                          htmlFor={`pp-${ft.id}`}
-                          className={`flex-1 text-sm min-w-0 cursor-pointer ${ft.isEnrollmentMandatory ? "font-medium" : "text-muted-foreground"}`}
-                        >
-                          {ft.name}
-                          {ft.isEnrollmentMandatory && <span className="ml-1.5 text-xs text-muted-foreground font-normal">required</span>}
-                        </label>
-                        <div className="relative flex-shrink-0">
-                          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">₱</span>
-                          <Input
-                            type="number" min="0" step="0.01" placeholder="0.00"
-                            value={itemizedAmounts[ft.id] ?? ""}
-                            onChange={(e) => setItemizedAmounts({ ...itemizedAmounts, [ft.id]: e.target.value })}
-                            className="w-28 text-right pl-6 h-8 text-sm"
-                            disabled={!enrollPayChecked[ft.id]}
-                          />
+                    {feeTypes.map((ft, i) => {
+                      const isTuition = ft.name.toLowerCase().includes("tuition");
+                      const tuitionAmt = parseFloat(itemizedAmounts[ft.id] ?? "0") || 0;
+                      return (
+                        <div key={ft.id}>
+                          <div className={`flex items-center gap-2.5 px-3 py-1.5 ${i > 0 ? "border-t border-border" : ""}`}>
+                            <input
+                              type="checkbox"
+                              id={`pp-${ft.id}`}
+                              checked={!!enrollPayChecked[ft.id]}
+                              disabled={ft.isEnrollmentMandatory}
+                              onChange={(e) => setEnrollPayChecked((prev) => ({ ...prev, [ft.id]: e.target.checked }))}
+                              className="w-4 h-4 accent-primary flex-shrink-0"
+                            />
+                            <label
+                              htmlFor={`pp-${ft.id}`}
+                              className={`flex-1 text-sm min-w-0 cursor-pointer ${ft.isEnrollmentMandatory ? "font-medium" : "text-muted-foreground"}`}
+                            >
+                              {ft.name}
+                              {ft.isEnrollmentMandatory && <span className="ml-1.5 text-xs text-muted-foreground font-normal">required</span>}
+                            </label>
+                            <div className="relative flex-shrink-0">
+                              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">₱</span>
+                              <Input
+                                type="number" min="0" step="0.01" placeholder="0.00"
+                                value={itemizedAmounts[ft.id] ?? ""}
+                                onChange={(e) => setItemizedAmounts({ ...itemizedAmounts, [ft.id]: e.target.value })}
+                                className="w-28 text-right pl-6 h-8 text-sm"
+                                disabled={!enrollPayChecked[ft.id]}
+                              />
+                            </div>
+                          </div>
+                          {isTuition && enrollPayChecked[ft.id] && tuitionAmt > 0 && (
+                            <div className="border-t border-border bg-muted/20 px-3 py-2.5 space-y-2">
+                              <p className="text-xs text-muted-foreground font-medium">Tuition payment type</p>
+                              <div className="flex gap-2">
+                                {([
+                                  { value: "full" as const, label: "Full Payment", sub: "Pay full year upfront" },
+                                  { value: "installment" as const, label: "Monthly", sub: "Pay per month" },
+                                ]).map(({ value, label, sub }) => (
+                                  <button key={value} type="button"
+                                    onClick={() => setPlacementPayType(value)}
+                                    className={`flex flex-col items-start px-3 py-2 rounded-lg border text-left transition-colors flex-1 ${placementPayType === value ? "border-primary bg-primary/5 text-primary" : "border-border bg-background text-foreground hover:bg-muted"}`}>
+                                    <span className="text-xs font-medium">{label}</span>
+                                    <span className={`text-xs mt-0.5 ${placementPayType === value ? "text-primary/70" : "text-muted-foreground"}`}>{sub}</span>
+                                  </button>
+                                ))}
+                              </div>
+                              {placementPayType === "full" && (
+                                <div className="space-y-1.5">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs text-muted-foreground">₱{tuitionAmt.toLocaleString("en-PH", { minimumFractionDigits: 2 })} ×</span>
+                                    <Input
+                                      type="number" min="1" max="24" step="1"
+                                      value={tuitionMonths}
+                                      onChange={(e) => setTuitionMonths(e.target.value)}
+                                      className="w-16 h-7 text-xs text-center px-2"
+                                    />
+                                    <span className="text-xs text-muted-foreground">months</span>
+                                  </div>
+                                  <p className="text-sm font-semibold text-primary">
+                                    Total: ₱{(tuitionAmt * (parseInt(tuitionMonths) || 0)).toLocaleString("en-PH", { minimumFractionDigits: 2 })}
+                                  </p>
+                                </div>
+                              )}
+                              {placementPayType === "installment" && (
+                                <p className="text-xs text-muted-foreground">₱{tuitionAmt.toLocaleString("en-PH", { minimumFractionDigits: 2 })} billed each month — remaining months collected via Billing.</p>
+                              )}
+                            </div>
+                          )}
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                     <div className="flex items-center gap-2.5 px-3 py-1.5 border-t border-border bg-muted/40">
                       <span className="flex-1 text-sm font-semibold">Total</span>
                       <span className="w-28 text-right text-sm font-semibold pr-0.5">
@@ -3005,7 +3118,7 @@ export default function EnrollmentPage() {
 
                 {placementPayError && <ErrorAlert message={placementPayError} />}
                 <div className="flex justify-end gap-2 pt-2 border-t border-border">
-                  <Button variant="outline" onClick={() => { setPlacementPayRow(null); setPlacementPayError(null); }}>Cancel</Button>
+                  <Button variant="outline" onClick={() => { setPlacementPayRow(null); setPlacementPayError(null); setPlacementPayType("installment"); setTuitionMonths("10"); }}>Cancel</Button>
                   <Button onClick={() => handlePlacementPayment(pp.enrollmentId, pp.studentId, pp.studentName)} disabled={placementPaySaving || !ppCanSubmit}>
                     {placementPaySaving ? <><RefreshCw className="w-4 h-4 animate-spin" /> Saving…</> : <><Check className="w-4 h-4" /> Confirm Payment</>}
                   </Button>
