@@ -98,10 +98,13 @@ CREATE TABLE classes (
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Note: teacher_id originally referenced profiles(id); migration 058
+-- re-points it to teacher_profiles(id). teacher_profiles is created in
+-- migration 004, so on fresh-project setup the FK is added there.
 CREATE TABLE class_teachers (
   id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   class_id    UUID NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
-  teacher_id  UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  teacher_id  UUID NOT NULL,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (class_id, teacher_id)
 );

@@ -35,7 +35,10 @@ src/
       progress/page.tsx         — Student progress observations
       online-classes/page.tsx   — Online session scheduling
       updates/page.tsx          — Parent updates / class feed + broadcast
+      documents/page.tsx        — Document Coordination workspace (IEPs, therapy reports, etc.)
       settings/page.tsx         — School years + holidays
+    api/
+      documents/[id]/access/route.ts — Phase C choke point: log_document_access RPC + service-role signed URL
   components/
     layout/
       Header.tsx
@@ -82,6 +85,21 @@ src/features/billing/              — Billing feature module (extracted from bi
   SetupFeeTypesTab.tsx             — Fee types CRUD tab
   SetupTuitionTab.tsx              — Tuition configs CRUD tab (per academic period)
   SetupAdjustmentsTab.tsx          — Discounts + student credits CRUD tab
+src/features/documents/            — Document Coordination feature module (Phases C–D)
+  types.ts                         — DocumentType / Status / ConsentScope / GrantPermissions / API contract types
+  constants.ts                     — DOCUMENT_TYPE_LABELS, STATUS_LABELS, EXPIRY_PRESETS, ALLOWED_MIME_TYPES, MAX_FILE_SIZE_BYTES
+  utils.ts                         — formatDocumentType, formatBytes, formatDate, daysUntil, relativeWindow, studentDisplay
+  queries.ts                       — listDocuments, getDocument, listVersions; DocumentListItem view-model
+  documents-api.ts                 — Phase C wrapper: getDocumentAccess(), openDocumentForAccess(), DocumentAccessError
+  DocumentsList.tsx                — Workspace table
+  DocumentRow.tsx                  — Single row + per-row View/Download
+  DocumentAccessButton.tsx         — Calls Phase C API; signed URL never stored in state
+  DocumentDetailModal.tsx          — Overview + Versions tabs (read-only); hidden versions visible to staff only
+  UploadDocumentModal.tsx          — D7: 5-step transactional upload with rollback; client-side UUIDs (no INSERT…RETURNING)
+supabase/migrations/054_child_documents.sql            — Phase A: 4 enums + 7 tables + integrity triggers, RLS default-deny
+supabase/migrations/055_child_documents_storage.sql    — Phase B: child-documents private bucket + storage RLS
+supabase/migrations/056_child_documents_rls.sql        — Phase B: helpers + RLS + log_document_access RPC
+supabase/migrations/057_document_access_events_actor_fk.sql — actor_user_id FK profiles → auth.users
 ```
 
 ---
@@ -112,6 +130,13 @@ All tables include `school_id` for multi-tenant isolation. RLS is enabled on all
 | `online_class_sessions` | Scheduled online sessions per class |
 | `progress_categories` | Observation dimensions (7 default: Participation, Social Skills, etc.) |
 | `progress_observations` | Per-student ratings; `visibility`: `internal_only` or `parent_visible` |
+| `child_documents` | Document head (logical doc) — IEPs, therapy reports, medical certs, etc. Statuses: `draft`, `active`, `shared`, `archived`, `revoked`. `current_version_id` follows the latest non-hidden version |
+| `child_document_versions` | One row per uploaded file. Linked-list versioning via `(document_id, version_number)`. `is_hidden` for wrong-upload recovery |
+| `external_contacts` | Doctors, therapists, clinic staff. Email-keyed, school-scoped. Not auth users — they magic-link in |
+| `document_consents` | Parent authorization. `granted_by_guardian_id` is the source of truth. JSONB `scope` (`document` / `document_type` / `all_for_student`) and `recipients` array |
+| `document_access_grants` | Document-level access for school/school_user/external_contact grantees. External grants always require `consent_id`; cascade-revoked when parent revokes consent |
+| `document_requests` | Request-document workflow (school↔parent / school↔external) |
+| `document_access_events` | View/download audit. Append-only via `log_document_access` RPC; no client write policy |
 
 ### Enums
 
@@ -129,6 +154,12 @@ inquiry_status: inquiry | assessment_scheduled | waitlisted | offered_slot | enr
 online_class_status: scheduled | live | completed | cancelled
 progress_rating: emerging | developing | consistent | advanced
 observation_visibility: internal_only | parent_visible
+document_type: iep | therapy_evaluation | therapy_progress | school_accommodation
+             | medical_certificate | dev_pediatrician_report | parent_provided
+             | other_supporting
+document_status: draft | active | shared | archived | revoked
+consent_status: pending | granted | revoked | expired
+request_status: requested | submitted | reviewed | cancelled
 ```
 
 ### Seed Data (from 001_additions.sql)
@@ -228,6 +259,12 @@ Currently all media lives in one private bucket (`updates-media`). Path conventi
 | Billing — generate modal | ✅ Complete | Merged Generate Billing modal: "Use tuition rates" vs "Flat amount" toggle, month range, fee type, due date modes (none/fixed/nth-weekday), skip existing, mark as paid shortcut |
 | Billing — UX restructure | ✅ Complete | Bills tab = "What students owe"; Payments tab = "What's been collected"; paid/settled hidden by default; per-row edit OR#/receipt + print in Payments tab |
 | Billing — edit payment | ✅ Complete | Pencil icon per payment row (both Payment History modal and Payments tab) opens Edit OR#/receipt photo modal |
+| Document Coordination — schema | ✅ Complete | Migrations 054 + 057. 7 tables, 4 enums, integrity triggers (current_version validation, hide-version repointing, consent JSONB validation, grant↔consent invariant, consent-revoke cascade), chain/head versioning, RLS default-deny |
+| Document Coordination — storage | ✅ Complete | Migration 055. Private `child-documents` bucket, 25 MB, PDF/JPEG/PNG/WebP. Path `{school_id}/{student_id}/{doc_id}/v{n}.{ext}`. No client SELECT — service-role only after RPC approval |
+| Document Coordination — RLS + RPC | ✅ Complete | Migration 056. Helpers `parent_guardian_ids`/`external_contact_ids_for_caller`/`teacher_visible_student_ids`/`accessible_document_ids`. Per-table RLS for school_admin/teacher/parent/external_contact (no super_admin bypass — strict). Column-level guards on consent transitions and grant revoke. `log_document_access` RPC: gatekeeper + audit logger combined; never returns a signed URL |
+| Document Coordination — access route | ✅ Complete | `POST /api/documents/[id]/access`. Authenticates with cookie session, calls RPC under user's session, then service-role mints 60-second signed URL. Sanitized error mapping (404 collapse for "don't reveal existence", 403 for download_not_permitted, 401 unauthenticated) |
+| Document Coordination — workspace UI (D1–D6) | ✅ Complete | `/documents` workspace page, sidebar entry, list + filters, status badges, read-only DocumentDetailModal (Overview + Versions tabs), View/Download via Phase C API, `?student=<id>` query param + link from Students page rows |
+| Document Coordination — Upload modal (D7) | ✅ Complete | `UploadDocumentModal`: form + 5-step transactional upload with rollback. Client-side UUIDs (no INSERT…RETURNING — that combination + the SELECT policy on the just-inserted row was rejecting in this codebase). New docs land as `draft` |
 
 ---
 
@@ -272,6 +309,26 @@ Currently all media lives in one private bucket (`updates-media`). Path conventi
 - [ ] **Role-based UI gating** — hide admin-only actions from teachers/parents
 - [ ] **Tighten RLS policies** — per-role write policies (currently broad "school member" policies)
 
+### Document Coordination — Remaining (resume from D8)
+
+Built so far: Phases A (schema), B (RLS + RPC), C (API route + types), D1–D7 (workspace, detail modal, View/Download, Upload). Remaining:
+
+- [ ] **D8 — UploadVersionModal + HideVersionModal** — add v2+ to existing docs; hide a version with reason (Phase A trigger 5.E auto-repoints head). Refresh detail modal on success
+- [ ] **D9 — Status transitions** — Mark Active / Archive buttons in DocumentDetailModal. Confirmation dialogs. Audit row auto-captured by Phase A trigger
+- [ ] **D10 — ShareDocumentModal (internal grants)** — share with school_user / school within same school. No consent required for in-school. Permissions toggles + expiry presets (30/90/180/365/custom)
+- [ ] **D11 — ConsentRequestModal** — drafts a `document_consents` row (status='pending'). Integrated into D10's pre-flight check: external/cross-school targets without covering consent route here first
+- [ ] **D12 — External contact share path** — extend ShareDocumentModal to handle `external_contact` grantees. ExternalContactPicker with inline-create. Phase A trigger 5.G enforces consent invariant
+- [ ] **D13 — RevokeAccessModal** — per-grant revoke action. Sets `revoked_at` with reason. Cascade trigger 5.H still works
+- [ ] **D14 — RequestDocumentModal + Requests tab** — schools/teachers request a document from parent/school/external. `document_requests` rows
+- [ ] **D15 — Activity tab in DocumentDetailModal** — surface `document_access_events` rows (view/download/signed_url_issued/access_denied) with timestamps and actor
+- [ ] **D16 — Polish + Help drawer** — expiring badges, empty states, error toasts, help drawer copy following the existing "Help Drawer Rule" pattern
+- [ ] **Phase E — Parent portal** — `/parent/documents`: My Child's Documents (visible per Phase B parent rules), grant/revoke consent (uses parent transition guard), upload `parent_provided` drafts
+- [ ] **Phase 2 — `document_comments`** — coordination notes per doc with `originating_school_only` vs `all_with_access` visibility
+- [ ] **Phase 2 — external-contact "Shared With Me" portal** — needs Lauris Care identity bridging
+- [ ] **Phase 2 — sibling consents, expiry-reminder cron, DOCX support, bulk operations, auto-archive on review_date**
+- [ ] **Teacher visibility fix** — re-enable teacher access to child_documents (and parent_updates / proud_moments) by adding an `auth_user_id` bridge column on `teacher_profiles` so `teacher_visible_student_ids()` can resolve `auth.uid() → teacher_profile.id → class_teachers.teacher_id`. Broken by migration 058's accepted side effect; school_admin paths unaffected
+- [ ] **`document_consents` parent transition guard NULL-role fix** — one-line trigger change to use `IF current_user_role() IS DISTINCT FROM 'parent'::user_role`. Required before service-role consent management (cron jobs, admin scripts) is introduced
+
 ---
 
 ## Schema Additions (Migrations 016–017)
@@ -286,6 +343,29 @@ Currently all media lives in one private bucket (`updates-media`). Path conventi
 
 ### Migration 033 — Billing Fee Type ID
 - `billing_records`: added `fee_type_id UUID REFERENCES fee_types(id) ON DELETE SET NULL` (nullable — existing rows get NULL)
+
+### Migration 054 — Child Documents Schema (Phase A)
+- 4 enums: `document_type`, `document_status`, `consent_status`, `request_status`
+- 7 tables: `external_contacts`, `child_documents`, `child_document_versions`, `document_consents` (JSONB `scope` + `recipients`), `document_access_grants` (JSONB `permissions`), `document_requests`, `document_access_events`
+- Versioning model: chain/head — `child_documents.id` is stable; `child_document_versions` rows are linked-list per `(document_id, version_number)`. `current_version_id` on the head points at the latest non-hidden version
+- Integrity triggers: 5.D (`current_version_id` validation), 5.E (hide-version repointing — auto-handles head pointer, refuses to orphan a non-draft doc), 5.F (consent JSONB shape + FK validation, including `external_contacts` school-scoping enforcement), 5.G (grant↔consent invariant — field-based recipient match, grant.expiry ≤ consent.expiry), 5.H (consent revoke/expire cascades to grants)
+- All 7 tables `ENABLE ROW LEVEL SECURITY` (default-deny — policies follow in 056)
+
+### Migration 055 — child-documents Storage Bucket
+- Private, 25 MB limit, MIMEs = PDF + JPEG/PNG/WebP
+- Path convention `{school_id}/{student_id}/{document_id}/v{n}.{ext}`
+- INSERT/UPDATE/DELETE policies for school-staff + parent (own children's path)
+- **No client SELECT policy** — only the service role mints signed URLs after `log_document_access` approves
+
+### Migration 056 — Document RLS + log_document_access RPC (Phase B)
+- 4 helpers: `parent_guardian_ids()` (JWT-email → guardian_id binding), `external_contact_ids_for_caller()`, `teacher_visible_student_ids()`, `accessible_document_ids()` (the SELECT-policy primitive)
+- ~46 RLS policies across the 7 tables. **No `is_super_admin()` bypass on any of them** — strict no-default-access posture (super_admin gets 42501 on any direct write)
+- Column-level guards: parent transition guard on `document_consents` (only `pending→granted` or `granted→revoked`, no terms changes), grant column guard (UPDATE allowed only on `revoked_at`/`revoked_by`/`revoke_reason`)
+- `log_document_access(p_doc_id UUID, p_action TEXT, p_ip TEXT, p_user_agent TEXT) RETURNS JSONB` — SECURITY DEFINER. Combines access decision + audit logging atomically. Returns metadata (`storage_path`, `mime_type`, `version_number`, `signed_url_ttl_seconds`); **never returns a signed URL**. Action whitelist: `view | download | signed_url_issued | preview_opened`
+- `document_access_events.actor_kind` CHECK extended to include `'super_admin'` and `'unauthenticated'` so denial events for those classes can be logged
+
+### Migration 057 — document_access_events.actor_user_id FK fix
+- Re-points FK from `profiles(id)` to `auth.users(id)`. Required because external_contacts have `auth.users` rows but no `profiles` row, so the original FK rejected any external-actor audit insert
 - Added super-admin RLS bypass policy `"super_admin_all_billing_records_fee_type"` (FOR ALL)
 - **Must be run before Add Record or Generate Billing will work** — both INSERT paths send `fee_type_id`
 - Existing billing records with `fee_type_id = NULL` display correctly; skip-existing check in Generate Billing falls back to student+month filter when fee type is unset
@@ -365,6 +445,67 @@ Help drawer implementation pattern (consistent across all pages):
 ---
 
 ## Session Log
+
+### 2026-05-03 — Document Coordination System (Phases A → D7)
+
+Sensitive child-document coordination feature — IEPs, therapy reports, evaluations, medical certificates, school accommodation plans, and parent-provided documents — with consent gates, full audit trail, signed-URL-only access, and strict no-default-access for super_admin.
+
+**Migrations applied (in order):**
+- `054_child_documents.sql` — Phase A schema (7 tables, 4 enums, integrity triggers, RLS default-deny)
+- `055_child_documents_storage.sql` — Phase B storage bucket + storage RLS
+- `056_child_documents_rls.sql` — Phase B helpers, RLS policies, `log_document_access` RPC
+- `057_document_access_events_actor_fk.sql` — re-point `actor_user_id` FK to `auth.users`
+
+See "Schema Additions" section above for migration-level details.
+
+**API route:** `src/app/api/documents/[id]/access/route.ts` (Phase C). Single server-side choke point. Authenticates with cookie session, calls `log_document_access` under the user's session (so `auth.uid()` resolves correctly inside Postgres), then service-role mints a 60-second signed URL. v1 always logs `signed_url_issued` regardless of client action. Maps RPC denial reasons to sanitized HTTP codes (404 collapse for "don't reveal existence" cases; 403 for `download_not_permitted`; 401 unauthenticated).
+
+**TypeScript types:** `src/lib/types/database.ts` extended with all 7 tables and `Functions.log_document_access`. `src/features/documents/types.ts` carries strict types for the JSONB columns (`ConsentScope`, `ConsentRecipient`, `GrantPermissions`) and the API contract.
+
+**UI shipped (D1–D7):**
+- Sidebar entry "Documents" in Core, between Students and Enrollment.
+- Workspace page `/documents` with header (Upload Document button + disabled Request Document), filters (search, status, type), list, empty state, detail modal. Reads `?student=<id>` query param to scope per-student; linked from a `<FileText>` icon on each row of the existing `/students` page.
+- Read-only `DocumentDetailModal` with Overview + Versions tabs. Hidden versions are visible to school staff only; parents/externals see only the head's `current_version_id` and only when not hidden.
+- View/Download via Phase C access route. **Signed URLs are never assigned to React state, props, or query cache** — `openDocumentForAccess()` opens in a new tab with `noopener,noreferrer` and dereferences immediately.
+- `UploadDocumentModal` (D7): two-step lifecycle (upload → draft only; Mark Active is D9). Client-side validation: PDF/JPEG/PNG/WebP, ≤25 MB. 5-step transactional upload with per-step rollback (head insert → blob upload → version insert → repoint head's `current_version_id` → best-effort `trackUpload`).
+
+**RLS-on-RETURNING workaround in UploadDocumentModal:** `INSERT … RETURNING` (via `.select().single()`) triggers a SELECT-policy evaluation against the just-inserted row. In this codebase that combination rejected reliably even though the INSERT WITH CHECK passed every clause cleanly. The modal now generates `crypto.randomUUID()` for both `child_documents.id` and `child_document_versions.id` client-side, inserts without `.select().single()`, and continues with the pre-known IDs. The Phase A trigger 5.D still validates `current_version_id` on the UPDATE step.
+
+**Test artifacts (kept, not migrations):**
+- `supabase/tests/054_versioning_scenario.sql` — head/version repoint + hide-last-version rejection (Phase A)
+- `supabase/tests/056_phase_b_scenarios.sql` — RLS decision tree across ~10 scenarios (Phase B)
+- `supabase/tests/seed_one_document.sql` — full seed: doc + v1 + uploaded_files row (Phase D smoke)
+- `supabase/tests/seed_phase_d_minimal.sql` — minimal active doc + v1 (no `uploaded_files` row)
+
+**Constraints / decisions baked in (important for future work):**
+- super_admin has **no RLS bypass** on any of the 7 document tables — strict posture confirmed in Phase 1. Super_admin → child_documents writes always fail with 42501 (RLS rejection). **Use a real `school_admin` account for testing.** Impersonation doesn't help because `auth.uid()` server-side still resolves to the super_admin's profile.
+- Teachers cannot currently pass `teacher_visible_student_ids()` because of migration 058's accepted side effect (`class_teachers.teacher_id` references `teacher_profiles.id`, while `auth.uid()` resolves to `profiles.id` / `auth.users.id`). Net effect: all teacher-scoped child_documents access fails for teacher logins. School_admin paths unaffected. See "Document Coordination — Remaining" for the planned `auth_user_id` bridge fix.
+- The `document_consents` parent transition guard early-returns on `current_user_role() <> 'parent'`. NULL role (service-role connections) is treated like a parent and rejects most updates. Future fix: change the guard to `IS DISTINCT FROM 'parent'::user_role`. Documented in the migration 056 inline comments and listed under "Remaining" above.
+- Storage object existence is decoupled from DB metadata. A doc + version row with a valid `storage_path` but no actual blob will mint a signed URL that 404s when followed; the `document_access_events` audit row still lands. Useful for testing the metadata path without a real file.
+
+**Where to resume:** "Document Coordination — Remaining" section above. Next logical step is **D8 — UploadVersionModal + HideVersionModal**.
+
+---
+
+### 2026-05-03 — Class teacher assignment persistence fix (migration 058)
+
+**Symptom:** assigning a teacher in Classes → Edit and clicking Save Class appeared to succeed, but the teacher reverted to "None" on the next page load.
+
+**Root cause:** schema/UI mismatch. The "Assigned Teacher" dropdown on the Classes page is sourced from `teacher_profiles` (the standalone staff roster created in migration 004 and managed in Settings → Teachers, with IDs from `gen_random_uuid()`). But `class_teachers.teacher_id` was still constrained to reference `profiles(id)`. Every UI-driven assignment generated an FK violation that was never inspected (the inserts had no error guard), so the modal closed cleanly while the row never persisted. On reload the join `teacher:profiles(full_name)` returned nothing → "None".
+
+**Fix:**
+- **Migration 058** (`058_class_teachers_fk_to_teacher_profiles.sql`) — drops `class_teachers_teacher_id_fkey`, deletes any existing rows whose `teacher_id` does not exist in `teacher_profiles`, then re-adds the FK pointing at `teacher_profiles(id) ON DELETE CASCADE`.
+- `schema.sql`: `class_teachers.teacher_id` no longer declares a FK inline (defined post-hoc once `teacher_profiles` exists in migration 004); a comment points at migration 058.
+- `src/lib/types/database.ts`: `class_teachers_teacher_id_fkey` now references `teacher_profiles`.
+- `src/app/(dashboard)/classes/page.tsx`:
+  - select join changed to `class_teachers(teacher_id, teacher:teacher_profiles(full_name))`
+  - error guards added to both `class_teachers.delete()` and `class_teachers.insert()` paths so any future FK or RLS failure surfaces in the modal instead of disappearing.
+- `src/app/(dashboard)/dashboard/page.tsx`: same join switch (`teacher:teacher_profiles(full_name)`).
+- `src/lib/demo/index.ts`: section 8 now mirrors each demo auth-user teacher into a `teacher_profiles` row (collected into `teacherProfileIds`) and uses those IDs for `class_teachers`. Cleaner deletes `teacher_profiles` for the school during teardown.
+
+**Follow-up — migration 059:** after 058 was applied, assigning a teacher in the UI surfaced `new row violates row-level security policy for table "class_teachers"`. The original schema only declared a SELECT policy on `class_teachers`; INSERT/UPDATE/DELETE policies were never added, so writes from the browser client were always blocked. The earlier FK violation was masking it. Migration 059 adds the three missing write policies, restricted to `current_user_role() = 'school_admin'` scoped to their own school (`class_id` resolves to a class with `school_id = current_user_school_id()`), plus `is_super_admin()` bypass — same pattern used in migration 031. Teachers and parents cannot edit `class_teachers` from the client. The migration uses `DROP POLICY IF EXISTS` first so it's safe to re-run.
+
+**Accepted side effect:** three RLS helpers compare `class_teachers.teacher_id` against `auth.uid()` — see [031:218](supabase/migrations/031_rls_tenant_hardening.sql), [037:41](supabase/migrations/037_proud_moments_hardening.sql) (`teacher_student_ids()`), [056:93](supabase/migrations/056_child_documents_rls.sql) (`teacher_visible_student_ids()`). With the new FK these match zero rows for teacher logins. Net effect: any user signed in with `role='teacher'` loses access to `parent_updates` insert, `proud_moments` visibility, and `child_documents` reads through these specific RLS paths. School_admin / super_admin paths are unaffected. Acceptable for now because the active workflow is admin-only; revisit with an `auth_user_id` bridge column on `teacher_profiles` if/when staff logins are reintroduced.
 
 ### 2026-04-28 — Billing Refactor, UX Restructure, Generate Billing Fixes
 

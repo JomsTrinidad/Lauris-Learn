@@ -28,6 +28,7 @@ import {
 import type { DocumentStatus, DocumentType } from "@/features/documents/types";
 import { DocumentsList } from "@/features/documents/DocumentsList";
 import { DocumentDetailModal } from "@/features/documents/DocumentDetailModal";
+import { UploadDocumentModal } from "@/features/documents/UploadDocumentModal";
 
 const STATUS_OPTIONS: DocumentStatus[] = ["draft", "active", "shared", "archived", "revoked"];
 
@@ -37,7 +38,7 @@ interface ResolvedStudent {
 }
 
 export default function DocumentsPage() {
-  const { schoolId, loading: ctxLoading } = useSchoolContext();
+  const { schoolId, userId, userRole, loading: ctxLoading } = useSchoolContext();
   const supabase = useMemo(() => createClient(), []);
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -55,6 +56,11 @@ export default function DocumentsPage() {
 
   // Selected document for detail modal
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
+
+  // Upload modal
+  const [uploadOpen, setUploadOpen] = useState(false);
+
+  const canUpload = userRole === "school_admin" || userRole === "teacher";
 
   // ── Resolve student filter from query param ─────────────────────────────
   const studentParam = searchParams.get("student");
@@ -153,7 +159,11 @@ export default function DocumentsPage() {
             <Inbox className="w-4 h-4 mr-2" />
             Request Document
           </Button>
-          <Button disabled title="Coming in a later step">
+          <Button
+            onClick={() => setUploadOpen(true)}
+            disabled={!canUpload}
+            title={canUpload ? undefined : "Only school admins and teachers can upload."}
+          >
             <Upload className="w-4 h-4 mr-2" />
             Upload Document
           </Button>
@@ -217,7 +227,11 @@ export default function DocumentsPage() {
       {loading ? (
         <PageSpinner />
       ) : docs.length === 0 ? (
-        <EmptyState scoped={!!studentFilter} />
+        <EmptyState
+          scoped={!!studentFilter}
+          canUpload={canUpload}
+          onClickUpload={() => setUploadOpen(true)}
+        />
       ) : (
         <DocumentsList docs={docs} onOpenDoc={(d) => setSelectedDocId(d.id)} />
       )}
@@ -226,12 +240,35 @@ export default function DocumentsPage() {
         docId={selectedDocId}
         onClose={() => setSelectedDocId(null)}
       />
+
+      {schoolId && userId && (
+        <UploadDocumentModal
+          open={uploadOpen}
+          onClose={() => setUploadOpen(false)}
+          onUploaded={(docId) => {
+            setUploadOpen(false);
+            void loadDocs();
+            setSelectedDocId(docId);
+          }}
+          defaultStudentId={studentFilter?.id ?? null}
+          schoolId={schoolId}
+          userId={userId}
+        />
+      )}
     </div>
   );
 }
 
 
-function EmptyState({ scoped }: { scoped: boolean }) {
+function EmptyState({
+  scoped,
+  canUpload,
+  onClickUpload,
+}: {
+  scoped: boolean;
+  canUpload: boolean;
+  onClickUpload: () => void;
+}) {
   return (
     <Card>
       <CardContent className="py-12 text-center space-y-3">
@@ -246,7 +283,11 @@ function EmptyState({ scoped }: { scoped: boolean }) {
           with consent and an audit trail.
         </p>
         <div className="pt-2">
-          <Button disabled title="Coming in a later step">
+          <Button
+            onClick={onClickUpload}
+            disabled={!canUpload}
+            title={canUpload ? undefined : "Only school admins and teachers can upload."}
+          >
             <Upload className="w-4 h-4 mr-2" />
             Upload Document
           </Button>

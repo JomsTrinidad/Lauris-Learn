@@ -135,7 +135,7 @@ export default function ClassesPage() {
     const { data: classRows, error: classErr } = await (supabase as any)
       .from("classes")
       .select(`id, name, level, start_time, end_time, capacity, is_active, meeting_link, messenger_link, next_level,
-        class_teachers(teacher_id, teacher:profiles(full_name))`)
+        class_teachers(teacher_id, teacher:teacher_profiles(full_name))`)
       .eq("school_id", schoolId!)
       .eq("school_year_id", yearId)
       .eq("is_system", false)
@@ -263,9 +263,11 @@ export default function ClassesPage() {
       const updateResult = await sb.from("classes").update(payload).eq("id", editingClass.id);
       if (updateResult.error) { setFormError(updateResult.error.message); setSaving(false); return; }
 
-      await sb.from("class_teachers").delete().eq("class_id", editingClass.id);
+      const delResult = await sb.from("class_teachers").delete().eq("class_id", editingClass.id);
+      if (delResult.error) { setFormError(`Could not clear existing teacher assignment: ${delResult.error.message}`); setSaving(false); return; }
       if (form.teacherId) {
-        await sb.from("class_teachers").insert({ class_id: editingClass.id, teacher_id: form.teacherId });
+        const ctResult = await sb.from("class_teachers").insert({ class_id: editingClass.id, teacher_id: form.teacherId });
+        if (ctResult.error) { setFormError(`Could not assign teacher: ${ctResult.error.message}`); setSaving(false); return; }
       }
     } else {
       const insertResult = await sb.from("classes").insert(payload).select("id").single();
@@ -273,7 +275,8 @@ export default function ClassesPage() {
       const inserted = insertResult.data as { id: string };
 
       if (form.teacherId) {
-        await sb.from("class_teachers").insert({ class_id: inserted.id, teacher_id: form.teacherId });
+        const ctResult = await sb.from("class_teachers").insert({ class_id: inserted.id, teacher_id: form.teacherId });
+        if (ctResult.error) { setFormError(`Class created, but teacher assignment failed: ${ctResult.error.message}`); setSaving(false); return; }
       }
     }
 

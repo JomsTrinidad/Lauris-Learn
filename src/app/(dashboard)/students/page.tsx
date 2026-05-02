@@ -54,7 +54,7 @@ function calcAge(dob: string | null): string {
 interface AcademicPeriod { id: string; name: string; }
 
 interface EnrollmentEntry {
-  id: string; classId: string; className: string;
+  id: string; classId: string; className: string; classLevel: string;
   periodId: string | null; periodName: string | null;
   schoolYearId: string; schoolYearName: string;
   status: EnrollmentStatus; startDate: string | null; endDate: string | null;
@@ -64,7 +64,7 @@ interface Student {
   id: string; firstName: string; lastName: string;
   dateOfBirth: string | null; gender: string | null;
   studentCode: string | null; preferredName: string | null;
-  classId: string | null; className: string;
+  classId: string | null; className: string; classLevel: string;
   enrollmentId: string | null; enrollmentStatus: EnrollmentStatus | null;
   enrollmentYearId: string | null;
   allEnrollments: EnrollmentEntry[];
@@ -79,7 +79,7 @@ interface Student {
   photoUrl: string | null;
 }
 
-interface ClassOption { id: string; name: string; enrolled: number; capacity: number; }
+interface ClassOption { id: string; name: string; level: string; enrolled: number; capacity: number; }
 
 interface StudentForm {
   firstName: string; lastName: string; preferredName: string;
@@ -192,7 +192,7 @@ export default function StudentsPage() {
   const [codeConfig, setCodeConfig] = useState<SchoolCodeConfig>({ prefix: "LL", padding: 4, includeYear: false });
 
   const [search, setSearch] = useState("");
-  const [classFilter, setClassFilter] = useState("");
+  const [levelFilter, setLevelFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [returningFilter, setReturningFilter] = useState(false);
   // Year selector: which school year's enrollment data to display (default = activeYear)
@@ -349,7 +349,7 @@ export default function StudentsPage() {
         allergies, medical_conditions, emergency_contact_name, emergency_contact_phone,
         authorized_pickups, primary_language, special_needs, teacher_notes, admin_notes,
         guardians(id, full_name, relationship, phone, email, is_primary, communication_preference),
-        enrollments(id, status, class_id, school_year_id, academic_period_id, start_date, end_date, created_at, progression_status, progression_notes, classes(name, next_level), academic_periods(name), school_years(name))
+        enrollments(id, status, class_id, school_year_id, academic_period_id, start_date, end_date, created_at, progression_status, progression_notes, classes(name, level, next_level), academic_periods(name), school_years(name))
       `)
       .eq("school_id", schoolId!)
       .eq("is_active", true)
@@ -377,6 +377,7 @@ export default function StudentsPage() {
           id: e.id,
           classId: e.class_id,
           className: e.classes?.name ?? "—",
+          classLevel: e.classes?.level ?? "",
           periodId: e.academic_period_id ?? null,
           periodName: e.academic_periods?.name ?? null,
           schoolYearId: e.school_year_id,
@@ -406,6 +407,7 @@ export default function StudentsPage() {
           preferredName: sx.preferred_name ?? null,
           classId: activeEnrollment?.class_id ?? null,
           className: activeEnrollment?.classes?.name ?? "—",
+          classLevel: activeEnrollment?.classes?.level ?? "",
           enrollmentId: activeEnrollment?.id ?? null,
           enrollmentStatus: activeEnrollment?.status ?? null,
           enrollmentYearId: activeEnrollment?.school_year_id ?? null,
@@ -448,7 +450,7 @@ export default function StudentsPage() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data } = await (supabase as any)
       .from("classes")
-      .select("id, name, capacity")
+      .select("id, name, level, capacity")
       .eq("school_id", schoolId!)
       .eq("school_year_id", activeYear.id)
       .eq("is_active", true)
@@ -472,7 +474,7 @@ export default function StudentsPage() {
     setClassOptions(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (data ?? []).map((c: any) => ({
-        id: c.id, name: c.name, capacity: c.capacity ?? 0, enrolled: enrolledByClass[c.id] ?? 0,
+        id: c.id, name: c.name, level: c.level ?? "", capacity: c.capacity ?? 0, enrolled: enrolledByClass[c.id] ?? 0,
       }))
     );
   }
@@ -978,25 +980,52 @@ export default function StudentsPage() {
   // ─── Derived values ────────────────────────────────────────────────────────
 
   // Resolve which enrollment to display for a student given the viewing year.
-  // Falls back to the pre-computed values when viewingYearId matches activeYear.
+  // For the active year, fall back to a "pending" state for students who were
+  // classified to continue (eligible / retained / not_eligible_other) but
+  // haven't been re-enrolled yet — otherwise they'd disappear from the active
+  // year filter at the start of the new school year.
   const effectiveViewingYearId = viewingYearId || activeYear?.id || null;
+  const CONTINUING_CLASSIFICATIONS = new Set(["eligible", "not_eligible_retained", "not_eligible_other"]);
   function getDisplayEnrollment(s: Student) {
     const yearId = effectiveViewingYearId;
-    if (!yearId || yearId === activeYear?.id) {
-      return { classId: s.classId, className: s.className, enrollmentStatus: s.enrollmentStatus, enrollmentYearId: s.enrollmentYearId };
+    if (!yearId) {
+      return { classId: s.classId, className: s.className, classLevel: s.classLevel, enrollmentStatus: s.enrollmentStatus, enrollmentYearId: s.enrollmentYearId, isPending: false };
     }
     const found =
       s.allEnrollments.find((e) => e.schoolYearId === yearId && e.status === "enrolled") ??
       s.allEnrollments.find((e) => e.schoolYearId === yearId) ?? null;
-    return {
-      classId: found?.classId ?? null,
-      className: found?.className ?? "—",
-      enrollmentStatus: found?.status ?? null,
-      enrollmentYearId: found?.schoolYearId ?? null,
-    };
+    if (found) {
+      return {
+        classId: found.classId,
+        className: found.className,
+        classLevel: found.classLevel,
+        enrollmentStatus: found.status,
+        enrollmentYearId: found.schoolYearId,
+        isPending: false,
+      };
+    }
+    if (yearId === activeYear?.id && s.progressionStatus && CONTINUING_CLASSIFICATIONS.has(s.progressionStatus)) {
+      return {
+        classId: null,
+        className: "—",
+        classLevel: "",
+        enrollmentStatus: null,
+        enrollmentYearId: yearId,
+        isPending: true,
+      };
+    }
+    return { classId: null, className: "—", classLevel: "", enrollmentStatus: null, enrollmentYearId: null, isPending: false };
   }
 
-  const isHistoricalYearView = !!viewingYearId && viewingYearId !== (activeYear?.id ?? "");
+  // Distinct levels for the filter dropdown — sourced from the active year's
+  // class catalog plus any levels seen on existing student enrollments (so
+  // historical-year levels still appear when viewing prior years).
+  const levelOptions = (() => {
+    const set = new Set<string>();
+    for (const c of classOptions) if (c.level) set.add(c.level);
+    for (const s of students) for (const e of s.allEnrollments) if (e.classLevel) set.add(e.classLevel);
+    return [...set].sort((a, b) => a.localeCompare(b));
+  })();
 
   // Detect students enrolled in 2+ school years simultaneously (mixed-year data)
   const mixedYearStudentCount = students.filter((s) => {
@@ -1023,7 +1052,7 @@ export default function StudentsPage() {
     // Year filter narrows to students with an enrollment in the selected year —
     // the combined "School Year + Status" column shows that enrollment's status.
     const matchYear = !viewingYearId || disp.enrollmentYearId === viewingYearId;
-    const matchClass = !classFilter || disp.classId === classFilter;
+    const matchClass = !levelFilter || disp.classLevel === levelFilter;
     const matchStatus = !statusFilter || disp.enrollmentStatus === statusFilter;
     const matchReturning = !returningFilter || returningEnrolledIds.has(s.id);
     return matchSearch && matchYear && matchClass && matchStatus && matchReturning;
@@ -1171,21 +1200,6 @@ export default function StudentsPage() {
           )}
 
           {/* Historical year view banner */}
-          {isHistoricalYearView && (
-            <div className="flex items-center gap-3 p-3 rounded-lg border border-blue-200 bg-blue-50 text-sm">
-              <span className="text-blue-800">
-                Showing enrollment data for <strong>{schoolYearList.find((y) => y.id === viewingYearId)?.name ?? "a past year"}</strong>.
-                {" "}Class and status columns reflect that year.
-              </span>
-              <button
-                onClick={() => setViewingYearId(activeYear?.id ?? "")}
-                className="ml-auto text-xs text-blue-700 hover:underline whitespace-nowrap"
-              >
-                Back to Active Year
-              </button>
-            </div>
-          )}
-
           {/* Search & Filters */}
           <div className="flex flex-col sm:flex-row gap-3">
             <div className="flex-1 relative">
@@ -1200,7 +1214,7 @@ export default function StudentsPage() {
             </div>
             <Select
               value={viewingYearId}
-              onChange={(e) => { setViewingYearId(e.target.value); setClassFilter(""); }}
+              onChange={(e) => { setViewingYearId(e.target.value); setLevelFilter(""); }}
               className="sm:w-48"
             >
               {schoolYearList.map((y) => (
@@ -1209,9 +1223,9 @@ export default function StudentsPage() {
                 </option>
               ))}
             </Select>
-            <Select value={classFilter} onChange={(e) => setClassFilter(e.target.value)} className="sm:w-44">
-              <option value="">All Classes</option>
-              {classOptions.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            <Select value={levelFilter} onChange={(e) => setLevelFilter(e.target.value)} className="sm:w-44">
+              <option value="">All Levels</option>
+              {levelOptions.map((lvl) => <option key={lvl} value={lvl}>{lvl}</option>)}
             </Select>
             <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="sm:w-44">
               {STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
@@ -1251,6 +1265,13 @@ export default function StudentsPage() {
                   ) : (
                     filtered.map((student) => {
                       const disp = getDisplayEnrollment(student);
+                      // The recommended next level applies to the year chronologically after
+                      // the classified enrollment's year — surface it as a hint next to the level.
+                      const yearsAsc = [...schoolYearList].sort((a, b) => a.startDate.localeCompare(b.startDate));
+                      const srcIdx = student.enrollmentYearId
+                        ? yearsAsc.findIndex((y) => y.id === student.enrollmentYearId)
+                        : -1;
+                      const nextLevelYear = srcIdx >= 0 && srcIdx + 1 < yearsAsc.length ? yearsAsc[srcIdx + 1] : null;
                       return (
                       <tr key={student.id} className="border-b border-border last:border-0 hover:bg-muted/50 transition-colors">
                         <td className="px-5 py-4">
@@ -1271,7 +1292,13 @@ export default function StudentsPage() {
                         </td>
                         <td className="px-5 py-4 text-muted-foreground">{disp.className}</td>
                         <td className="px-5 py-4">
-                          {disp.enrollmentYearId || disp.enrollmentStatus ? (
+                          {disp.isPending ? (
+                            <span className="text-xs font-medium whitespace-nowrap text-foreground">
+                              {schoolYearList.find((y) => y.id === disp.enrollmentYearId)?.name ?? "—"}
+                              {" - "}
+                              <span className="italic text-muted-foreground">Pending re-enrollment</span>
+                            </span>
+                          ) : disp.enrollmentYearId || disp.enrollmentStatus ? (
                             <span className={`text-xs font-medium whitespace-nowrap ${disp.enrollmentYearId === activeYear?.id ? "text-foreground" : "text-muted-foreground"}`}>
                               {schoolYearList.find((y) => y.id === disp.enrollmentYearId)?.name ?? "—"}
                               {disp.enrollmentStatus ? ` - ${disp.enrollmentStatus.charAt(0).toUpperCase()}${disp.enrollmentStatus.slice(1)}` : ""}
@@ -1302,7 +1329,10 @@ export default function StudentsPage() {
                               <div className="space-y-0.5">
                                 <span className={`inline-block px-2 py-0.5 rounded-full border text-xs font-medium ${color}`}>{label}</span>
                                 {student.recommendedNextLevel && (
-                                  <p className="text-xs text-muted-foreground">→ {student.recommendedNextLevel}</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    → {student.recommendedNextLevel}
+                                    {nextLevelYear && <span> ({nextLevelYear.name})</span>}
+                                  </p>
                                 )}
                               </div>
                             );

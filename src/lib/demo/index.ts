@@ -303,9 +303,10 @@ export async function generateDemoData(
   const cfg   = SCENARIOS[scenario];
   const batchId = Date.now().toString(36).slice(-7);
 
-  const demoUserIds:  string[] = [];
-  const teacherIds:   string[] = [];
-  const parentIds:    string[] = [];
+  const demoUserIds:        string[] = [];
+  const teacherIds:         string[] = [];
+  const teacherProfileIds:  string[] = [];
+  const parentIds:          string[] = [];
 
   // ── 1. Create teacher auth users ────────────────────────────────────────────
   const teacherCount = cfg.classes.length; // 1 teacher per class
@@ -539,10 +540,26 @@ export async function generateDemoData(
     .select("id");
   const nextClassIds: string[] = (nextClassData ?? []).map((c: any) => c.id);
 
-  // ── 8. Class teachers ───────────────────────────────────────────────────────
+  // ── 8. Teacher profiles + class teachers ───────────────────────────────────
+  // class_teachers.teacher_id references teacher_profiles(id) (migration 058),
+  // so we mirror each demo auth-user teacher into teacher_profiles and use
+  // those IDs for the join rows.
+  if (teacherIds.length > 0) {
+    const tpRows = teacherIds.map((_uid, i) => ({
+      school_id:  schoolId,
+      full_name:  `${teacherFirst(i)} ${lastName(i * 2)}`,
+      email:      `teacher.demo.${batchId}.${String(i + 1).padStart(2, "0")}@example.com`,
+      is_active:  true,
+    }));
+    const { data: tpData, error: tpErr } = await (admin as any)
+      .from("teacher_profiles").insert(tpRows).select("id");
+    if (tpErr) throw new Error(`teacher_profiles insert: ${tpErr.message}`);
+    teacherProfileIds.push(...(tpData ?? []).map((t: any) => t.id as string));
+  }
+
   const ctRows = [
-    ...classIds.map((cid, i) => ({ class_id: cid, teacher_id: teacherIds[i % teacherIds.length] })),
-    ...nextClassIds.map((cid, i) => ({ class_id: cid, teacher_id: teacherIds[i % teacherIds.length] })),
+    ...classIds.map((cid, i) => ({ class_id: cid, teacher_id: teacherProfileIds[i % teacherProfileIds.length] })),
+    ...nextClassIds.map((cid, i) => ({ class_id: cid, teacher_id: teacherProfileIds[i % teacherProfileIds.length] })),
   ];
   await batchInsert(admin, "class_teachers", ctRows);
 
@@ -859,6 +876,7 @@ export async function clearDemoData(
   await (admin as any).from("parent_updates").delete().eq("school_id", schoolId);
   await (admin as any).from("uploaded_files").delete().eq("school_id", schoolId);
   if (classIds.length)   await (admin as any).from("class_teachers").delete().in("class_id", classIds);
+  await (admin as any).from("teacher_profiles").delete().eq("school_id", schoolId);
   if (studentIds.length) await (admin as any).from("enrollments").delete().in("student_id", studentIds);
   await (admin as any).from("classes").delete().eq("school_id", schoolId);
   await (admin as any).from("academic_periods").delete().eq("school_id", schoolId); // cascades → tuition_configs

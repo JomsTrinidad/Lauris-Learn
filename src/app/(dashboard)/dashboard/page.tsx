@@ -218,7 +218,7 @@ export default function DashboardPage() {
         .from("classes")
         .select(`
           id, name, start_time, end_time,
-          class_teachers(teacher:profiles(full_name)),
+          class_teachers(teacher:teacher_profiles(full_name)),
           enrollments(count)
         `)
         .eq("school_id", schoolId!)

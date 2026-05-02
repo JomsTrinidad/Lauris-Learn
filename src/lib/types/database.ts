@@ -108,7 +108,7 @@ export type Database = {
         Update: { id?: string; class_id?: string; teacher_id?: string };
         Relationships: [
           { foreignKeyName: "class_teachers_class_id_fkey"; columns: ["class_id"]; isOneToOne: false; referencedRelation: "classes"; referencedColumns: ["id"] },
-          { foreignKeyName: "class_teachers_teacher_id_fkey"; columns: ["teacher_id"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] }
+          { foreignKeyName: "class_teachers_teacher_id_fkey"; columns: ["teacher_id"]; isOneToOne: false; referencedRelation: "teacher_profiles"; referencedColumns: ["id"] }
         ];
       };
       students: {
