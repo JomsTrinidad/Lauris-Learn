@@ -6,7 +6,8 @@ type Variant =
   | "paid" | "partial" | "unpaid" | "overdue" | "cancelled" | "refunded" | "waived"
   | "present" | "late" | "absent" | "excused"
   | "active" | "draft" | "archived" | "planned" | "closed"
-  | "scheduled" | "live";
+  | "scheduled" | "live"
+  | "shared" | "revoked";
 
 const variantMap: Record<Variant, string> = {
   default:     "bg-gray-100 text-gray-700",
@@ -33,6 +34,8 @@ const variantMap: Record<Variant, string> = {
   closed:      "bg-gray-100 text-gray-500",
   scheduled:   "bg-blue-100 text-blue-700",
   live:        "bg-green-100 text-green-700",
+  shared:      "bg-blue-100 text-blue-700",
+  revoked:     "bg-red-100 text-red-700",
 };
 
 interface BadgeProps {

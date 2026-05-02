@@ -1020,10 +1020,13 @@ export default function StudentsPage() {
     const fullName = `${s.firstName} ${s.lastName}`.toLowerCase();
     const code = (s.studentCode ?? "").toLowerCase();
     const matchSearch = !search || fullName.includes(search.toLowerCase()) || s.guardianName.toLowerCase().includes(search.toLowerCase()) || code.includes(search.toLowerCase());
+    // Year filter narrows to students with an enrollment in the selected year —
+    // the combined "School Year + Status" column shows that enrollment's status.
+    const matchYear = !viewingYearId || disp.enrollmentYearId === viewingYearId;
     const matchClass = !classFilter || disp.classId === classFilter;
     const matchStatus = !statusFilter || disp.enrollmentStatus === statusFilter;
     const matchReturning = !returningFilter || returningEnrolledIds.has(s.id);
-    return matchSearch && matchClass && matchStatus && matchReturning;
+    return matchSearch && matchYear && matchClass && matchStatus && matchReturning;
   });
 
   const sourceYear = allSchoolYears.find((y) => y.id === sourceYearId);
@@ -1230,11 +1233,10 @@ export default function StudentsPage() {
                 <thead className="bg-muted border-b border-border">
                   <tr>
                     <th className="text-left px-5 py-3 font-medium text-muted-foreground">Student</th>
-                    <th className="text-left px-5 py-3 font-medium text-muted-foreground">School Year</th>
                     <th className="text-left px-5 py-3 font-medium text-muted-foreground">Class</th>
+                    <th className="text-left px-5 py-3 font-medium text-muted-foreground">School Year - Status</th>
                     <th className="text-left px-5 py-3 font-medium text-muted-foreground">Parent / Guardian</th>
                     <th className="text-left px-5 py-3 font-medium text-muted-foreground">Contact</th>
-                    <th className="text-left px-5 py-3 font-medium text-muted-foreground">Status</th>
                     <th className="text-left px-5 py-3 font-medium text-muted-foreground">Next Level</th>
                     <th className="px-5 py-3" />
                   </tr>
@@ -1242,7 +1244,7 @@ export default function StudentsPage() {
                 <tbody>
                   {filtered.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="text-center py-10 text-muted-foreground">
+                      <td colSpan={7} className="text-center py-10 text-muted-foreground">
                         {students.length === 0 ? 'No students yet. Use "Enroll Student" to enroll through the pipeline, or "Add Student Profile" to create a record only.' : "No students match your filters."}
                       </td>
                     </tr>
@@ -1267,23 +1269,19 @@ export default function StudentsPage() {
                             </div>
                           </div>
                         </td>
+                        <td className="px-5 py-4 text-muted-foreground">{disp.className}</td>
                         <td className="px-5 py-4">
-                          {disp.enrollmentYearId ? (
-                            <span className={`text-xs font-medium ${disp.enrollmentYearId === activeYear?.id ? "text-foreground" : "text-muted-foreground"}`}>
+                          {disp.enrollmentYearId || disp.enrollmentStatus ? (
+                            <span className={`text-xs font-medium whitespace-nowrap ${disp.enrollmentYearId === activeYear?.id ? "text-foreground" : "text-muted-foreground"}`}>
                               {schoolYearList.find((y) => y.id === disp.enrollmentYearId)?.name ?? "—"}
+                              {disp.enrollmentStatus ? ` - ${disp.enrollmentStatus.charAt(0).toUpperCase()}${disp.enrollmentStatus.slice(1)}` : ""}
                             </span>
                           ) : (
                             <span className="text-muted-foreground text-xs">—</span>
                           )}
                         </td>
-                        <td className="px-5 py-4 text-muted-foreground">{disp.className}</td>
                         <td className="px-5 py-4">{student.guardianName}</td>
                         <td className="px-5 py-4 text-muted-foreground">{student.guardianPhone}</td>
-                        <td className="px-5 py-4">
-                          {disp.enrollmentStatus
-                            ? <Badge variant={disp.enrollmentStatus}>{disp.enrollmentStatus}</Badge>
-                            : <span className="text-muted-foreground text-xs">—</span>}
-                        </td>
                         <td className="px-5 py-4">
                           {student.progressionStatus ? (() => {
                             const ps = student.progressionStatus;
@@ -1315,7 +1313,15 @@ export default function StudentsPage() {
                             <button onClick={() => setSelectedStudent(student)} className="text-primary text-sm hover:underline">
                               View
                             </button>
-                            <button onClick={() => openEdit(student)} className="text-muted-foreground hover:text-foreground transition-colors">
+                            <a
+                              href={`/documents?student=${student.id}`}
+                              className="text-muted-foreground hover:text-foreground transition-colors"
+                              title="Documents"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <FileText className="w-4 h-4" />
+                            </a>
+                            <button onClick={() => openEdit(student)} className="text-muted-foreground hover:text-foreground transition-colors" title="Edit">
                               <Pencil className="w-4 h-4" />
                             </button>
                           </div>

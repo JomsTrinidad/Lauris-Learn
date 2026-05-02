@@ -509,9 +509,224 @@ export type Database = {
           { foreignKeyName: "proud_moment_reactions_parent_id_fkey"; columns: ["parent_id"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] }
         ];
       };
+      external_contacts: {
+        Row: {
+          id: string;
+          school_id: string;
+          full_name: string;
+          email: string;
+          organization_name: string | null;
+          role_title: string | null;
+          phone: string | null;
+          notes: string | null;
+          deactivated_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: { id?: string; school_id: string; full_name: string; email: string; organization_name?: string | null; role_title?: string | null; phone?: string | null; notes?: string | null; deactivated_at?: string | null; created_at?: string; updated_at?: string };
+        Update: { id?: string; school_id?: string; full_name?: string; email?: string; organization_name?: string | null; role_title?: string | null; phone?: string | null; notes?: string | null; deactivated_at?: string | null; updated_at?: string };
+        Relationships: [
+          { foreignKeyName: "external_contacts_school_id_fkey"; columns: ["school_id"]; isOneToOne: false; referencedRelation: "schools"; referencedColumns: ["id"] }
+        ];
+      };
+      child_documents: {
+        Row: {
+          id: string;
+          school_id: string;
+          student_id: string;
+          document_type: "iep" | "therapy_evaluation" | "therapy_progress" | "school_accommodation" | "medical_certificate" | "dev_pediatrician_report" | "parent_provided" | "other_supporting";
+          title: string;
+          description: string | null;
+          status: "draft" | "active" | "shared" | "archived" | "revoked";
+          effective_date: string | null;
+          review_date: string | null;
+          source_kind: "school" | "external_contact" | "parent";
+          source_external_contact_id: string | null;
+          source_label: string | null;
+          current_version_id: string | null;
+          created_by: string | null;
+          archived_at: string | null;
+          archive_reason: string | null;
+          revoked_at: string | null;
+          revoke_reason: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: { id?: string; school_id: string; student_id: string; document_type: "iep" | "therapy_evaluation" | "therapy_progress" | "school_accommodation" | "medical_certificate" | "dev_pediatrician_report" | "parent_provided" | "other_supporting"; title: string; description?: string | null; status?: "draft" | "active" | "shared" | "archived" | "revoked"; effective_date?: string | null; review_date?: string | null; source_kind?: "school" | "external_contact" | "parent"; source_external_contact_id?: string | null; source_label?: string | null; current_version_id?: string | null; created_by?: string | null; archived_at?: string | null; archive_reason?: string | null; revoked_at?: string | null; revoke_reason?: string | null; created_at?: string; updated_at?: string };
+        Update: { id?: string; school_id?: string; student_id?: string; document_type?: "iep" | "therapy_evaluation" | "therapy_progress" | "school_accommodation" | "medical_certificate" | "dev_pediatrician_report" | "parent_provided" | "other_supporting"; title?: string; description?: string | null; status?: "draft" | "active" | "shared" | "archived" | "revoked"; effective_date?: string | null; review_date?: string | null; source_kind?: "school" | "external_contact" | "parent"; source_external_contact_id?: string | null; source_label?: string | null; current_version_id?: string | null; created_by?: string | null; archived_at?: string | null; archive_reason?: string | null; revoked_at?: string | null; revoke_reason?: string | null; updated_at?: string };
+        Relationships: [
+          { foreignKeyName: "child_documents_school_id_fkey"; columns: ["school_id"]; isOneToOne: false; referencedRelation: "schools"; referencedColumns: ["id"] },
+          { foreignKeyName: "child_documents_student_id_fkey"; columns: ["student_id"]; isOneToOne: false; referencedRelation: "students"; referencedColumns: ["id"] },
+          { foreignKeyName: "child_documents_source_external_contact_id_fkey"; columns: ["source_external_contact_id"]; isOneToOne: false; referencedRelation: "external_contacts"; referencedColumns: ["id"] },
+          { foreignKeyName: "child_documents_current_version_fk"; columns: ["current_version_id"]; isOneToOne: false; referencedRelation: "child_document_versions"; referencedColumns: ["id"] },
+          { foreignKeyName: "child_documents_created_by_fkey"; columns: ["created_by"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] }
+        ];
+      };
+      child_document_versions: {
+        Row: {
+          id: string;
+          document_id: string;
+          school_id: string;
+          version_number: number;
+          uploaded_file_id: string | null;
+          storage_path: string;
+          file_name: string | null;
+          file_size: number | null;
+          mime_type: string | null;
+          uploaded_by_user_id: string | null;
+          uploaded_by_external_contact_id: string | null;
+          uploaded_by_kind: "school_admin" | "teacher" | "parent" | "external_contact";
+          upload_note: string | null;
+          is_hidden: boolean;
+          hidden_reason: string | null;
+          hidden_at: string | null;
+          created_at: string;
+        };
+        Insert: { id?: string; document_id: string; school_id: string; version_number: number; uploaded_file_id?: string | null; storage_path: string; file_name?: string | null; file_size?: number | null; mime_type?: string | null; uploaded_by_user_id?: string | null; uploaded_by_external_contact_id?: string | null; uploaded_by_kind: "school_admin" | "teacher" | "parent" | "external_contact"; upload_note?: string | null; is_hidden?: boolean; hidden_reason?: string | null; hidden_at?: string | null; created_at?: string };
+        Update: { id?: string; document_id?: string; school_id?: string; version_number?: number; uploaded_file_id?: string | null; storage_path?: string; file_name?: string | null; file_size?: number | null; mime_type?: string | null; uploaded_by_user_id?: string | null; uploaded_by_external_contact_id?: string | null; uploaded_by_kind?: "school_admin" | "teacher" | "parent" | "external_contact"; upload_note?: string | null; is_hidden?: boolean; hidden_reason?: string | null; hidden_at?: string | null };
+        Relationships: [
+          { foreignKeyName: "child_document_versions_document_id_fkey"; columns: ["document_id"]; isOneToOne: false; referencedRelation: "child_documents"; referencedColumns: ["id"] },
+          { foreignKeyName: "child_document_versions_school_id_fkey"; columns: ["school_id"]; isOneToOne: false; referencedRelation: "schools"; referencedColumns: ["id"] },
+          { foreignKeyName: "child_document_versions_uploaded_file_id_fkey"; columns: ["uploaded_file_id"]; isOneToOne: false; referencedRelation: "uploaded_files"; referencedColumns: ["id"] },
+          { foreignKeyName: "child_document_versions_uploaded_by_user_id_fkey"; columns: ["uploaded_by_user_id"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] },
+          { foreignKeyName: "child_document_versions_uploaded_by_external_contact_id_fkey"; columns: ["uploaded_by_external_contact_id"]; isOneToOne: false; referencedRelation: "external_contacts"; referencedColumns: ["id"] }
+        ];
+      };
+      document_consents: {
+        Row: {
+          id: string;
+          school_id: string;
+          student_id: string;
+          granted_by_guardian_id: string | null;
+          purpose: string;
+          scope: Json;
+          recipients: Json;
+          allow_download: boolean;
+          allow_reshare: boolean;
+          status: "pending" | "granted" | "revoked" | "expired";
+          starts_at: string | null;
+          expires_at: string;
+          granted_at: string | null;
+          revoked_at: string | null;
+          revoked_by_guardian_id: string | null;
+          revoke_reason: string | null;
+          requested_by_user_id: string | null;
+          request_message: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: { id?: string; school_id: string; student_id: string; granted_by_guardian_id?: string | null; purpose: string; scope: Json; recipients: Json; allow_download?: boolean; allow_reshare?: boolean; status?: "pending" | "granted" | "revoked" | "expired"; starts_at?: string | null; expires_at: string; granted_at?: string | null; revoked_at?: string | null; revoked_by_guardian_id?: string | null; revoke_reason?: string | null; requested_by_user_id?: string | null; request_message?: string | null; created_at?: string; updated_at?: string };
+        Update: { id?: string; school_id?: string; student_id?: string; granted_by_guardian_id?: string | null; purpose?: string; scope?: Json; recipients?: Json; allow_download?: boolean; allow_reshare?: boolean; status?: "pending" | "granted" | "revoked" | "expired"; starts_at?: string | null; expires_at?: string; granted_at?: string | null; revoked_at?: string | null; revoked_by_guardian_id?: string | null; revoke_reason?: string | null; requested_by_user_id?: string | null; request_message?: string | null; updated_at?: string };
+        Relationships: [
+          { foreignKeyName: "document_consents_school_id_fkey"; columns: ["school_id"]; isOneToOne: false; referencedRelation: "schools"; referencedColumns: ["id"] },
+          { foreignKeyName: "document_consents_student_id_fkey"; columns: ["student_id"]; isOneToOne: false; referencedRelation: "students"; referencedColumns: ["id"] },
+          { foreignKeyName: "document_consents_granted_by_guardian_id_fkey"; columns: ["granted_by_guardian_id"]; isOneToOne: false; referencedRelation: "guardians"; referencedColumns: ["id"] },
+          { foreignKeyName: "document_consents_revoked_by_guardian_id_fkey"; columns: ["revoked_by_guardian_id"]; isOneToOne: false; referencedRelation: "guardians"; referencedColumns: ["id"] },
+          { foreignKeyName: "document_consents_requested_by_user_id_fkey"; columns: ["requested_by_user_id"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] }
+        ];
+      };
+      document_access_grants: {
+        Row: {
+          id: string;
+          document_id: string;
+          school_id: string;
+          consent_id: string | null;
+          grantee_kind: "school" | "school_user" | "external_contact";
+          grantee_school_id: string | null;
+          grantee_user_id: string | null;
+          grantee_external_contact_id: string | null;
+          permissions: Json;
+          expires_at: string;
+          revoked_at: string | null;
+          revoked_by: string | null;
+          revoke_reason: string | null;
+          created_by: string | null;
+          created_at: string;
+        };
+        Insert: { id?: string; document_id: string; school_id: string; consent_id?: string | null; grantee_kind: "school" | "school_user" | "external_contact"; grantee_school_id?: string | null; grantee_user_id?: string | null; grantee_external_contact_id?: string | null; permissions?: Json; expires_at: string; revoked_at?: string | null; revoked_by?: string | null; revoke_reason?: string | null; created_by?: string | null; created_at?: string };
+        Update: { id?: string; document_id?: string; school_id?: string; consent_id?: string | null; grantee_kind?: "school" | "school_user" | "external_contact"; grantee_school_id?: string | null; grantee_user_id?: string | null; grantee_external_contact_id?: string | null; permissions?: Json; expires_at?: string; revoked_at?: string | null; revoked_by?: string | null; revoke_reason?: string | null; created_by?: string | null };
+        Relationships: [
+          { foreignKeyName: "document_access_grants_document_id_fkey"; columns: ["document_id"]; isOneToOne: false; referencedRelation: "child_documents"; referencedColumns: ["id"] },
+          { foreignKeyName: "document_access_grants_school_id_fkey"; columns: ["school_id"]; isOneToOne: false; referencedRelation: "schools"; referencedColumns: ["id"] },
+          { foreignKeyName: "document_access_grants_consent_id_fkey"; columns: ["consent_id"]; isOneToOne: false; referencedRelation: "document_consents"; referencedColumns: ["id"] },
+          { foreignKeyName: "document_access_grants_grantee_school_id_fkey"; columns: ["grantee_school_id"]; isOneToOne: false; referencedRelation: "schools"; referencedColumns: ["id"] },
+          { foreignKeyName: "document_access_grants_grantee_user_id_fkey"; columns: ["grantee_user_id"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] },
+          { foreignKeyName: "document_access_grants_grantee_external_contact_id_fkey"; columns: ["grantee_external_contact_id"]; isOneToOne: false; referencedRelation: "external_contacts"; referencedColumns: ["id"] },
+          { foreignKeyName: "document_access_grants_revoked_by_fkey"; columns: ["revoked_by"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] },
+          { foreignKeyName: "document_access_grants_created_by_fkey"; columns: ["created_by"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] }
+        ];
+      };
+      document_requests: {
+        Row: {
+          id: string;
+          school_id: string;
+          student_id: string;
+          requested_document_type: "iep" | "therapy_evaluation" | "therapy_progress" | "school_accommodation" | "medical_certificate" | "dev_pediatrician_report" | "parent_provided" | "other_supporting";
+          requester_user_id: string | null;
+          requester_external_contact_id: string | null;
+          requested_from_kind: "parent" | "school" | "external_contact";
+          requested_from_school_id: string | null;
+          requested_from_external_contact_id: string | null;
+          requested_from_guardian_id: string | null;
+          reason: string;
+          due_date: string | null;
+          status: "requested" | "submitted" | "reviewed" | "cancelled";
+          fulfilled_with_document_id: string | null;
+          cancelled_at: string | null;
+          cancelled_reason: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: { id?: string; school_id: string; student_id: string; requested_document_type: "iep" | "therapy_evaluation" | "therapy_progress" | "school_accommodation" | "medical_certificate" | "dev_pediatrician_report" | "parent_provided" | "other_supporting"; requester_user_id?: string | null; requester_external_contact_id?: string | null; requested_from_kind: "parent" | "school" | "external_contact"; requested_from_school_id?: string | null; requested_from_external_contact_id?: string | null; requested_from_guardian_id?: string | null; reason: string; due_date?: string | null; status?: "requested" | "submitted" | "reviewed" | "cancelled"; fulfilled_with_document_id?: string | null; cancelled_at?: string | null; cancelled_reason?: string | null; created_at?: string; updated_at?: string };
+        Update: { id?: string; school_id?: string; student_id?: string; requested_document_type?: "iep" | "therapy_evaluation" | "therapy_progress" | "school_accommodation" | "medical_certificate" | "dev_pediatrician_report" | "parent_provided" | "other_supporting"; requester_user_id?: string | null; requester_external_contact_id?: string | null; requested_from_kind?: "parent" | "school" | "external_contact"; requested_from_school_id?: string | null; requested_from_external_contact_id?: string | null; requested_from_guardian_id?: string | null; reason?: string; due_date?: string | null; status?: "requested" | "submitted" | "reviewed" | "cancelled"; fulfilled_with_document_id?: string | null; cancelled_at?: string | null; cancelled_reason?: string | null; updated_at?: string };
+        Relationships: [
+          { foreignKeyName: "document_requests_school_id_fkey"; columns: ["school_id"]; isOneToOne: false; referencedRelation: "schools"; referencedColumns: ["id"] },
+          { foreignKeyName: "document_requests_student_id_fkey"; columns: ["student_id"]; isOneToOne: false; referencedRelation: "students"; referencedColumns: ["id"] },
+          { foreignKeyName: "document_requests_requester_user_id_fkey"; columns: ["requester_user_id"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] },
+          { foreignKeyName: "document_requests_requester_external_contact_id_fkey"; columns: ["requester_external_contact_id"]; isOneToOne: false; referencedRelation: "external_contacts"; referencedColumns: ["id"] },
+          { foreignKeyName: "document_requests_requested_from_school_id_fkey"; columns: ["requested_from_school_id"]; isOneToOne: false; referencedRelation: "schools"; referencedColumns: ["id"] },
+          { foreignKeyName: "document_requests_requested_from_external_contact_id_fkey"; columns: ["requested_from_external_contact_id"]; isOneToOne: false; referencedRelation: "external_contacts"; referencedColumns: ["id"] },
+          { foreignKeyName: "document_requests_requested_from_guardian_id_fkey"; columns: ["requested_from_guardian_id"]; isOneToOne: false; referencedRelation: "guardians"; referencedColumns: ["id"] },
+          { foreignKeyName: "document_requests_fulfilled_with_document_id_fkey"; columns: ["fulfilled_with_document_id"]; isOneToOne: false; referencedRelation: "child_documents"; referencedColumns: ["id"] }
+        ];
+      };
+      document_access_events: {
+        Row: {
+          id: string;
+          document_id: string;
+          document_version_id: string | null;
+          student_id: string;
+          school_id: string;
+          actor_user_id: string | null;
+          actor_external_contact_id: string | null;
+          actor_email: string | null;
+          actor_kind: "school_admin" | "teacher" | "parent" | "external_contact" | "super_admin" | "unauthenticated";
+          action: "view" | "download" | "signed_url_issued" | "preview_opened" | "access_denied";
+          denied_reason: string | null;
+          ip: string | null;
+          user_agent: string | null;
+          created_at: string;
+        };
+        Insert: { id?: string; document_id: string; document_version_id?: string | null; student_id: string; school_id: string; actor_user_id?: string | null; actor_external_contact_id?: string | null; actor_email?: string | null; actor_kind: "school_admin" | "teacher" | "parent" | "external_contact" | "super_admin" | "unauthenticated"; action: "view" | "download" | "signed_url_issued" | "preview_opened" | "access_denied"; denied_reason?: string | null; ip?: string | null; user_agent?: string | null; created_at?: string };
+        Update: { id?: string; document_id?: string; document_version_id?: string | null; student_id?: string; school_id?: string; actor_user_id?: string | null; actor_external_contact_id?: string | null; actor_email?: string | null; actor_kind?: "school_admin" | "teacher" | "parent" | "external_contact" | "super_admin" | "unauthenticated"; action?: "view" | "download" | "signed_url_issued" | "preview_opened" | "access_denied"; denied_reason?: string | null; ip?: string | null; user_agent?: string | null };
+        Relationships: [
+          { foreignKeyName: "document_access_events_actor_external_contact_id_fkey"; columns: ["actor_external_contact_id"]; isOneToOne: false; referencedRelation: "external_contacts"; referencedColumns: ["id"] },
+          { foreignKeyName: "document_access_events_school_id_fkey"; columns: ["school_id"]; isOneToOne: false; referencedRelation: "schools"; referencedColumns: ["id"] }
+        ];
+      };
     };
     Views: Record<string, never>;
-    Functions: Record<string, never>;
+    Functions: {
+      log_document_access: {
+        Args: {
+          p_doc_id: string;
+          p_action: "view" | "download" | "signed_url_issued" | "preview_opened";
+          p_ip: string;
+          p_user_agent: string;
+        };
+        Returns: Json;
+      };
+    };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;
     PostgrestVersion: "12";

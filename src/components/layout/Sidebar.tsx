@@ -16,6 +16,7 @@ import {
   BookOpen,
   Star,
   ShieldCheck,
+  FileText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -39,6 +40,7 @@ const navSections: NavSection[] = [
     items: [
       { path: "/dashboard",  label: "Dashboard",  icon: LayoutDashboard },
       { path: "/students",   label: "Students",   icon: Users },
+      { path: "/documents",  label: "Documents",  icon: FileText },
       { path: "/enrollment", label: "Enrollment", icon: UserPlus,   adminOnly: true },
       { path: "/classes",    label: "Classes",    icon: School },
       { path: "/attendance", label: "Attendance", icon: CheckSquare },

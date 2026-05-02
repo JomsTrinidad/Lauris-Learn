@@ -196,31 +196,44 @@ export function SchoolProvider({ children }: { children: ReactNode }) {
     // Read-only when: trial expired OR subscription suspended/cancelled; always bypass for impersonating super admin
     const isHardBlocked = isTrialExpired || subscriptionStatus === "suspended" || subscriptionStatus === "cancelled";
 
-    setValue({
-      schoolId: effectiveSchoolId,
-      schoolName: impersonating?.schoolName ?? school?.name ?? "Lauris Learn",
-      activeYear,
-      allSchoolYears,
-      viewingYear: activeYear,
-      userId: user.id,
-      userRole: profile?.role ?? null,
-      userName: profile?.full_name ?? "",
-      userAvatar: (profile as any)?.avatar_url ?? null,
-      trialStatus,
-      trialDaysLeft,
-      isTrialExpired,
-      subscriptionStatus,
-      isDemo,
-      isReadOnly: isHardBlocked && !isImpersonating,
-      isImpersonating,
-      branding: {
-        logoUrl: (school as any)?.logo_url ?? null,
-        primaryColor: (school as any)?.primary_color ?? null,
-        accentColor: (school as any)?.accent_color ?? null,
-        textSizeScale: ((school as any)?.text_size_scale ?? "default") as BrandingConfig["textSizeScale"],
-        spacingScale: ((school as any)?.spacing_scale ?? "default") as BrandingConfig["spacingScale"],
-      },
-      loading: false,
+    setValue((prev) => {
+      // Reconcile viewingYear against freshly-fetched data: keep the user's
+      // prior selection if its id still exists (re-bound to the fresh row in
+      // case the record was updated), otherwise fall back to the new active
+      // year. Without this, a deleted/replaced school year (e.g. demo refresh)
+      // leaves a dangling reference whose stale .name keeps rendering in the
+      // header/sidebar.
+      const priorViewingId = prev.viewingYear?.id ?? null;
+      const reconciledViewingYear =
+        (priorViewingId && allSchoolYears.find((y) => y.id === priorViewingId)) ||
+        activeYear;
+
+      return {
+        schoolId: effectiveSchoolId,
+        schoolName: impersonating?.schoolName ?? school?.name ?? "Lauris Learn",
+        activeYear,
+        allSchoolYears,
+        viewingYear: reconciledViewingYear,
+        userId: user.id,
+        userRole: profile?.role ?? null,
+        userName: profile?.full_name ?? "",
+        userAvatar: (profile as any)?.avatar_url ?? null,
+        trialStatus,
+        trialDaysLeft,
+        isTrialExpired,
+        subscriptionStatus,
+        isDemo,
+        isReadOnly: isHardBlocked && !isImpersonating,
+        isImpersonating,
+        branding: {
+          logoUrl: (school as any)?.logo_url ?? null,
+          primaryColor: (school as any)?.primary_color ?? null,
+          accentColor: (school as any)?.accent_color ?? null,
+          textSizeScale: ((school as any)?.text_size_scale ?? "default") as BrandingConfig["textSizeScale"],
+          spacingScale: ((school as any)?.spacing_scale ?? "default") as BrandingConfig["spacingScale"],
+        },
+        loading: false,
+      };
     });
   }, [supabase]);
 
