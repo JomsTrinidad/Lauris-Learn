@@ -18,6 +18,7 @@ import {
   Download,
   Link as LinkIcon,
   ShieldX,
+  UserCircle2,
 } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import { Badge } from "@/components/ui/badge";
@@ -43,6 +44,7 @@ import {
 } from "./share-api";
 import { listExternalContacts } from "./consent-api";
 import { listAccessEvents } from "./events-api";
+import { listGuardiansForStudent, type GuardianRow } from "./requests-api";
 import type { DocumentListItem } from "./queries";
 import type {
   ChildDocumentVersionRow,
@@ -88,6 +90,13 @@ export function DocumentDetailModal({ docId, onClose, onChanged }: DocumentDetai
   const [eventsLoading, setEventsLoading] = useState(false);
   const [eventsError, setEventsError]     = useState<string | null>(null);
 
+  // E3 — guardians on file for this student (only loaded when source_kind='parent').
+  // We can't reliably resolve the parent uploader's specific name (profiles
+  // SELECT is self-only and there's no school-wide RPC for parent profiles in
+  // v1), so we surface the guardian roster as context — the actual uploader
+  // is one of these people.
+  const [guardians, setGuardians] = useState<GuardianRow[]>([]);
+
   // Sub-modals
   const [uploadVersionOpen, setUploadVersionOpen] = useState(false);
   const [versionToHide, setVersionToHide] = useState<ChildDocumentVersionRow | null>(null);
@@ -131,9 +140,22 @@ export function DocumentDetailModal({ docId, onClose, onChanged }: DocumentDetai
     setEvents([]);
     setEventsError(null);
     setGrantsError(null);
+    setGuardians([]);
     void reload(ctrl.signal);
     return () => ctrl.abort();
   }, [docId, reload]);
+
+  // Load guardian roster when this is a parent-uploaded doc — gives admins
+  // context on who the uploader is. Guardians SELECT is granted to school
+  // staff via the school-member policy, so no RPC needed.
+  useEffect(() => {
+    if (!doc || doc.source_kind !== "parent") return;
+    let cancelled = false;
+    listGuardiansForStudent(supabase, doc.student_id)
+      .then((rows) => { if (!cancelled) setGuardians(rows); })
+      .catch(() => { /* non-fatal — banner still renders without names */ });
+    return () => { cancelled = true; };
+  }, [doc, supabase]);
 
   // Load grants + name lookups the first time the user opens the Access tab,
   // and again after any sub-modal change (handleSubChange clears them).
@@ -253,6 +275,22 @@ export function DocumentDetailModal({ docId, onClose, onChanged }: DocumentDetai
             </div>
           </div>
 
+          {/* Parent-uploaded banner — surfaces source + guardian context for
+              admins reviewing parent submissions. Adds a clearer call to
+              action when the doc is still in draft (awaiting review). */}
+          {doc.source_kind === "parent" && (
+            <ParentSourceBanner
+              status={doc.status}
+              guardians={guardians}
+              isStaff={isStaff}
+              onMarkActive={
+                canMarkActive(doc, isStaff, isAdmin, userId)
+                  ? () => setPendingTransition("mark_active")
+                  : null
+              }
+            />
+          )}
+
           {/* No-version notice (draft state) */}
           {!doc.current_version_id && (
             <div className="flex items-start gap-2 px-4 py-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
@@ -261,34 +299,43 @@ export function DocumentDetailModal({ docId, onClose, onChanged }: DocumentDetai
             </div>
           )}
 
-          {/* Status transitions — only render the bar if at least one action is offered. */}
-          {(canMarkActive(doc, isStaff) || canArchive(doc, isAdmin)) && (
-            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-muted/30 border border-border">
-              <span className="text-xs font-medium text-muted-foreground mr-1">
-                Status actions:
-              </span>
-              {canMarkActive(doc, isStaff) && (
-                <Button
-                  size="sm"
-                  variant="primary"
-                  onClick={() => setPendingTransition("mark_active")}
-                >
-                  <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />
-                  Mark as Active
-                </Button>
-              )}
-              {canArchive(doc, isAdmin) && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setPendingTransition("archive")}
-                >
-                  <ArchiveIcon className="w-3.5 h-3.5 mr-1.5" />
-                  Archive
-                </Button>
-              )}
-            </div>
-          )}
+          {/* Status transitions — only render the bar if at least one action
+              is offered. For parent-uploaded drafts we hide Mark Active here
+              because the ParentSourceBanner above renders an "Approve as
+              Active" CTA in the same primary slot — avoids duplication. */}
+          {(() => {
+            const showMark = canMarkActive(doc, isStaff, isAdmin, userId)
+              && doc.source_kind !== "parent";
+            const showArchive = canArchive(doc, isAdmin);
+            if (!showMark && !showArchive) return null;
+            return (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-muted/30 border border-border">
+                <span className="text-xs font-medium text-muted-foreground mr-1">
+                  Status actions:
+                </span>
+                {showMark && (
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    onClick={() => setPendingTransition("mark_active")}
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />
+                    Mark as Active
+                  </Button>
+                )}
+                {showArchive && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setPendingTransition("archive")}
+                  >
+                    <ArchiveIcon className="w-3.5 h-3.5 mr-1.5" />
+                    Archive
+                  </Button>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Tab strip */}
           <div className="flex gap-1 border-b border-border">
@@ -436,10 +483,26 @@ export function DocumentDetailModal({ docId, onClose, onChanged }: DocumentDetai
 // ── Status transition predicates ────────────────────────────────────────────
 // v1 transitions (per D9 scope): draft → active, active|shared → archived.
 // 'revoked' is intentionally NOT exposed; archived/revoked are terminal here.
-function canMarkActive(doc: DocumentListItem, isStaff: boolean): boolean {
-  return isStaff
-    && doc.status === "draft"
-    && doc.current_version_id !== null;
+//
+// canMarkActive must mirror the RLS policies on child_documents UPDATE:
+//   - school_admin can update any doc in their school
+//   - teacher can update only docs where created_by = auth.uid()
+//     (i.e., a teacher's own school-source drafts)
+// A teacher viewing a parent-uploaded draft, or another teacher's draft,
+// must NOT see the CTA — RLS would reject the update and the parent
+// banner's "Approve as Active" was misleading them. (Hardening fix.)
+function canMarkActive(
+  doc: DocumentListItem,
+  isStaff: boolean,
+  isAdmin: boolean,
+  userId: string | null,
+): boolean {
+  if (!isStaff) return false;
+  if (doc.status !== "draft") return false;
+  if (doc.current_version_id === null) return false;
+  if (isAdmin) return true;
+  // Teacher path: only docs they themselves authored.
+  return doc.created_by === userId;
 }
 
 function canArchive(doc: DocumentListItem, isAdmin: boolean): boolean {
@@ -616,6 +679,11 @@ function VersionsTab({
                       {v.is_hidden && (
                         <span className="inline-flex items-center gap-1 text-xs text-muted-foreground flex-shrink-0">
                           <EyeOff className="w-3 h-3" /> hidden
+                        </span>
+                      )}
+                      {v.uploaded_by_kind === "parent" && (
+                        <span className="inline-flex items-center text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-medium flex-shrink-0">
+                          Uploaded by parent
                         </span>
                       )}
                     </div>
@@ -1064,6 +1132,74 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     <div>
       <p className="text-xs font-medium text-muted-foreground mb-0.5">{label}</p>
       <div className="text-sm">{children}</div>
+    </div>
+  );
+}
+
+
+// ── Parent-source banner (E3) ──────────────────────────────────────────────
+//
+// Renders only when source_kind='parent'. We can't resolve the specific
+// guardian who uploaded — profiles SELECT is self-only and we deliberately
+// haven't added a school-wide RPC for parent profile lookup in v1 — so we
+// show the guardian roster as context. The actual uploader is one of these
+// people; the per-version actor is recorded in document_access_events for
+// strict audit needs.
+function ParentSourceBanner({
+  status,
+  guardians,
+  isStaff,
+  onMarkActive,
+}: {
+  status: DocumentListItem["status"];
+  guardians: GuardianRow[];
+  isStaff: boolean;
+  onMarkActive: (() => void) | null;
+}) {
+  const isDraft = status === "draft";
+
+  // Tone shifts after review: amber (action needed) → blue (informational).
+  const toneClass = isDraft
+    ? "bg-amber-50 border-amber-200 text-amber-900"
+    : "bg-blue-50 border-blue-200 text-blue-900";
+
+  const headline = isDraft
+    ? "Parent-uploaded — awaiting school review"
+    : "Parent-uploaded";
+
+  const sub = isDraft
+    ? "A parent submitted this document. Review the contents, then mark it Active to add it to the school's official record. You can also upload a new version or archive it if it shouldn't be kept."
+    : "This document was originally submitted by a parent.";
+
+  return (
+    <div className={cn("rounded-lg border px-4 py-3 text-sm space-y-2", toneClass)}>
+      <div className="flex items-start gap-2">
+        <UserCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5" />
+        <div className="flex-1 min-w-0">
+          <p className="font-medium">{headline}</p>
+          <p className="text-xs mt-0.5 opacity-90">{sub}</p>
+        </div>
+      </div>
+
+      {guardians.length > 0 && (
+        <div className="text-xs pl-6 opacity-90">
+          <span className="font-medium">Guardians on file: </span>
+          {guardians.map((g) => g.full_name).join(", ")}
+          <p className="mt-0.5 opacity-80">
+            The actual uploader is one of the guardians above. Open the
+            Activity tab for the precise audit record.
+          </p>
+        </div>
+      )}
+
+      {isDraft && isStaff && onMarkActive && (
+        <div className="pl-6">
+          <Button size="sm" variant="primary" onClick={onMarkActive}>
+            <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />
+            Approve as Active
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

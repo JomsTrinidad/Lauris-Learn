@@ -21,6 +21,7 @@ import {
   Globe,
   Lock,
   CheckCircle2,
+  UserCircle2,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -41,6 +42,7 @@ import {
 } from "@/features/documents/queries";
 import {
   listRequests,
+  markRequestReviewed,
   type RequestListItem,
 } from "@/features/documents/requests-api";
 import type { DocumentStatus, DocumentType, RequestStatus } from "@/features/documents/types";
@@ -364,7 +366,25 @@ export default function DocumentsPage() {
             <RequestsList
               requests={requests}
               canCancel={canRequest}
+              canMarkReviewed={canRequest}
               onCancel={(r) => setRequestToCancel(r)}
+              onMarkReviewed={async (r) => {
+                // Closes the loop on a parent-fulfilled request. We do a
+                // quick optimistic prompt, then write + reload.
+                if (!confirm("Mark this request as reviewed? It'll be archived from the open list.")) return;
+                try {
+                  await markRequestReviewed(supabase, r.id);
+                  void loadRequests();
+                } catch (err) {
+                  alert(err instanceof Error ? err.message : "Couldn't mark reviewed.");
+                }
+              }}
+              onOpenFulfillment={(docId) => {
+                // Switch the workspace back to documents view + open the
+                // detail modal so the admin can review the upload.
+                setViewMode("documents");
+                setSelectedDocId(docId);
+              }}
             />
           )}
         </>
@@ -698,6 +718,25 @@ function DocumentsHelpDrawer({
       ),
     },
     {
+      id: "parent-uploads",
+      icon: UserCircle2,
+      title: "Reviewing parent-uploaded documents",
+      searchText: "parent upload submitted review approve mark active draft archive guardian source",
+      body: (
+        <div className="space-y-2">
+          <p>Parents can submit documents (medical certificates, prior school records, therapy reports, etc.) from their own portal. Those documents arrive in the workspace as <strong>Draft</strong> with a <strong>Parent · Review</strong> tag on the row.</p>
+          <div className="space-y-2 mt-2">
+            <Step n={1} text={<span>Open the document — the top of the modal will say <strong>Parent-uploaded — awaiting school review</strong> and list the student&apos;s guardians.</span>} />
+            <Step n={2} text={<span>View / Download the file the same way as any other document.</span>} />
+            <Step n={3} text={<span>If it looks good, click <strong>Approve as Active</strong> to add it to the official record. From there you can share or archive normally.</span>} />
+            <Step n={4} text={<span>If it shouldn&apos;t be kept, click <strong>Archive</strong>. The doc stays for audit but drops out of the active list.</span>} />
+            <Step n={5} text={<span>If a parent uploaded the wrong file, you can <strong>Upload new version</strong> (replaces the visible file) or <strong>Hide</strong> the version from the Versions tab.</span>} />
+          </div>
+          <Note>Parents always upload as draft — they cannot mark active, share, or archive. School staff have to approve before anything happens.</Note>
+        </div>
+      ),
+    },
+    {
       id: "roles",
       icon: ShieldCheck,
       title: "Who can do what",
@@ -707,8 +746,8 @@ function DocumentsHelpDrawer({
           <ul className="space-y-2 text-xs">
             <li><strong>School admin</strong> — full read/write across the school: upload, version, share, request, revoke, archive, manage external contacts.</li>
             <li><strong>Teacher</strong> — read documents for students in classes they teach. Can upload and create requests but cannot share, revoke, or add external contacts.</li>
-            <li><strong>Parent</strong> — sees documents about their own children that have been Shared or Archived. Parent UI is under construction (consents are still managed by school staff for now).</li>
-            <li><strong>External contact</strong> — sees only documents they've been granted with an active, granted consent. No portal yet — for now, share by sending them a fresh link from the Access tab when they need it.</li>
+            <li><strong>Parent</strong> — sees documents about their own children that have been Shared or Archived. Can grant or revoke pending consents from the parent portal. Can also <em>upload</em> documents for the school to review (always land as Draft).</li>
+            <li><strong>External contact</strong> — sees only documents they&apos;ve been granted with an active, granted consent. Portal is under construction — for now, the audit trail still records every access.</li>
           </ul>
         </div>
       ),

@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Home, MessageSquare, User, CreditCard, LogOut, GraduationCap, TrendingUp, CalendarDays } from "lucide-react";
+import { Home, MessageSquare, User, CreditCard, LogOut, GraduationCap, TrendingUp, CalendarDays, FileText } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { BrandingApplier } from "@/components/BrandingApplier";
 import { Spinner } from "@/components/ui/spinner";
@@ -24,6 +24,7 @@ const NAV = [
   { href: "/parent/updates",   icon: MessageSquare, label: "Updates" },
   { href: "/parent/events",    icon: CalendarDays,  label: "Events" },
   { href: "/parent/progress",  icon: TrendingUp,    label: "Progress" },
+  { href: "/parent/documents", icon: FileText,      label: "Documents" },
   { href: "/parent/billing",   icon: CreditCard,    label: "Billing" },
 ];
 

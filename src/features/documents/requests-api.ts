@@ -31,6 +31,7 @@ export interface RequestListItem extends DocumentRequestRow {
   requested_from_guardian: { id: string; full_name: string; email: string | null } | null;
   requested_from_external_contact: { id: string; full_name: string; email: string | null } | null;
   requester_user:          { id: string; full_name: string | null } | null;
+  fulfilled_with_document: { id: string; title: string; status: string } | null;
 }
 
 export interface ListRequestsFilters {
@@ -64,7 +65,7 @@ export async function listRequests(
   return enrichRequests(supabase, rows);
 }
 
-interface GuardianRow {
+export interface GuardianRow {
   id:        string;
   full_name: string;
   email:     string | null;
@@ -83,6 +84,32 @@ export async function listGuardiansForStudent(
     .order("full_name");
   if (error) throw error;
   return ((data ?? []) as unknown as GuardianRow[]);
+}
+
+
+/**
+ * Parent-side: open requests addressed to the calling parent for a single
+ * student. RLS `parent_select_document_requests_to_self` already gates by
+ * `requested_from_guardian_id ∈ parent_guardian_ids()`, so we only need to
+ * filter by student + status here. Returns `requested` and `submitted`
+ * rows so a parent can re-fulfill if they uploaded the wrong file.
+ */
+export async function listOpenRequestsForStudent(
+  supabase: Client,
+  studentId: string,
+): Promise<RequestListItem[]> {
+  const { data, error } = await supabase
+    .from("document_requests")
+    .select("*")
+    .eq("student_id", studentId)
+    .eq("requested_from_kind", "parent")
+    .in("status", ["requested", "submitted"])
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+
+  const rows = (data ?? []) as DocumentRequestRow[];
+  if (rows.length === 0) return [];
+  return enrichRequests(supabase, rows);
 }
 
 
@@ -160,6 +187,76 @@ export async function cancelRequest(
 }
 
 
+/**
+ * School staff close a request after reviewing the submission.
+ * Used by admins on rows in status='submitted' — terminal transition.
+ * RLS `school_staff_update_document_requests` covers it.
+ */
+export async function markRequestReviewed(
+  supabase: Client,
+  requestId: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from("document_requests")
+    .update({ status: "reviewed" })
+    .eq("id", requestId);
+  if (error) throw error;
+}
+
+
+export interface FulfillRequestInput {
+  requestId:            string;
+  fulfilledDocumentId:  string;
+}
+
+/**
+ * Parent fulfillment — runs after the parent uploads a document, links the
+ * new doc to the request and flips status to 'submitted'.
+ * Covered by RLS `parent_fulfill_document_requests` (status IN
+ * ('requested','submitted'); WITH CHECK keeps the guardian id stable).
+ */
+export async function fulfillRequest(
+  supabase: Client,
+  input: FulfillRequestInput,
+): Promise<void> {
+  const { error } = await supabase
+    .from("document_requests")
+    .update({
+      status:                     "submitted",
+      fulfilled_with_document_id: input.fulfilledDocumentId,
+    })
+    .eq("id", input.requestId);
+  if (error) throw error;
+}
+
+
+export interface ParentDeclineRequestInput {
+  requestId: string;
+  reason:    string;       // required — see Phase B parent guard expectations
+}
+
+/**
+ * Parent declines an open request. The RLS policy
+ * `parent_fulfill_document_requests` already permits this transition
+ * (no column-level enforcement on `status`). We require a reason for
+ * audit clarity even though the DB doesn't strictly demand it.
+ */
+export async function parentDeclineRequest(
+  supabase: Client,
+  input: ParentDeclineRequestInput,
+): Promise<void> {
+  const { error } = await supabase
+    .from("document_requests")
+    .update({
+      status:           "cancelled",
+      cancelled_at:     new Date().toISOString(),
+      cancelled_reason: input.reason,
+    })
+    .eq("id", input.requestId);
+  if (error) throw error;
+}
+
+
 // ─── Internal helpers ──────────────────────────────────────────────────────
 
 async function enrichRequests(
@@ -170,8 +267,9 @@ async function enrichRequests(
   const guardianIds = unique(rows.map((r) => r.requested_from_guardian_id).filter(isNonNull));
   const externalIds = unique(rows.map((r) => r.requested_from_external_contact_id).filter(isNonNull));
   const requesterIds = unique(rows.map((r) => r.requester_user_id).filter(isNonNull));
+  const fulfilledIds = unique(rows.map((r) => r.fulfilled_with_document_id).filter(isNonNull));
 
-  const [studentsRes, guardiansRes, externalsRes, requestersRes] = await Promise.all([
+  const [studentsRes, guardiansRes, externalsRes, requestersRes, fulfilledRes] = await Promise.all([
     studentIds.length
       ? supabase.from("students").select("id, first_name, last_name").in("id", studentIds)
       : Promise.resolve({ data: [], error: null }),
@@ -184,17 +282,22 @@ async function enrichRequests(
     requesterIds.length
       ? supabase.from("profiles").select("id, full_name").in("id", requesterIds)
       : Promise.resolve({ data: [], error: null }),
+    fulfilledIds.length
+      ? supabase.from("child_documents").select("id, title, status").in("id", fulfilledIds)
+      : Promise.resolve({ data: [], error: null }),
   ]);
 
   type StudentLite    = { id: string; first_name: string; last_name: string };
   type GuardianLite   = { id: string; full_name: string; email: string | null };
   type ExternalLite   = { id: string; full_name: string; email: string | null };
   type RequesterLite  = { id: string; full_name: string | null };
+  type FulfilledLite  = { id: string; title: string; status: string };
 
   const studentMap   = mapBy<StudentLite>((studentsRes.data as StudentLite[] | null) ?? []);
   const guardianMap  = mapBy<GuardianLite>((guardiansRes.data as GuardianLite[] | null) ?? []);
   const externalMap  = mapBy<ExternalLite>((externalsRes.data as ExternalLite[] | null) ?? []);
   const requesterMap = mapBy<RequesterLite>((requestersRes.data as RequesterLite[] | null) ?? []);
+  const fulfilledMap = mapBy<FulfilledLite>((fulfilledRes.data as FulfilledLite[] | null) ?? []);
 
   return rows.map((r) => ({
     ...r,
@@ -206,6 +309,9 @@ async function enrichRequests(
       ? externalMap.get(r.requested_from_external_contact_id) ?? null
       : null,
     requester_user: r.requester_user_id ? requesterMap.get(r.requester_user_id) ?? null : null,
+    fulfilled_with_document: r.fulfilled_with_document_id
+      ? fulfilledMap.get(r.fulfilled_with_document_id) ?? null
+      : null,
   }));
 }
 

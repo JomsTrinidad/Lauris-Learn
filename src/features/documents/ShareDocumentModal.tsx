@@ -650,11 +650,28 @@ function ConsentStatusBlock({
   }
 
   // status === 'granted'
+  // Surface an "Expires in Nd" hint so admins notice consents that are about
+  // to lapse before they create a grant they'll have to re-issue. Same 14-day
+  // threshold as the Access tab grant badges (matches D16 polish elsewhere).
+  let daysLeft: number | null = null;
+  try {
+    const ms = new Date(consent.expires_at).getTime() - Date.now();
+    if (Number.isFinite(ms)) daysLeft = Math.ceil(ms / 86_400_000);
+  } catch { /* leave null */ }
+  const expiringSoon = daysLeft != null && daysLeft >= 0 && daysLeft <= 14;
   return (
     <div className="px-3 py-3 bg-emerald-50 border border-emerald-200 rounded-lg text-sm text-emerald-900 flex items-start gap-2">
       <ShieldCheck className="w-4 h-4 flex-shrink-0 mt-0.5" />
       <div className="flex-1 min-w-0">
-        <p className="font-medium">Consent granted.</p>
+        <div className="flex items-center gap-2 flex-wrap">
+          <p className="font-medium">Consent granted.</p>
+          {expiringSoon && (
+            <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded font-medium bg-amber-100 text-amber-800">
+              <Calendar className="w-3 h-3" />
+              {daysLeft === 0 ? "Expires today" : `Expires in ${daysLeft}d`}
+            </span>
+          )}
+        </div>
         <p className="mt-1 text-xs">
           Valid until {format(new Date(consent.expires_at), "MMM d, yyyy")} ·{" "}
           {consent.allow_download ? "Download allowed" : "View-only"}

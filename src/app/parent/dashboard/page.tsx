@@ -1,10 +1,12 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { CheckCircle, XCircle, Clock, Bell, CalendarDays, CreditCard, ChevronRight, AlertCircle, AlertTriangle, Megaphone, Star } from "lucide-react";
+import { CheckCircle, XCircle, Clock, Bell, CalendarDays, CreditCard, ChevronRight, AlertCircle, AlertTriangle, Megaphone, Star, ShieldCheck, Inbox } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { PageSpinner } from "@/components/ui/spinner";
 import { createClient } from "@/lib/supabase/client";
+import { listPendingConsentsForStudent } from "@/features/documents/parent-api";
+import { listOpenRequestsForStudent } from "@/features/documents/requests-api";
 import { useParentContext } from "../layout";
 
 interface AttendanceToday {
@@ -102,6 +104,10 @@ export default function ParentDashboard() {
   const [updates, setUpdates] = useState<RecentUpdate[]>([]);
   const [events, setEvents] = useState<UpcomingEvent[]>([]);
   const [billing, setBilling] = useState<BillingSummary>({ unpaidCount: 0, totalBalance: 0 });
+  const [pendingDocApprovals, setPendingDocApprovals] = useState(0);
+  // Open requests = status='requested'. Parents notice these via the same
+  // home-screen surface used for pending consents.
+  const [openDocRequests, setOpenDocRequests] = useState(0);
 
   const [latestMoment, setLatestMoment] = useState<LatestMoment | null>(null);
   const [parentUserId, setParentUserId] = useState<string | null>(null);
@@ -133,8 +139,33 @@ export default function ParentDashboard() {
       loadBilling(),
       loadAbsenceStatus(),
       loadLatestMoment(userId),
+      loadPendingDocApprovals(),
+      loadOpenDocRequests(),
     ]);
     setLoading(false);
+  }
+
+  async function loadPendingDocApprovals() {
+    if (!childId) return;
+    try {
+      const rows = await listPendingConsentsForStudent(supabase, childId);
+      setPendingDocApprovals(rows.length);
+    } catch {
+      // Non-fatal — dashboard still renders without the alert.
+      setPendingDocApprovals(0);
+    }
+  }
+
+  async function loadOpenDocRequests() {
+    if (!childId) return;
+    try {
+      const rows = await listOpenRequestsForStudent(supabase, childId);
+      // Only count rows still 'requested' — submitted means the parent
+      // already responded and is waiting on the school.
+      setOpenDocRequests(rows.filter((r) => r.status === "requested").length);
+    } catch {
+      setOpenDocRequests(0);
+    }
   }
 
   async function loadLatestMoment(userId: string | null) {
@@ -390,6 +421,66 @@ export default function ParentDashboard() {
           )}
         </CardContent>
       </Card>
+
+      {/* Document request alert — school is asking the parent to send a
+          file. Distinct blue-tone treatment so it doesn't compete with
+          the orange "approval required" card below for the same eye. */}
+      {openDocRequests > 0 && (
+        <Link
+          href="/parent/documents"
+          className="relative flex items-start gap-3 pl-5 pr-4 py-4 bg-blue-50 border border-blue-300 rounded-xl text-sm hover:bg-blue-100 transition-colors overflow-hidden"
+        >
+          <span aria-hidden className="absolute inset-y-0 left-0 w-1.5 bg-blue-500" />
+          <div className="w-9 h-9 rounded-full bg-blue-500 text-white flex items-center justify-center flex-shrink-0">
+            <Inbox className="w-5 h-5" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+              <span className="inline-flex items-center text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-blue-600 text-white">
+                School request
+              </span>
+              <p className="font-semibold text-blue-900">
+                {openDocRequests} document{openDocRequests > 1 ? "s" : ""} requested by the school
+              </p>
+            </div>
+            <p className="text-blue-800">
+              The school is asking you to send {openDocRequests > 1 ? "a few documents" : "a document"}. Tap to reply.
+            </p>
+          </div>
+          <ChevronRight className="w-4 h-4 text-blue-700 flex-shrink-0 mt-1" />
+        </Link>
+      )}
+
+      {/* Document approval alert — needs to read as "act on this first",
+          so it gets a stronger treatment than the soft-amber Proud Moment
+          card below: deeper background, accent-stripe on the left, and
+          an explicit "Action required" tag so two amber blocks aren't
+          competing for attention with the same urgency. */}
+      {pendingDocApprovals > 0 && (
+        <Link
+          href="/parent/documents"
+          className="relative flex items-start gap-3 pl-5 pr-4 py-4 bg-orange-100 border border-orange-300 rounded-xl text-sm hover:bg-orange-200 transition-colors overflow-hidden"
+        >
+          <span aria-hidden className="absolute inset-y-0 left-0 w-1.5 bg-orange-500" />
+          <div className="w-9 h-9 rounded-full bg-orange-500 text-white flex items-center justify-center flex-shrink-0">
+            <ShieldCheck className="w-5 h-5" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+              <span className="inline-flex items-center text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-orange-600 text-white">
+                Action required
+              </span>
+              <p className="font-semibold text-orange-900">
+                {pendingDocApprovals} document approval{pendingDocApprovals > 1 ? "s" : ""} waiting for you
+              </p>
+            </div>
+            <p className="text-orange-800">
+              The school is asking permission to share {pendingDocApprovals > 1 ? "documents" : "a document"}. Tap to review.
+            </p>
+          </div>
+          <ChevronRight className="w-4 h-4 text-orange-700 flex-shrink-0 mt-1" />
+        </Link>
+      )}
 
       {/* Billing alert */}
       {billing.unpaidCount > 0 && (

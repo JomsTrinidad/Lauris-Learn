@@ -1,5 +1,6 @@
 "use client";
 
+import { UserCircle2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { formatDocumentType, formatDate, studentDisplay, daysUntil, relativeWindow } from "./utils";
 import type { DocumentListItem } from "./queries";
@@ -15,19 +16,43 @@ export function DocumentRow({
   const reviewDays = daysUntil(doc.review_date);
   const reviewSoon = reviewDays != null && reviewDays >= 0 && reviewDays <= 14;
   const reviewOverdue = reviewDays != null && reviewDays < 0;
+  const isParentUploaded = doc.source_kind === "parent";
+  // Parent-uploaded docs sitting in 'draft' need school review — flag the
+  // row so admins can spot them at a glance from the workspace list.
+  const needsReview = isParentUploaded && doc.status === "draft";
 
   return (
     <tr
       className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors"
     >
       <td className="px-5 py-3">
-        <button
-          type="button"
-          onClick={onOpen}
-          className="text-left text-sm font-medium text-foreground hover:text-primary transition-colors"
-        >
-          {doc.title}
-        </button>
+        <div className="flex items-start gap-2">
+          <button
+            type="button"
+            onClick={onOpen}
+            className="text-left text-sm font-medium text-foreground hover:text-primary transition-colors flex-1 min-w-0"
+          >
+            {doc.title}
+          </button>
+          {needsReview && (
+            <span
+              className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 flex-shrink-0"
+              title="A parent submitted this document. Review and mark it Active or archive it."
+            >
+              <UserCircle2 className="w-3 h-3" />
+              Parent · Review
+            </span>
+          )}
+          {isParentUploaded && !needsReview && (
+            <span
+              className="inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 flex-shrink-0"
+              title="Originally submitted by a parent."
+            >
+              <UserCircle2 className="w-3 h-3" />
+              Parent
+            </span>
+          )}
+        </div>
         {doc.description && (
           <p className="text-xs text-muted-foreground line-clamp-1 mt-0.5">
             {doc.description}

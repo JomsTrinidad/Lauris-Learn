@@ -8,7 +8,7 @@
  * rows (cancelled / reviewed) render as audit-only.
  */
 
-import { Inbox, Calendar, Ban, Globe, Users } from "lucide-react";
+import { Inbox, Calendar, Ban, Globe, Users, CheckCircle2, FileText } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -21,10 +21,18 @@ export interface RequestsListProps {
   requests: RequestListItem[];
   /** When true, render the Cancel action on active rows. */
   canCancel: boolean;
+  /** When true, render the Mark Reviewed action on submitted rows. */
+  canMarkReviewed?: boolean;
   onCancel: (r: RequestListItem) => void;
+  /** Optional — only required when canMarkReviewed is true. */
+  onMarkReviewed?: (r: RequestListItem) => void;
+  /** Optional — when set and the row has a fulfilled doc, the link opens it. */
+  onOpenFulfillment?: (docId: string) => void;
 }
 
-export function RequestsList({ requests, canCancel, onCancel }: RequestsListProps) {
+export function RequestsList({
+  requests, canCancel, canMarkReviewed = false, onCancel, onMarkReviewed, onOpenFulfillment,
+}: RequestsListProps) {
   if (requests.length === 0) {
     return (
       <Card>
@@ -60,7 +68,10 @@ export function RequestsList({ requests, canCancel, onCancel }: RequestsListProp
                 key={r.id}
                 request={r}
                 canCancel={canCancel}
+                canMarkReviewed={canMarkReviewed}
                 onCancel={onCancel}
+                onMarkReviewed={onMarkReviewed}
+                onOpenFulfillment={onOpenFulfillment}
               />
             ))}
           </tbody>
@@ -74,15 +85,22 @@ export function RequestsList({ requests, canCancel, onCancel }: RequestsListProp
 function RequestRow({
   request,
   canCancel,
+  canMarkReviewed,
   onCancel,
+  onMarkReviewed,
+  onOpenFulfillment,
 }: {
   request: RequestListItem;
   canCancel: boolean;
+  canMarkReviewed: boolean;
   onCancel: (r: RequestListItem) => void;
+  onMarkReviewed?: (r: RequestListItem) => void;
+  onOpenFulfillment?: (docId: string) => void;
 }) {
-  const isActive = request.status === "requested" || request.status === "submitted";
-  const dueDays  = daysUntil(request.due_date);
-  const overdue  = isActive && dueDays != null && dueDays < 0;
+  const isActive    = request.status === "requested" || request.status === "submitted";
+  const isSubmitted = request.status === "submitted";
+  const dueDays     = daysUntil(request.due_date);
+  const overdue     = isActive && dueDays != null && dueDays < 0;
 
   const recipientName =
     request.requested_from_kind === "parent"
@@ -126,6 +144,25 @@ function RequestRow({
             {request.cancelled_reason}
           </div>
         )}
+        {request.fulfilled_with_document && (
+          <div className="text-xs text-muted-foreground mt-0.5">
+            {onOpenFulfillment ? (
+              <button
+                type="button"
+                onClick={() => onOpenFulfillment(request.fulfilled_with_document!.id)}
+                className="inline-flex items-center gap-1 text-primary hover:underline"
+              >
+                <FileText className="w-3 h-3" />
+                {request.fulfilled_with_document.title}
+              </button>
+            ) : (
+              <span className="inline-flex items-center gap-1">
+                <FileText className="w-3 h-3" />
+                {request.fulfilled_with_document.title}
+              </span>
+            )}
+          </div>
+        )}
       </td>
       <td className="px-4 py-3 text-sm">
         {request.due_date ? (
@@ -142,17 +179,30 @@ function RequestRow({
         )}
       </td>
       <td className="px-4 py-3 text-right">
-        {isActive && canCancel && (
-          <button
-            type="button"
-            onClick={() => onCancel(request)}
-            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-red-700 hover:bg-red-50 transition-colors px-2 py-1 rounded"
-            title="Cancel this request"
-          >
-            <Ban className="w-3.5 h-3.5" />
-            Cancel
-          </button>
-        )}
+        <div className="inline-flex items-center justify-end gap-1.5 flex-wrap">
+          {isSubmitted && canMarkReviewed && onMarkReviewed && (
+            <button
+              type="button"
+              onClick={() => onMarkReviewed(request)}
+              className="inline-flex items-center gap-1 text-xs text-emerald-700 hover:text-emerald-800 hover:bg-emerald-50 transition-colors px-2 py-1 rounded"
+              title="Mark this request as reviewed"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              Mark Reviewed
+            </button>
+          )}
+          {isActive && canCancel && (
+            <button
+              type="button"
+              onClick={() => onCancel(request)}
+              className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-red-700 hover:bg-red-50 transition-colors px-2 py-1 rounded"
+              title="Cancel this request"
+            >
+              <Ban className="w-3.5 h-3.5" />
+              Cancel
+            </button>
+          )}
+        </div>
       </td>
     </tr>
   );
