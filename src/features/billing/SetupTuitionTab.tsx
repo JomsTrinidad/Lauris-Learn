@@ -29,7 +29,7 @@ export function SetupTuitionTab({ schoolId }: { schoolId: string }) {
     const [periodsRes, tuitionRes, classesRes] = await Promise.all([
       supabase.from("academic_periods").select("id, name, school_year_id, start_date, end_date, school_years(name)").eq("school_id", schoolId).order("start_date", { ascending: false }),
       supabase.from("tuition_configs").select("id, academic_period_id, level, total_amount, months, monthly_amount, class_id, academic_periods(name), classes(name)").eq("school_id", schoolId).order("level"),
-      supabase.from("classes").select("id, name, level, school_year_id").eq("school_id", schoolId).eq("is_active", true).order("name"),
+      supabase.from("classes").select("id, name, school_year_id, class_levels(name)").eq("school_id", schoolId).eq("is_active", true).order("name"),
     ]);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const periods = ((periodsRes.data ?? []) as any[]).map((p: any) => ({
@@ -51,7 +51,7 @@ export function SetupTuitionTab({ schoolId }: { schoolId: string }) {
       monthlyAmount: t.monthly_amount != null ? Number(t.monthly_amount) : t.months > 0 ? Number(t.total_amount) / t.months : Number(t.total_amount),
     })));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    setClasses(((classesRes.data ?? []) as any[]).map((c: any) => ({ id: c.id, name: c.name, level: c.level ?? "", schoolYearId: c.school_year_id })));
+    setClasses(((classesRes.data ?? []) as any[]).map((c: any) => ({ id: c.id, name: c.name, level: c.class_levels?.name ?? "", schoolYearId: c.school_year_id })));
     setLoading(false);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [schoolId]);

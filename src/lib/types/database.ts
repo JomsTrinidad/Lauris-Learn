@@ -80,7 +80,7 @@ export type Database = {
           school_id: string;
           school_year_id: string;
           name: string;
-          level: string | null;
+          level_id: string | null;
           start_time: string;
           end_time: string;
           capacity: number;
@@ -90,11 +90,28 @@ export type Database = {
           created_at: string;
           updated_at: string;
         };
-        Insert: { id?: string; school_id: string; school_year_id: string; name: string; level?: string | null; start_time: string; end_time: string; capacity?: number; is_active?: boolean; academic_period_id?: string | null; next_class_id?: string | null; next_level?: string | null; created_at?: string; updated_at?: string };
-        Update: { id?: string; school_id?: string; school_year_id?: string; name?: string; level?: string | null; start_time?: string; end_time?: string; capacity?: number; is_active?: boolean; academic_period_id?: string | null; next_class_id?: string | null; next_level?: string | null; updated_at?: string };
+        Insert: { id?: string; school_id: string; school_year_id: string; name: string; level_id?: string | null; start_time: string; end_time: string; capacity?: number; is_active?: boolean; academic_period_id?: string | null; next_class_id?: string | null; next_level?: string | null; created_at?: string; updated_at?: string };
+        Update: { id?: string; school_id?: string; school_year_id?: string; name?: string; level_id?: string | null; start_time?: string; end_time?: string; capacity?: number; is_active?: boolean; academic_period_id?: string | null; next_class_id?: string | null; next_level?: string | null; updated_at?: string };
         Relationships: [
           { foreignKeyName: "classes_school_id_fkey"; columns: ["school_id"]; isOneToOne: false; referencedRelation: "schools"; referencedColumns: ["id"] },
-          { foreignKeyName: "classes_school_year_id_fkey"; columns: ["school_year_id"]; isOneToOne: false; referencedRelation: "school_years"; referencedColumns: ["id"] }
+          { foreignKeyName: "classes_school_year_id_fkey"; columns: ["school_year_id"]; isOneToOne: false; referencedRelation: "school_years"; referencedColumns: ["id"] },
+          { foreignKeyName: "classes_level_id_fkey"; columns: ["level_id"]; isOneToOne: false; referencedRelation: "class_levels"; referencedColumns: ["id"] }
+        ];
+      };
+      class_levels: {
+        Row: {
+          id: string;
+          school_id: string;
+          name: string;
+          kind: "core" | "sped" | "bridge" | "summer" | "mixed_age" | "enrichment" | "other";
+          display_order: number;
+          archived_at: string | null;
+          created_at: string;
+        };
+        Insert: { id?: string; school_id: string; name: string; kind?: "core" | "sped" | "bridge" | "summer" | "mixed_age" | "enrichment" | "other"; display_order?: number; archived_at?: string | null; created_at?: string };
+        Update: { id?: string; school_id?: string; name?: string; kind?: "core" | "sped" | "bridge" | "summer" | "mixed_age" | "enrichment" | "other"; display_order?: number; archived_at?: string | null };
+        Relationships: [
+          { foreignKeyName: "class_levels_school_id_fkey"; columns: ["school_id"]; isOneToOne: false; referencedRelation: "schools"; referencedColumns: ["id"] }
         ];
       };
       class_teachers: {
@@ -725,6 +742,15 @@ export type Database = {
           p_user_agent: string;
         };
         Returns: Json;
+      };
+      list_school_staff_for_sharing: {
+        Args: { p_school_id: string };
+        Returns: {
+          id: string;
+          full_name: string;
+          email: string;
+          role: "super_admin" | "school_admin" | "teacher" | "parent";
+        }[];
       };
     };
     Enums: Record<string, never>;

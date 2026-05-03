@@ -14,6 +14,14 @@ import { createAdminClient } from "@/lib/supabase/admin";
 export type DemoScenario = "small_preschool" | "compliance_heavy" | "trial_new";
 export type DemoAction   = "generate" | "refresh" | "reset" | "clear";
 
+export interface DemoCredentials {
+  /** Shared password for every demo account on this school */
+  password: string;
+  admin:    { email: string; fullName: string };
+  teachers: Array<{ email: string; fullName: string }>;
+  parents:  Array<{ email: string; fullName: string }>;
+}
+
 export interface DemoRunSummary {
   studentCount:       number;
   teacherCount:       number;
@@ -28,6 +36,8 @@ export interface DemoRunSummary {
   uploadedFilesCount: number;
   /** Auth user UUIDs created for this run — stored so we can delete them on clear */
   demoUserIds:        string[];
+  /** Stable demo logins to share with clients. Same emails+password across refreshes. */
+  credentials:        DemoCredentials;
 }
 
 // ─── Fake name pools (clearly fictional, Filipino-inspired) ───────────────────
@@ -120,6 +130,19 @@ const UPDATE_CONTENTS = [
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+// Stable demo identity derived from the school's name. Same input → same emails
+// and password across every refresh, so credentials shared with clients keep
+// working. Two demo schools whose names start with the same first word would
+// collide on email — rename one if that ever happens.
+function schoolSlug(name: string | null | undefined): string {
+  const first = (name ?? "").trim().toLowerCase().split(/\s+/)[0] ?? "";
+  const cleaned = first.replace(/[^a-z0-9]/g, "");
+  return cleaned.slice(0, 12) || "demo";
+}
+function demoPassword(slug: string): string {
+  return slug.charAt(0).toUpperCase() + slug.slice(1) + "Demo2026!";
+}
 
 // All scenario dates are anchored to this base start. When the active school
 // year starts on a different month, shiftDate() slides every date forward/back
@@ -297,64 +320,89 @@ export async function generateDemoData(
 ): Promise<DemoRunSummary> {
 
   // Safety: verify school is a demo school
-  const { data: school } = await (admin as any).from("schools").select("id, is_demo").eq("id", schoolId).single();
+  const { data: school } = await (admin as any).from("schools").select("id, name, is_demo").eq("id", schoolId).single();
   if (!school?.is_demo) throw new Error("School is not marked as a demo school. Generation blocked.");
 
-  const cfg   = SCENARIOS[scenario];
-  const batchId = Date.now().toString(36).slice(-7);
+  const cfg     = SCENARIOS[scenario];
+  const batchId = Date.now().toString(36).slice(-7); // still used for OR numbers + storage paths
+  const slug    = schoolSlug(school.name);
+  const password = demoPassword(slug);
+
+  // Email helpers — stable per school, same across refreshes
+  const adminEmail   = `admin@${slug}.test`;
+  const teacherEmail = (i: number) => `t${i + 1}@${slug}.test`;
+  const parentEmail  = (i: number) => `p${i + 1}@${slug}.test`;
+
+  // Create-or-reuse: if an account with this email already exists (e.g. left
+  // over from a partially failed clear), reuse its UUID instead of failing.
+  async function createOrReuseUser(email: string, fullName: string): Promise<string | null> {
+    const { data, error } = await (admin as any).auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+      user_metadata: { full_name: fullName },
+    });
+    if (data?.user) return data.user.id;
+    // Fall back to lookup on duplicate-email errors
+    if (error) {
+      const { data: list } = await (admin as any).auth.admin.listUsers({ page: 1, perPage: 200 });
+      const existing = (list?.users ?? []).find((u: any) => u.email === email);
+      if (existing) {
+        // Reset the password so it always matches the documented one
+        await (admin as any).auth.admin.updateUserById(existing.id, { password });
+        return existing.id;
+      }
+    }
+    return null;
+  }
 
   const demoUserIds:        string[] = [];
   const teacherIds:         string[] = [];
   const teacherProfileIds:  string[] = [];
   const parentIds:          string[] = [];
 
+  // ── 1a. Create school_admin auth user ───────────────────────────────────────
+  const adminFullName = `${school.name} Admin`;
+  const adminUid = await createOrReuseUser(adminEmail, adminFullName);
+  if (!adminUid) throw new Error(`Failed to create school_admin user ${adminEmail}`);
+  demoUserIds.push(adminUid);
+
   // ── 1. Create teacher auth users ────────────────────────────────────────────
   const teacherCount = cfg.classes.length; // 1 teacher per class
   for (let i = 0; i < teacherCount; i++) {
-    const email = `teacher.demo.${batchId}.${String(i + 1).padStart(2, "0")}@example.com`;
-    const first = teacherFirst(i);
-    const last  = lastName(i * 2);
-    const { data } = await (admin as any).auth.admin.createUser({
-      email,
-      password: `DemoPass@${batchId}!`,
-      email_confirm: true,
-      user_metadata: { full_name: `${first} ${last}` },
-    });
-    if (data?.user) {
-      demoUserIds.push(data.user.id);
-      teacherIds.push(data.user.id);
+    const fullName = `${teacherFirst(i)} ${lastName(i * 2)}`;
+    const uid = await createOrReuseUser(teacherEmail(i), fullName);
+    if (uid) {
+      demoUserIds.push(uid);
+      teacherIds.push(uid);
     }
   }
 
   // ── 2. Create parent auth users ─────────────────────────────────────────────
   for (let i = 0; i < cfg.parentCount; i++) {
-    const email = `parent.demo.${batchId}.${String(i + 1).padStart(2, "0")}@example.com`;
     const female = i % 3 !== 2;
     const first  = female ? T_FEMALE[i % T_FEMALE.length] : T_MALE[i % T_MALE.length];
     const last   = lastName(i * 5 + 3);
-    const { data } = await (admin as any).auth.admin.createUser({
-      email,
-      password: `DemoPass@${batchId}!`,
-      email_confirm: true,
-      user_metadata: { full_name: `${first} ${last}` },
-    });
-    if (data?.user) {
-      demoUserIds.push(data.user.id);
-      parentIds.push(data.user.id);
+    const uid = await createOrReuseUser(parentEmail(i), `${first} ${last}`);
+    if (uid) {
+      demoUserIds.push(uid);
+      parentIds.push(uid);
     }
   }
 
   // ── 3. Insert profiles ──────────────────────────────────────────────────────
   const profileRows: Record<string, unknown>[] = [];
+  profileRows.push({
+    id: adminUid, email: adminEmail, full_name: adminFullName,
+    role: "school_admin", school_id: schoolId,
+  });
   teacherIds.forEach((uid, i) => {
-    const email = `teacher.demo.${batchId}.${String(i + 1).padStart(2, "0")}@example.com`;
-    profileRows.push({ id: uid, email, full_name: `${teacherFirst(i)} ${lastName(i * 2)}`, role: "teacher", school_id: schoolId });
+    profileRows.push({ id: uid, email: teacherEmail(i), full_name: `${teacherFirst(i)} ${lastName(i * 2)}`, role: "teacher", school_id: schoolId });
   });
   parentIds.forEach((uid, i) => {
-    const email = `parent.demo.${batchId}.${String(i + 1).padStart(2, "0")}@example.com`;
     const female = i % 3 !== 2;
     const first  = female ? T_FEMALE[i % T_FEMALE.length] : T_MALE[i % T_MALE.length];
-    profileRows.push({ id: uid, email, full_name: `${first} ${lastName(i * 5 + 3)}`, role: "parent", school_id: schoolId });
+    profileRows.push({ id: uid, email: parentEmail(i), full_name: `${first} ${lastName(i * 5 + 3)}`, role: "parent", school_id: schoolId });
   });
   // Upsert (not insert) — Supabase's handle_new_user trigger auto-creates a minimal
   // profile row when the auth user is created. We upsert to fill in school_id, role, full_name.
@@ -519,12 +567,29 @@ export async function generateDemoData(
   const categoryIds: string[] = (pcData ?? []).map((c: any) => c.id);
 
   // ── 7. Classes ──────────────────────────────────────────────────────────────
+  // Seed class_levels first; classes reference them via level_id (migration 060).
+  const distinctLevels = [...new Set(cfg.classes.map((c) => c.level).filter((l): l is string => !!l))];
+  const levelIdByName: Record<string, string> = {};
+  if (distinctLevels.length > 0) {
+    const { data: levelData, error: levelErr } = await (admin as any)
+      .from("class_levels")
+      .insert(distinctLevels.map((name, i) => ({
+        school_id: schoolId, name, kind: "core", display_order: i,
+      })))
+      .select("id, name");
+    if (levelErr) throw new Error(`class_levels insert: ${levelErr.message}`);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const row of (levelData ?? []) as Array<{ id: string; name: string }>) {
+      levelIdByName[row.name] = row.id;
+    }
+  }
+
   // Archived year classes — enrollments, attendance, billing, updates all live here
   const { data: classData, error: classErr } = await (admin as any)
     .from("classes")
     .insert(cfg.classes.map((c) => ({
       school_id: schoolId, school_year_id: archivedYearId, academic_period_id: archivedRegularPeriodId,
-      name: c.name, level: c.level, next_level: c.nextLevel, start_time: c.startTime, end_time: c.endTime, capacity: c.capacity, is_active: true,
+      name: c.name, level_id: c.level ? levelIdByName[c.level] ?? null : null, next_level: c.nextLevel, start_time: c.startTime, end_time: c.endTime, capacity: c.capacity, is_active: true,
     })))
     .select("id, name");
   if (classErr) throw new Error(`classes insert: ${classErr.message}`);
@@ -535,7 +600,7 @@ export async function generateDemoData(
     .from("classes")
     .insert(cfg.classes.map((c) => ({
       school_id: schoolId, school_year_id: schoolYearId, academic_period_id: regularPeriodId,
-      name: c.name, level: c.level, next_level: c.nextLevel, start_time: c.startTime, end_time: c.endTime, capacity: c.capacity, is_active: true,
+      name: c.name, level_id: c.level ? levelIdByName[c.level] ?? null : null, next_level: c.nextLevel, start_time: c.startTime, end_time: c.endTime, capacity: c.capacity, is_active: true,
     })))
     .select("id");
   const nextClassIds: string[] = (nextClassData ?? []).map((c: any) => c.id);
@@ -545,11 +610,16 @@ export async function generateDemoData(
   // so we mirror each demo auth-user teacher into teacher_profiles and use
   // those IDs for the join rows.
   if (teacherIds.length > 0) {
-    const tpRows = teacherIds.map((_uid, i) => ({
-      school_id:  schoolId,
-      full_name:  `${teacherFirst(i)} ${lastName(i * 2)}`,
-      email:      `teacher.demo.${batchId}.${String(i + 1).padStart(2, "0")}@example.com`,
-      is_active:  true,
+    // auth_user_id (migration 066) lets the RLS helpers resolve
+    // auth.uid() → teacher_profiles.id → class_teachers.teacher_id, which is
+    // what makes teacher logins able to see/insert child_documents,
+    // parent_updates, and proud_moments for their classes.
+    const tpRows = teacherIds.map((uid, i) => ({
+      school_id:    schoolId,
+      auth_user_id: uid,
+      full_name:    `${teacherFirst(i)} ${lastName(i * 2)}`,
+      email:        teacherEmail(i),
+      is_active:    true,
     }));
     const { data: tpData, error: tpErr } = await (admin as any)
       .from("teacher_profiles").insert(tpRows).select("id");
@@ -589,9 +659,7 @@ export async function generateDemoData(
   const guardianRows: Record<string, unknown>[] = [];
   studentIds.forEach((sid, i) => {
     const pIdx   = i % parentIds.length;
-    const pEmail = parentIds[pIdx]
-      ? `parent.demo.${batchId}.${String(pIdx + 1).padStart(2, "0")}@example.com`
-      : null;
+    const pEmail = parentIds[pIdx] ? parentEmail(pIdx) : null;
     const female   = (i * 3 + 1) % 3 !== 0;
     const first    = female ? T_FEMALE[(i * 5) % T_FEMALE.length] : T_MALE[(i * 5) % T_MALE.length];
     const last     = lastName(i + 40);
@@ -832,10 +900,41 @@ export async function generateDemoData(
     observationCount:   obsRows.length,
     uploadedFilesCount: fileRows.length,
     demoUserIds,
+    credentials: {
+      password,
+      admin:    { email: adminEmail, fullName: adminFullName },
+      teachers: teacherIds.map((_uid, i) => ({
+        email: teacherEmail(i),
+        fullName: `${teacherFirst(i)} ${lastName(i * 2)}`,
+      })),
+      parents: parentIds.map((_uid, i) => {
+        const female = i % 3 !== 2;
+        const first  = female ? T_FEMALE[i % T_FEMALE.length] : T_MALE[i % T_MALE.length];
+        return { email: parentEmail(i), fullName: `${first} ${lastName(i * 5 + 3)}` };
+      }),
+    },
   };
 }
 
 // ─── Cleaner ──────────────────────────────────────────────────────────────────
+
+/**
+ * Delete wrapper that throws on PostgREST error. The legacy clear path silently
+ * swallowed FK / RLS rejections — that's how unmigrated child_documents rows
+ * blocked the students delete and produced duplicate students on the next
+ * refresh. New deletes added during the document-coordination work go through
+ * here; legacy lines are left as-is to keep the diff focused.
+ */
+async function mustDelete(
+  admin: ReturnType<typeof createAdminClient>,
+  table: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  build: (q: any) => any,
+): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error } = await build((admin as any).from(table).delete());
+  if (error) throw new Error(`clearDemoData: failed to delete from ${table}: ${error.message}`);
+}
 
 export async function clearDemoData(
   admin: ReturnType<typeof createAdminClient>,
@@ -879,6 +978,7 @@ export async function clearDemoData(
   await (admin as any).from("teacher_profiles").delete().eq("school_id", schoolId);
   if (studentIds.length) await (admin as any).from("enrollments").delete().in("student_id", studentIds);
   await (admin as any).from("classes").delete().eq("school_id", schoolId);
+  await (admin as any).from("class_levels").delete().eq("school_id", schoolId);
   await (admin as any).from("academic_periods").delete().eq("school_id", schoolId); // cascades → tuition_configs
   await (admin as any).from("fee_types").delete().eq("school_id", schoolId);
   await (admin as any).from("discounts").delete().eq("school_id", schoolId);
@@ -886,19 +986,44 @@ export async function clearDemoData(
   await (admin as any).from("holidays").delete().eq("school_id", schoolId);
   await (admin as any).from("enrollment_inquiries").delete().eq("school_id", schoolId);
   await (admin as any).from("progress_categories").delete().eq("school_id", schoolId);
+
+  // Document chain — migration 054 puts ON DELETE RESTRICT FKs from
+  // child_documents / document_consents / document_requests back to students.
+  // If anything was uploaded since the last clear, the students delete below
+  // will silently fail (PostgREST returns an error, not a throw) and the next
+  // generate run lands fresh students on top of the survivors → duplicates.
+  // Order: grants (RESTRICT FK to consents) → consents/requests → demote
+  // heads (CHECK requires version on non-draft) → versions → heads.
+  const { data: docs } = await (admin as any).from("child_documents").select("id").eq("school_id", schoolId);
+  const docIds: string[] = (docs ?? []).map((d: any) => d.id);
+  await mustDelete(admin, "document_access_grants", q => q.eq("school_id", schoolId));
+  await mustDelete(admin, "document_requests",      q => q.eq("school_id", schoolId));
+  await mustDelete(admin, "document_consents",      q => q.eq("school_id", schoolId));
+  if (docIds.length) {
+    const upd = await (admin as any).from("child_documents")
+      .update({ status: "draft", current_version_id: null })
+      .in("id", docIds);
+    if (upd.error) throw new Error(`clearDemoData: failed to demote child_documents: ${upd.error.message}`);
+    await mustDelete(admin, "child_document_versions", q => q.in("document_id", docIds));
+    await mustDelete(admin, "child_documents",         q => q.in("id", docIds));
+  }
+  await mustDelete(admin, "document_access_events", q => q.eq("school_id", schoolId));
+  await mustDelete(admin, "external_contacts",      q => q.eq("school_id", schoolId));
+
   if (studentIds.length) await (admin as any).from("guardians").delete().in("student_id", studentIds);
-  await (admin as any).from("students").delete().eq("school_id", schoolId);
+  await mustDelete(admin, "students", q => q.eq("school_id", schoolId));
   await (admin as any).from("school_years").delete().eq("school_id", schoolId);
-  // Collect all teacher/parent profile IDs for this school before deleting profiles
-  // (covers users from failed runs not recorded in demoUserIds)
+  // Collect all teacher/parent/school_admin profile IDs for this school before
+  // deleting profiles (covers users from failed runs not recorded in demoUserIds).
+  // Super_admins are deliberately excluded — that's the operator running this.
   const { data: demoProfiles } = await (admin as any)
-    .from("profiles").select("id").eq("school_id", schoolId).in("role", ["teacher", "parent"]);
+    .from("profiles").select("id").eq("school_id", schoolId).in("role", ["teacher", "parent", "school_admin"]);
   const allDemoUserIds = [...new Set([
     ...demoUserIds,
     ...(demoProfiles ?? []).map((p: any) => p.id as string),
   ])];
 
-  await (admin as any).from("profiles").delete().eq("school_id", schoolId).in("role", ["teacher", "parent"]);
+  await (admin as any).from("profiles").delete().eq("school_id", schoolId).in("role", ["teacher", "parent", "school_admin"]);
 
   for (const uid of allDemoUserIds) {
     try {

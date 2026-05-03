@@ -96,10 +96,28 @@ src/features/documents/            — Document Coordination feature module (Pha
   DocumentAccessButton.tsx         — Calls Phase C API; signed URL never stored in state
   DocumentDetailModal.tsx          — Overview + Versions tabs (read-only); hidden versions visible to staff only
   UploadDocumentModal.tsx          — D7: 5-step transactional upload with rollback; client-side UUIDs (no INSERT…RETURNING)
+  UploadVersionModal.tsx           — D8: adds v(N+1) to existing doc with same transactional/rollback shape
+  HideVersionModal.tsx             — D8: sets is_hidden + reason; pre-flight refuses to orphan a non-draft doc
+  ConfirmStatusModal.tsx           — D9: draft→active and active|shared→archived, with contextual warnings + optional archive_reason
+  ShareDocumentModal.tsx           — D10 + D12: staff or external sharing in one modal, with consent gating
+  ConsentRequestModal.tsx          — D11: drafts a `document_consents` row in `pending` for an external contact
+  ExternalContactPicker.tsx        — D12: combobox + inline-create form over `external_contacts`
+  RevokeAccessModal.tsx            — D13: confirms per-grant revoke; sets revoked_at/revoked_by/revoke_reason
+  RequestDocumentModal.tsx         — D14: ask a parent or external contact for a missing document
+  RequestsList.tsx                 — D14: table of `document_requests` rows for the workspace's Requests view
+  CancelRequestModal.tsx           — D14: confirm cancel with optional reason; sets status='cancelled'
+  share-api.ts                     — D10/D12/D13: listSchoolStaffForSharing (RPC), listGrantsForDocument, createInternalGrant, createExternalGrant, revokeGrant
+  consent-api.ts                   — D11/D12: listExternalContacts, createExternalContact, listConsentsForDocument, pickValidConsentForExternal, createConsentDraft
+  requests-api.ts                  — D14: listRequests, createRequest, cancelRequest, listGuardiansForStudent
+  events-api.ts                    — D15: listAccessEvents (newest-first, capped at 50)
 supabase/migrations/054_child_documents.sql            — Phase A: 4 enums + 7 tables + integrity triggers, RLS default-deny
 supabase/migrations/055_child_documents_storage.sql    — Phase B: child-documents private bucket + storage RLS
 supabase/migrations/056_child_documents_rls.sql        — Phase B: helpers + RLS + log_document_access RPC
 supabase/migrations/057_document_access_events_actor_fk.sql — actor_user_id FK profiles → auth.users
+supabase/migrations/065_list_school_staff_for_sharing.sql   — D10: SECURITY DEFINER RPC for the staff picker
+supabase/migrations/066_teacher_profile_auth_bridge.sql     — Adds `teacher_profiles.auth_user_id` and rewrites the 3 teacher RLS helpers/policies to resolve auth.uid() through the bridge (fixes 058 regression)
+supabase/migrations/067_doc_triggers_security_definer.sql   — Marks triggers 5.F (consent JSONB) and 5.G (grant invariants) as SECURITY DEFINER so the cross-RLS profile/external_contact lookups they perform actually find their target rows
+supabase/migrations/068_consents_parent_guard_null_role.sql — D16-era fix: parent transition guard now uses `IS DISTINCT FROM` so NULL-role callers (SQL editor, service-role) early-return correctly. Also marks the trigger SECURITY DEFINER for forward-compat with cron / admin scripts
 ```
 
 ---
@@ -265,6 +283,16 @@ Currently all media lives in one private bucket (`updates-media`). Path conventi
 | Document Coordination — access route | ✅ Complete | `POST /api/documents/[id]/access`. Authenticates with cookie session, calls RPC under user's session, then service-role mints 60-second signed URL. Sanitized error mapping (404 collapse for "don't reveal existence", 403 for download_not_permitted, 401 unauthenticated) |
 | Document Coordination — workspace UI (D1–D6) | ✅ Complete | `/documents` workspace page, sidebar entry, list + filters, status badges, read-only DocumentDetailModal (Overview + Versions tabs), View/Download via Phase C API, `?student=<id>` query param + link from Students page rows |
 | Document Coordination — Upload modal (D7) | ✅ Complete | `UploadDocumentModal`: form + 5-step transactional upload with rollback. Client-side UUIDs (no INSERT…RETURNING — that combination + the SELECT policy on the just-inserted row was rejecting in this codebase). New docs land as `draft` |
+| Document Coordination — Version modals (D8) | ✅ Complete | `UploadVersionModal` (adds v(N+1), repoints head, transactional rollback). `HideVersionModal` (sets `is_hidden` with required reason; pre-flight client check + Phase A trigger 5.E server-side guard for non-draft last-visible-version) |
+| Document Coordination — Status transitions (D9) | ✅ Complete | `ConfirmStatusModal` handles `draft→active` and `active|shared→archived`. Status actions bar in `DocumentDetailModal`. `revoked` intentionally not exposed in v1; archived/revoked are terminal |
+| Document Coordination — Internal sharing (D10) | ✅ Complete | `ShareDocumentModal` for `school_user` grantees in the same school, `consent_id = NULL`. Permissions: view always on, download default off, comment + upload_new_version locked off in v1. Required expiry (30/90/180/365/custom). Confirmation copy "{name} will be able to view this document until {date}." Access tab in `DocumentDetailModal` lists active and inactive grants. Migration 065 adds `list_school_staff_for_sharing` SECURITY DEFINER RPC because base `profiles` SELECT only exposes the caller's own row |
+| Document Coordination — Consent request (D11) | ✅ Complete | `ConsentRequestModal` drafts a `document_consents` row in `pending` (status enforced by INSERT RLS). Document-scoped only in v1; `purpose`, expiry presets/custom, `allow_download`, `allow_reshare`. Parent-side approval still simulated via SQL until Phase E parent UI |
+| Document Coordination — External sharing (D12) | ✅ Complete | `ShareDocumentModal` adds Staff/External target tabs. `ExternalContactPicker` (combobox + inline create). Pre-flight checks for a covering live consent on (document, contact); routes to `ConsentRequestModal` when missing. Pending consent blocks share with explainer; granted consent unblocks. Grant expiry clamped to consent expiry; download disabled when consent.allow_download=false. Trigger 5.G + accessible_document_ids() validate the same invariants server-side |
+| Document Coordination — Revoke access (D13) | ✅ Complete | `RevokeAccessModal` from per-row Revoke button on active grants in the Access tab (admin only). Sets `revoked_at`/`revoked_by`/`revoke_reason`; respects column-guard trigger 4.2 (no perms/expiry/grantee mutation). Revoked grants stay visible under "No longer active" with a red Revoked tag for audit. No DELETE policy — grants are revoked, never deleted |
+| Document Coordination — Requests (D14) | ✅ Complete | New Documents/Requests view toggle on the workspace page. `RequestDocumentModal` (school staff only — INSERT policy requires `requester_user_id = auth.uid()`). Recipient is a parent (guardian) or an external contact; v1 doesn't expose `requested_from_kind = 'school'` (needs cross-school directory). Required reason, optional due_date with overdue indicator. Cancel via `CancelRequestModal` (status='cancelled' with optional reason). Submitted/reviewed transitions land with Phase E parent/external UI |
+| Document Coordination — Activity tab (D15) | ✅ Complete | Read-only Activity tab in `DocumentDetailModal` (staff only). Lists newest 50 `document_access_events` for the doc with friendly action labels (Access Link Issued / Preview Opened / Download Requested / Access Denied), actor name (resolved via shared staff/external maps; falls back to `actor_email` then actor kind), timestamp, and human-readable denied reason for denials. Reuses the access-tab lookup loaders so opening Activity warms the same maps |
+| Document Coordination — Polish (D16) | ✅ Complete | Help drawer on `/documents` page (13 topics: lifecycle, sharing, consent states, expiring badges, audit, roles, privacy model). Title-Case modal titles across all document modals. Amber "Expires in Nd" badge on grants in the Access tab when within 14 days. Friendlier empty states on Versions/Access tabs. Migration 068 fixes the parent-transition guard NULL-role bug. Modal cancel/X buttons explicitly typed `button` so they don't accidentally submit the surrounding form |
+| Teacher visibility fix (migration 066) | ✅ Complete | Adds `teacher_profiles.auth_user_id` (UNIQUE, FK to auth.users), backfills via case-insensitive email match against `profiles` (role='teacher'), and rewrites `teacher_visible_student_ids()`, `teacher_student_ids()`, and the `teacher_insert_parent_updates` policy to resolve auth.uid() → teacher_profiles.id → class_teachers.teacher_id. Restores teacher access to `child_documents`, `parent_updates` insert, and `proud_moments` that 058 broke. Demo seeder updated to set `auth_user_id` on each new teacher_profile |
 
 ---
 
@@ -309,25 +337,15 @@ Currently all media lives in one private bucket (`updates-media`). Path conventi
 - [ ] **Role-based UI gating** — hide admin-only actions from teachers/parents
 - [ ] **Tighten RLS policies** — per-role write policies (currently broad "school member" policies)
 
-### Document Coordination — Remaining (resume from D8)
+### Document Coordination — Remaining (school side complete after D16)
 
-Built so far: Phases A (schema), B (RLS + RPC), C (API route + types), D1–D7 (workspace, detail modal, View/Download, Upload). Remaining:
-
-- [ ] **D8 — UploadVersionModal + HideVersionModal** — add v2+ to existing docs; hide a version with reason (Phase A trigger 5.E auto-repoints head). Refresh detail modal on success
-- [ ] **D9 — Status transitions** — Mark Active / Archive buttons in DocumentDetailModal. Confirmation dialogs. Audit row auto-captured by Phase A trigger
-- [ ] **D10 — ShareDocumentModal (internal grants)** — share with school_user / school within same school. No consent required for in-school. Permissions toggles + expiry presets (30/90/180/365/custom)
-- [ ] **D11 — ConsentRequestModal** — drafts a `document_consents` row (status='pending'). Integrated into D10's pre-flight check: external/cross-school targets without covering consent route here first
+Built so far: Phases A (schema), B (RLS + RPC), C (API route + types), D1–D16. The school-side Document Coordination feature is feature-complete. What's left is everything that's not the school side:
 - [ ] **D12 — External contact share path** — extend ShareDocumentModal to handle `external_contact` grantees. ExternalContactPicker with inline-create. Phase A trigger 5.G enforces consent invariant
-- [ ] **D13 — RevokeAccessModal** — per-grant revoke action. Sets `revoked_at` with reason. Cascade trigger 5.H still works
-- [ ] **D14 — RequestDocumentModal + Requests tab** — schools/teachers request a document from parent/school/external. `document_requests` rows
-- [ ] **D15 — Activity tab in DocumentDetailModal** — surface `document_access_events` rows (view/download/signed_url_issued/access_denied) with timestamps and actor
-- [ ] **D16 — Polish + Help drawer** — expiring badges, empty states, error toasts, help drawer copy following the existing "Help Drawer Rule" pattern
 - [ ] **Phase E — Parent portal** — `/parent/documents`: My Child's Documents (visible per Phase B parent rules), grant/revoke consent (uses parent transition guard), upload `parent_provided` drafts
 - [ ] **Phase 2 — `document_comments`** — coordination notes per doc with `originating_school_only` vs `all_with_access` visibility
 - [ ] **Phase 2 — external-contact "Shared With Me" portal** — needs Lauris Care identity bridging
 - [ ] **Phase 2 — sibling consents, expiry-reminder cron, DOCX support, bulk operations, auto-archive on review_date**
-- [ ] **Teacher visibility fix** — re-enable teacher access to child_documents (and parent_updates / proud_moments) by adding an `auth_user_id` bridge column on `teacher_profiles` so `teacher_visible_student_ids()` can resolve `auth.uid() → teacher_profile.id → class_teachers.teacher_id`. Broken by migration 058's accepted side effect; school_admin paths unaffected
-- [ ] **`document_consents` parent transition guard NULL-role fix** — one-line trigger change to use `IF current_user_role() IS DISTINCT FROM 'parent'::user_role`. Required before service-role consent management (cron jobs, admin scripts) is introduced
+- [ ] **Settings → Teachers — auth-link UI** — migration 066 adds the `auth_user_id` bridge column and backfills via email match. Manual re-linking is currently a single SQL UPDATE. A small picker in the teacher edit modal (with a tiny RPC since `profiles` SELECT is self-only) would let admins fix mismatches without DB access
 
 ---
 
@@ -445,6 +463,100 @@ Help drawer implementation pattern (consistent across all pages):
 ---
 
 ## Session Log
+
+### 2026-05-03 — Document Coordination D16 (Polish) + bug fixes
+
+Closed out the school-side build with a small batch of polish + two real bugs surfaced during the close-out test pass.
+
+**Bug — Cancel button submitting forms.** During B5 testing, the Cancel button inside a modal with unsaved changes appeared to bypass the discard prompt on second click. Root cause: our `Button` component has no default `type`, so HTML defaults to `type="submit"` when nested in a `<form>`. ModalCancelButton inside any form modal was actually submitting the form on click — first click did nothing because validation failed, but second click after the user had filled enough fields triggered `onSubmit` and closed the modal via the success path. Fix: explicit `type="button"` on `ModalCancelButton`, the Modal's `X` close button, and the discard-strip's "Keep editing" / "Discard changes" buttons. All three are now safe inside forms.
+
+**Bug — Migration 068 (parent transition guard NULL-role).** During B4.5 testing, manually running `UPDATE document_consents SET status='granted' …` in the Supabase SQL editor failed with `granted_by_guardian_id must match one of the calling parent's guardian rows`. Root cause: trigger 4.1 used `IF current_user_role() <> 'parent'` to early-return, but `NULL <> 'parent'` evaluates to NULL (not TRUE), so the early-return didn't fire for SQL-editor sessions where `auth.uid()` is null. Migration 068 switches to `IS DISTINCT FROM 'parent'::user_role` and marks the trigger SECURITY DEFINER so future cron / admin-script paths chain cleanly. Behavior for actual parent callers is unchanged.
+
+**B3.4 clarification (no code change).** When testing internal-revoke, the teacher could still see the document after the grant was revoked. That's expected behavior — the teacher already has access via `teacher_visible_student_ids()` (the class-teacher path), and the grant was redundant. Grants are meaningful for staff who *don't* already have direct access (e.g., a teacher of a different class, or the parent of a different student). Documented in the Help drawer "Who can do what" topic.
+
+**Polish — title consistency.** Modal titles normalized to Title Case across `Hide Version`, `Upload Version N`, `Archive Document` / `Archive Shared Document`, `Share Document`, `Request Consent` / `Consent Requested`, `Revoke Access`, `Cancel Request`. Matches the rest of the dashboard's modal title style.
+
+**Polish — expiring grants.** GrantRow in the Access tab now renders an amber `Expires in Nd` (or `Expires today`) badge when the grant is active and within 14 days of expiry. Same threshold as the existing review-date soon indicator on doc rows.
+
+**Polish — empty states.** Versions tab and Access tab empty states now have an icon, a one-line headline, and a one-line action hint (role-aware on Versions). Helps new users discover the next action.
+
+**Polish — Help drawer.** Documents page now has a Help drawer following the established pattern. 13 topics: what the feature is for, upload, statuses, versions, share with staff, share with external (consent gate), consent states, revoke, expiring badge, request, activity audit, privacy model, role permissions. Searchable. Resolves the "Help Drawer Rule" coverage gap noted in CLAUDE.md.
+
+### 2026-05-03 — Document Coordination D15 (Activity tab)
+
+Read-only Activity tab in `DocumentDetailModal` (staff only). Lists the newest 50 `document_access_events` for the document, newest first, capped at 50 per the spec. No analytics, no export, no comments.
+
+**Action labels follow the spec wording**: signed_url_issued → "Access Link Issued", preview_opened → "Preview Opened", download → "Download Requested", access_denied → "Access Denied" (red treatment). The legacy `view` action is mapped to "Viewed" defensively even though v1 doesn't emit it (the access route always logs `signed_url_issued`).
+
+**Actor name resolution** reuses the same staffMap + externalMap that the Access tab loads — opening Activity also calls `reloadAccess()` so the lookup maps are warm. Resolution order: profiles map (named staff) → external_contacts map (named external contact) → `actor_email` baked into the row → humanized actor_kind ("School admin", "Teacher", "Parent", "External contact", "Platform admin", "Not signed in"). The same `profiles` RLS limitation as the Access tab applies — staff names only resolve for the caller's own row, but the access RPC always populates `actor_email` so the email fallback covers the gap.
+
+**Denied reasons** get a small mapping for the codes the access RPC emits (`no_visible_version`, `not_authorized`, `consent_not_granted`, `consent_expired`, `grant_revoked`, `grant_expired`, `download_not_permitted`, `doc_revoked`, `doc_not_found`). Anything unrecognized renders verbatim.
+
+**Where it lives.** `src/features/documents/events-api.ts` (single `listAccessEvents` query), plus `ActivityTab` + `EventRow` co-located inside `DocumentDetailModal.tsx`. Tab visibility gated by `isStaff`, matching the Access tab gate.
+
+### 2026-05-03 — Document Coordination D14 (Requests)
+
+The workspace page now has a Documents / Requests view toggle. The previously-disabled "Request Document" header button opens `RequestDocumentModal`.
+
+**Modal shape.** Student picker (or pre-locked when launched from a student-scoped URL), document type, recipient mode tabs (Parent / External), then per-mode picker:
+- Parent → guardians for the picked student (auto-selects when there's only one).
+- External → reuses `ExternalContactPicker`. Inline-create is exposed only when `isAdmin` (school_admin INSERT-only on `external_contacts`); teachers can only pick from existing.
+Required reason, optional due date, plus a confirmation strip. Submit calls `createRequest` (`requests-api.ts`) which inserts with `status='requested'`, `requester_user_id = auth.uid()` per the INSERT policy.
+
+**Requests view.** Reuses the workspace's filter card (status filter only; the document-side search/type filters are hidden in this mode). Empty state copy guides the user to the Request Document button. The list is a table — Document type / Student / From / Status / Due / Action. Active rows (`requested`, `submitted`) get a per-row Cancel button (school staff). Inactive rows render as audit-only.
+
+**Cancel.** `CancelRequestModal` confirms with an optional reason and writes `status='cancelled'`, `cancelled_at`, `cancelled_reason`. Inactive rows show the cancellation reason inline.
+
+**Joined-row visibility caveat.** `requester_user.full_name` resolves through `profiles`, which RLS only exposes for the caller's own row. So in the requests list, the requester's name only appears for requests the current admin created themselves. Other rows show no requester — fine for v1; we display the recipient prominently and the requester is the audit-trail concern, not a UX one. Same workaround as the Access tab, and the same Settings UI follow-up applies.
+
+**Out of scope (per D14 spec).** Submitted/reviewed transitions need parent/external-side UI to be useful — that's Phase E. School-recipient requests (`requested_from_kind='school'`) need a cross-school directory we don't have. No DELETE; the existing `school_admin_delete_cancelled_document_requests` policy permits it but the UI doesn't expose it.
+
+### 2026-05-03 — Document Coordination D13 (Revoke access)
+
+`RevokeAccessModal` ships per-grant revoke from the Access tab. Active grants render a small **Revoke** button (admin only) which opens a confirmation modal showing the recipient, current permissions, and expiry, plus an optional reason textarea. Submit calls `revokeGrant` (new in `share-api.ts`) with only the three revocation columns (`revoked_at`, `revoked_by`, `revoke_reason`) — column-guard trigger 4.2 already rejects any other field, so we send the minimum and trust the DB.
+
+The Access tab keeps revoked grants visible under "No longer active" with a red **Revoked** tag (distinguished from expired grants which keep the muted tag), the revoke timestamp, and the reason. No Revoke action renders on already-inactive rows. There is no DELETE policy on the table — grants are revoked, never deleted, so the audit story stays intact.
+
+Phase A trigger 5.G's `UPDATE OF` list omits `revoked_*`, so the consent-invariant validator does not re-run on revoke (correct: revoking should never be blocked by consent state changes). The cascade trigger 5.H is unaffected and continues to handle bulk revoke when a parent revokes a covering consent — that path still needs `SECURITY DEFINER` before parent UI lands (see "Remaining").
+
+### 2026-05-03 — Document Coordination D11 + D12 + teacher-bridge fix
+
+Continued the build past D10 with two consent-gated steps and one schema fix baked in alongside.
+
+**Migration 066 — teacher_profiles ↔ auth.users bridge.** First-time teacher login under D10 surfaced the regression we accepted at migration 058: `class_teachers.teacher_id` references `teacher_profiles(id)`, but the three teacher RLS helpers/policies still compared the join key to `auth.uid()`. Net result: any teacher login got zero rows for `child_documents` reads, `parent_updates` insert, and `proud_moments` visibility. Fix is a nullable, unique `auth_user_id` column on `teacher_profiles` plus a CASE-INSENSITIVE email backfill from `profiles` (role='teacher'), then re-emitting `teacher_visible_student_ids()`, `teacher_student_ids()`, and `teacher_insert_parent_updates` to resolve `auth.uid() → teacher_profiles.id → class_teachers.teacher_id`. Demo seeder updated to populate the column on every teacher_profile it creates. Re-linking after the backfill (e.g. when a teacher's auth email changes) is a single SQL UPDATE today; a Settings UI is queued under "Remaining".
+
+**D11 — ConsentRequestModal.** New modal drafts a `document_consents` row in `pending`. v1 only writes document-scoped consents (`scope.type='document'`); the UI doesn't expose document_type / all_for_student scopes (the trigger 5.F validation still accepts them). Required fields: purpose, expiry; toggles for allow_download / allow_reshare. Inserts respect `school_staff_insert_document_consents` (status='pending', requested_by_user_id=auth.uid()). Parent-side approval still happens via SQL until the Phase E parent UI lands.
+
+**D12 — External sharing in ShareDocumentModal.** The modal now has Staff/External target tabs. Picking External shows `ExternalContactPicker` (combobox over `external_contacts` with an inline "Add new contact" form, school_admin only via INSERT policy). When a contact is picked the modal looks up the most recent live consent that covers (this document, this contact). The pre-flight has three branches:
+- **No covering consent** → the share button stays disabled, with a "Request consent" button that opens `ConsentRequestModal` stacked over the share modal. After submit, `reloadConsents()` runs so the share modal immediately reflects the new pending row.
+- **Pending consent** → block, show "Awaiting parent's decision" with the original purpose.
+- **Granted consent** → unblock; clamp the user-chosen expiry to `consent.expires_at` (with an amber "Capped to consent expiry" notice when it actually clamped); force download checkbox off when `consent.allow_download = false`; submit creates an `external_contact` grant via `createExternalGrant` carrying the consent_id.
+
+The trigger 5.G + `accessible_document_ids()` clauses validate the same invariants server-side (recipient match, grant.expires_at ≤ consent.expires_at, status='granted'), so client-side guards are UX, not security.
+
+**Access tab.** Now also loads `external_contacts` so external grants render their contact's name instead of the generic "External contact" label.
+
+**Files added:** `src/features/documents/consent-api.ts`, `src/features/documents/ConsentRequestModal.tsx`, `src/features/documents/ExternalContactPicker.tsx`, `supabase/migrations/066_teacher_profile_auth_bridge.sql`. Updates to `share-api.ts`, `ShareDocumentModal.tsx`, `DocumentDetailModal.tsx`, `src/lib/demo/index.ts`.
+
+**Where to resume:** D13 — RevokeAccessModal (per-grant revoke with reason; sets revoked_at/revoked_by/revoke_reason via the existing column-guard policy). After D13: D14 (request-document workflow), D15 (Activity tab from `document_access_events`), D16 (polish + Help drawer), then Phase E (parent portal) which finally unblocks live consent grants.
+
+### 2026-05-03 — Document Coordination D8 → D10
+
+Continued the Document Coordination build after D7 in the same date.
+
+**D8 — Version modals.** `UploadVersionModal` adds v(N+1) using the same 5-step transactional pattern as D7 (client-side UUID, no INSERT…RETURNING) and repoints the head's `current_version_id` after the version row lands. `HideVersionModal` flips `is_hidden = true` with a required reason; pre-flight refuses to orphan a non-draft document, and Phase A trigger 5.E provides the matching server-side guard plus auto-repointing the head if the hidden version was current.
+
+**D9 — Status transitions.** `ConfirmStatusModal` covers `draft → active` (any staff, only when `current_version_id IS NOT NULL`) and `active|shared → archived` (admin only). `revoked` is intentionally not exposed; archived/revoked are terminal in v1. Status actions render as a small button bar in the modal header — only when at least one transition is available. Archive captures an optional `archive_reason` saved to the column.
+
+**Modal nested-dirty bug fix.** While testing D8, `UploadVersionModal` would mark the parent `DocumentDetailModal` "dirty" because the parent `Modal` listens to native `input`/`change` events on its content `div` and sub-modals are children of that div. Fix in `src/components/ui/modal.tsx`: tag every overlay with `data-modal-overlay` and ignore events whose nearest `[data-modal-overlay]` isn't the parent modal's own overlay. Each modal now keeps its dirty state private.
+
+**D10 — Internal sharing.** Scope was strictly internal (`grantee_kind='school_user'`, same school, `consent_id=NULL`). Built `ShareDocumentModal` and an Access tab inside `DocumentDetailModal`. Permissions: view is locked on, download defaults off, comment/upload_new_version are deferred and stay false in v1. Expiry is required, with 30/90/180/365 presets and a custom date; the value is pushed to end-of-day so a "30 days" pick really gives 30 days. Confirmation strip uses the exact spec copy: "{name} will be able to view this document until {date}."
+
+**Real blocker hit (D10) — staff picker visibility.** The base `profiles` SELECT policy in `supabase/schema.sql` only allows a user to see their own row, and migration 002 only adds a super-admin bypass. There is no same-school SELECT on `profiles`, so a school_admin building the picker would see zero candidates. `grantee_user_id` is FK to `profiles(id)`, so substituting `teacher_profiles` (standalone IDs) wasn't an option. Two paths considered: (a) add a same-school SELECT policy on profiles, (b) add a tightly scoped SECURITY DEFINER RPC. Picked (b) for minimal surface — **migration 065** adds `list_school_staff_for_sharing(p_school_id UUID)` returning `id, full_name, email, role` for `school_admin`/`teacher` profiles in the caller's school, excluding the caller. The RPC follows the same disclosure-minimization posture as `log_document_access`: a caller who isn't the school_admin of `p_school_id` simply gets zero rows (no exception). Added to `database.ts` Functions block.
+
+**Access tab.** Lists current grants on the document, split into Active and "No longer active" sections (revoked or expired). Grantee names come from the same `list_school_staff_for_sharing` lookup we use for the picker (because direct profile reads are still blocked for non-self rows). Revoke action is intentionally not in this step — that lands in D13.
+
+**Where to resume:** D11 — ConsentRequestModal (drafts a `document_consents` row in `pending`, integrated as the pre-flight when a future ShareDocumentModal targets external/cross-school grantees). The current ShareDocumentModal short-circuits cleanly because trigger 5.G allows `consent_id = NULL` for same-school school_user grants.
 
 ### 2026-05-03 — Document Coordination System (Phases A → D7)
 

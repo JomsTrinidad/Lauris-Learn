@@ -58,7 +58,27 @@ interface TeacherProfile {
   avatarUrl: string | null;
 }
 
-const SECTIONS = ["School Information", "School Year & Terms", "Holidays", "Teachers", "Student IDs", "Grading", "Branding & Accessibility"] as const;
+type ClassLevelKind = "core" | "sped" | "bridge" | "summer" | "mixed_age" | "enrichment" | "other";
+
+interface ClassLevel {
+  id: string;
+  name: string;
+  kind: ClassLevelKind;
+  displayOrder: number;
+  archivedAt: string | null;
+}
+
+const CLASS_LEVEL_KINDS: { value: ClassLevelKind; label: string; hint: string }[] = [
+  { value: "core",        label: "Core",        hint: "Main level sequence (e.g. Toddlers, Pre-Kinder)" },
+  { value: "sped",        label: "SPED",        hint: "Special education / individualized program" },
+  { value: "bridge",      label: "Bridge",      hint: "Transitional between two levels" },
+  { value: "summer",      label: "Summer",      hint: "Summer term only" },
+  { value: "mixed_age",   label: "Mixed Age",   hint: "Spans multiple age groups" },
+  { value: "enrichment",  label: "Enrichment",  hint: "After-school / electives / clubs" },
+  { value: "other",       label: "Other",       hint: "Anything else" },
+];
+
+const SECTIONS = ["School Information", "School Year & Terms", "Holidays", "Teachers", "Class Levels", "Student IDs", "Grading", "Branding & Accessibility"] as const;
 type Section = (typeof SECTIONS)[number];
 
 const SESSION_KEY = "settings_active_section";
@@ -254,6 +274,15 @@ export default function SettingsPage() {
   const [teacherFormError, setTeacherFormError] = useState<string | null>(null);
   const [teacherPhotoFile, setTeacherPhotoFile] = useState<File | null>(null);
 
+  // Class Levels
+  const [classLevels, setClassLevels] = useState<ClassLevel[]>([]);
+  const [classLevelModal, setClassLevelModal] = useState(false);
+  const [editingClassLevel, setEditingClassLevel] = useState<ClassLevel | null>(null);
+  const [classLevelForm, setClassLevelForm] = useState<{ name: string; kind: ClassLevelKind }>({ name: "", kind: "core" });
+  const [classLevelFormError, setClassLevelFormError] = useState<string | null>(null);
+  const [classLevelShowArchived, setClassLevelShowArchived] = useState(false);
+  const [classLevelInUseCounts, setClassLevelInUseCounts] = useState<Record<string, number>>({});
+
   // Admin profile photo (URL comes from SchoolContext so header stays in sync)
   const [adminPhotoFile, setAdminPhotoFile] = useState<File | null>(null);
   const [adminPhotoSaving, setAdminPhotoSaving] = useState(false);
@@ -294,7 +323,7 @@ export default function SettingsPage() {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const sb = supabase as any;
-    const [{ data: school }, { data: branches }, { data: years }, { data: hols }, { data: periods }, { data: teacherRows }, { data: codeRow }, { data: scaleRows }, { data: scaleSetRows }] =
+    const [{ data: school }, { data: branches }, { data: years }, { data: hols }, { data: periods }, { data: teacherRows }, { data: codeRow }, { data: scaleRows }, { data: scaleSetRows }, { data: levelRows }, { data: levelUsage }] =
       await Promise.all([
         supabase.from("schools").select("name, enrollment_balance_policy").eq("id", schoolId).single(),
         supabase.from("branches").select("name, address, phone").eq("school_id", schoolId).limit(1).maybeSingle(),
@@ -305,6 +334,8 @@ export default function SettingsPage() {
         sb.from("schools").select("student_code_prefix, student_code_padding, student_code_include_year, logo_url, primary_color, accent_color, report_footer_text, text_size_scale, spacing_scale").eq("id", schoolId).single(),
         sb.from("grading_scales").select("id, scale_set_id, label, description, color, min_score, max_score, sort_order").eq("school_id", schoolId).order("sort_order"),
         sb.from("grading_scale_sets").select("id, name, description, scale_mode, is_default").eq("school_id", schoolId).order("name"),
+        sb.from("class_levels").select("id, name, kind, display_order, archived_at").eq("school_id", schoolId).order("display_order").order("name"),
+        sb.from("classes").select("level_id").eq("school_id", schoolId).not("level_id", "is", null),
       ]);
 
     setSchoolInfo({
@@ -355,6 +386,22 @@ export default function SettingsPage() {
       notes: t.notes ?? "",
       avatarUrl: t.avatar_url ?? null,
     })));
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    setClassLevels((levelRows ?? []).map((l: any) => ({
+      id: l.id,
+      name: l.name,
+      kind: l.kind as ClassLevelKind,
+      displayOrder: l.display_order ?? 0,
+      archivedAt: l.archived_at ?? null,
+    })));
+
+    const usage: Record<string, number> = {};
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const c of (levelUsage ?? []) as any[]) {
+      if (c.level_id) usage[c.level_id] = (usage[c.level_id] ?? 0) + 1;
+    }
+    setClassLevelInUseCounts(usage);
 
     if (codeRow) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -716,6 +763,90 @@ export default function SettingsPage() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (supabase as any).from("teacher_profiles").delete().eq("id", id);
     setTeachers((prev) => prev.filter((t) => t.id !== id));
+  }
+
+  // ── Class Levels ──
+  function openAddClassLevel() {
+    setEditingClassLevel(null);
+    setClassLevelForm({ name: "", kind: "core" });
+    setClassLevelFormError(null);
+    setClassLevelModal(true);
+  }
+  function openEditClassLevel(l: ClassLevel) {
+    setEditingClassLevel(l);
+    setClassLevelForm({ name: l.name, kind: l.kind });
+    setClassLevelFormError(null);
+    setClassLevelModal(true);
+  }
+  async function saveClassLevel() {
+    if (!schoolId) return;
+    const name = classLevelForm.name.trim();
+    if (!name) { setClassLevelFormError("Name is required."); return; }
+    setSaving(true);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sb = supabase as any;
+    if (editingClassLevel) {
+      const { error: err } = await sb.from("class_levels")
+        .update({ name, kind: classLevelForm.kind })
+        .eq("id", editingClassLevel.id);
+      if (err) { setClassLevelFormError(err.message); setSaving(false); return; }
+    } else {
+      const nextOrder = classLevels.length > 0
+        ? Math.max(...classLevels.map((l) => l.displayOrder)) + 1
+        : 0;
+      const { error: err } = await sb.from("class_levels").insert({
+        school_id: schoolId, name, kind: classLevelForm.kind, display_order: nextOrder,
+      });
+      if (err) {
+        setClassLevelFormError(err.code === "23505"
+          ? "A level with that name already exists."
+          : err.message);
+        setSaving(false); return;
+      }
+    }
+    setClassLevelModal(false);
+    await load();
+    setSaving(false);
+  }
+  async function archiveClassLevel(id: string) {
+    if (!confirm("Archive this level? Existing classes keep their assignment, but the level won't appear in the dropdown for new classes.")) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase as any).from("class_levels").update({ archived_at: new Date().toISOString() }).eq("id", id);
+    setClassLevels((prev) => prev.map((l) => l.id === id ? { ...l, archivedAt: new Date().toISOString() } : l));
+  }
+  async function unarchiveClassLevel(id: string) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase as any).from("class_levels").update({ archived_at: null }).eq("id", id);
+    setClassLevels((prev) => prev.map((l) => l.id === id ? { ...l, archivedAt: null } : l));
+  }
+  async function deleteClassLevel(l: ClassLevel) {
+    const inUse = classLevelInUseCounts[l.id] ?? 0;
+    if (inUse > 0) {
+      alert(`Cannot delete — ${inUse} class${inUse !== 1 ? "es" : ""} still assigned to this level. Archive it instead, or reassign those classes first.`);
+      return;
+    }
+    if (!confirm(`Delete level "${l.name}"? This cannot be undone.`)) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error: err } = await (supabase as any).from("class_levels").delete().eq("id", l.id);
+    if (err) { alert(err.message); return; }
+    setClassLevels((prev) => prev.filter((x) => x.id !== l.id));
+  }
+  async function moveClassLevel(id: string, direction: "up" | "down") {
+    const visible = classLevels.filter((l) => classLevelShowArchived || !l.archivedAt);
+    const idx = visible.findIndex((l) => l.id === id);
+    const swapIdx = direction === "up" ? idx - 1 : idx + 1;
+    if (idx < 0 || swapIdx < 0 || swapIdx >= visible.length) return;
+    const a = visible[idx], b = visible[swapIdx];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sb = supabase as any;
+    await Promise.all([
+      sb.from("class_levels").update({ display_order: b.displayOrder }).eq("id", a.id),
+      sb.from("class_levels").update({ display_order: a.displayOrder }).eq("id", b.id),
+    ]);
+    setClassLevels((prev) => prev.map((l) =>
+      l.id === a.id ? { ...l, displayOrder: b.displayOrder } :
+      l.id === b.id ? { ...l, displayOrder: a.displayOrder } : l
+    ).sort((x, y) => x.displayOrder - y.displayOrder || x.name.localeCompare(y.name)));
   }
 
   // ── Student ID Config ──
@@ -1331,6 +1462,133 @@ export default function SettingsPage() {
               )}
             </>
           )}
+          {/* ── Class Levels ── */}
+          {activeSection === "Class Levels" && (
+            <>
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2>Class Levels</h2>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    The list that powers the Level / Age Group dropdown when you add or edit a class.
+                  </p>
+                </div>
+                <Button onClick={openAddClassLevel}>
+                  <Plus className="w-4 h-4" /> Add Level
+                </Button>
+              </div>
+
+              {classLevels.length === 0 ? (
+                <Card>
+                  <CardContent className="py-12 text-center space-y-3">
+                    <Library className="w-10 h-10 text-muted-foreground mx-auto" />
+                    <p className="text-sm text-muted-foreground">
+                      No class levels yet. Add at least one before creating classes.
+                    </p>
+                    <Button onClick={openAddClassLevel}>
+                      <Plus className="w-4 h-4" /> Add Your First Level
+                    </Button>
+                  </CardContent>
+                </Card>
+              ) : (
+                <>
+                  <div className="flex items-center justify-end gap-2 text-xs text-muted-foreground">
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={classLevelShowArchived}
+                        onChange={(e) => setClassLevelShowArchived(e.target.checked)}
+                      />
+                      Show archived
+                    </label>
+                  </div>
+                  <Card className="overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead className="bg-muted border-b border-border">
+                          <tr>
+                            <th className="text-left px-4 py-3 font-medium text-muted-foreground w-16">Order</th>
+                            <th className="text-left px-4 py-3 font-medium text-muted-foreground">Name</th>
+                            <th className="text-left px-4 py-3 font-medium text-muted-foreground">Kind</th>
+                            <th className="text-left px-4 py-3 font-medium text-muted-foreground">In Use</th>
+                            <th className="text-left px-4 py-3 font-medium text-muted-foreground">Status</th>
+                            <th className="text-right px-4 py-3" />
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border">
+                          {classLevels
+                            .filter((l) => classLevelShowArchived || !l.archivedAt)
+                            .map((l, idx, arr) => {
+                              const kindMeta = CLASS_LEVEL_KINDS.find((k) => k.value === l.kind);
+                              const inUse = classLevelInUseCounts[l.id] ?? 0;
+                              return (
+                                <tr key={l.id} className={l.archivedAt ? "bg-muted/30" : ""}>
+                                  <td className="px-4 py-3">
+                                    <div className="flex items-center gap-1">
+                                      <button
+                                        onClick={() => moveClassLevel(l.id, "up")}
+                                        disabled={idx === 0}
+                                        className="p-0.5 hover:bg-muted rounded disabled:opacity-30 disabled:cursor-not-allowed"
+                                        aria-label="Move up"
+                                      >
+                                        <ChevronRight className="w-3.5 h-3.5 -rotate-90" />
+                                      </button>
+                                      <button
+                                        onClick={() => moveClassLevel(l.id, "down")}
+                                        disabled={idx === arr.length - 1}
+                                        className="p-0.5 hover:bg-muted rounded disabled:opacity-30 disabled:cursor-not-allowed"
+                                        aria-label="Move down"
+                                      >
+                                        <ChevronRight className="w-3.5 h-3.5 rotate-90" />
+                                      </button>
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-3 font-medium">{l.name}</td>
+                                  <td className="px-4 py-3">
+                                    <Badge variant="default">{kindMeta?.label ?? l.kind}</Badge>
+                                  </td>
+                                  <td className="px-4 py-3 text-muted-foreground text-xs">
+                                    {inUse} class{inUse !== 1 ? "es" : ""}
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    {l.archivedAt
+                                      ? <span className="text-xs text-muted-foreground italic">Archived</span>
+                                      : <span className="text-xs text-green-700">Active</span>}
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <div className="flex items-center justify-end gap-1">
+                                      <button onClick={() => openEditClassLevel(l)} className="p-1.5 hover:bg-muted rounded-lg" aria-label="Edit">
+                                        <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
+                                      </button>
+                                      {l.archivedAt
+                                        ? <Button variant="outline" size="sm" onClick={() => unarchiveClassLevel(l.id)}>Restore</Button>
+                                        : <Button variant="outline" size="sm" onClick={() => archiveClassLevel(l.id)}>Archive</Button>}
+                                      <button
+                                        onClick={() => deleteClassLevel(l)}
+                                        disabled={inUse > 0}
+                                        title={inUse > 0 ? "Cannot delete — level is in use" : "Delete"}
+                                        className="p-1.5 hover:bg-red-50 rounded-lg disabled:opacity-30 disabled:cursor-not-allowed"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Card>
+                  <div className="text-xs text-muted-foreground space-y-1">
+                    <p>• <strong>Core</strong> levels form the main promotion sequence. Non-core kinds (SPED, bridge, summer, mixed-age, enrichment) sit outside the standard year-end progression.</p>
+                    <p>• Renaming a level here automatically updates every class that uses it.</p>
+                    <p>• Archive instead of delete when a level is no longer offered but past classes still reference it.</p>
+                  </div>
+                </>
+              )}
+            </>
+          )}
+
           {/* ── Student IDs ── */}
           {activeSection === "Student IDs" && (
             <Card>
@@ -2357,6 +2615,39 @@ export default function SettingsPage() {
           <div className="flex justify-end gap-2 pt-2">
             <ModalCancelButton />
             <Button onClick={saveTeacher} disabled={saving || !teacherForm.fullName}>{saving ? "Saving…" : "Save"}</Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Class Level Modal */}
+      <Modal open={classLevelModal} onClose={() => setClassLevelModal(false)} title={editingClassLevel ? "Edit Level" : "Add Level"}>
+        <div className="space-y-4">
+          {classLevelFormError && <ErrorAlert message={classLevelFormError} />}
+          <div>
+            <label className="block text-sm font-medium mb-1">Name *</label>
+            <Input
+              value={classLevelForm.name}
+              onChange={(e) => setClassLevelForm({ ...classLevelForm, name: e.target.value })}
+              placeholder="e.g. Toddlers, Pre-Kinder, SPED 1"
+              autoFocus
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Kind *</label>
+            <Select value={classLevelForm.kind} onChange={(e) => setClassLevelForm({ ...classLevelForm, kind: e.target.value as ClassLevelKind })}>
+              {CLASS_LEVEL_KINDS.map((k) => (
+                <option key={k.value} value={k.value}>{k.label}</option>
+              ))}
+            </Select>
+            <p className="text-xs text-muted-foreground mt-1">
+              {CLASS_LEVEL_KINDS.find((k) => k.value === classLevelForm.kind)?.hint}
+            </p>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <ModalCancelButton />
+            <Button onClick={saveClassLevel} disabled={saving || !classLevelForm.name.trim()}>
+              {saving ? "Saving…" : "Save"}
+            </Button>
           </div>
         </div>
       </Modal>

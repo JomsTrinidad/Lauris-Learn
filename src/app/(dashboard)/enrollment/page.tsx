@@ -278,7 +278,7 @@ export default function EnrollmentPage() {
       .from("enrollment_inquiries")
       .select(`id, child_name, parent_name, contact, email, desired_class_id, inquiry_source,
         status, notes, next_follow_up, created_at, school_year_id,
-        classes(name, level), school_years(name)`)
+        classes(name, class_levels(name)), school_years(name)`)
       .eq("school_id", schoolId!)
       .order("created_at", { ascending: false });
 
@@ -298,7 +298,7 @@ export default function EnrollmentPage() {
           email: i.email ?? "",
           desiredClass: cls?.name ?? "—",
           desiredClassId: i.desired_class_id ?? null,
-          desiredClassLevel: cls?.level ?? null,
+          desiredClassLevel: cls?.class_levels?.name ?? null,
           schoolYear: yr?.name ?? "—",
           inquirySource: i.inquiry_source ?? "",
           status: i.status as InquiryStatus,
@@ -315,7 +315,7 @@ export default function EnrollmentPage() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data } = await (supabase as any)
       .from("classes")
-      .select("id, name, level, start_time, capacity")
+      .select("id, name, start_time, capacity, class_levels(name)")
       .eq("school_id", schoolId!)
       .eq("school_year_id", activeYear.id)
       .eq("is_active", true)
@@ -331,7 +331,7 @@ export default function EnrollmentPage() {
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    setClassOptions((data ?? []).map((c: any) => ({ id: c.id, name: c.name, level: c.level ?? "", startTime: c.start_time ?? null, capacity: c.capacity ?? 0, enrolled: enrolledByClass[c.id] ?? 0 })));
+    setClassOptions((data ?? []).map((c: any) => ({ id: c.id, name: c.name, level: c.class_levels?.name ?? "", startTime: c.start_time ?? null, capacity: c.capacity ?? 0, enrolled: enrolledByClass[c.id] ?? 0 })));
   }
 
   async function loadPendingPlacements() {
@@ -355,7 +355,7 @@ export default function EnrollmentPage() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: sysCls } = await (supabase as any)
       .from("classes")
-      .select("id, level")
+      .select("id, class_levels(name)")
       .eq("school_id", schoolId)
       .eq("school_year_id", activeYear.id)
       .eq("is_system", true);
@@ -364,7 +364,7 @@ export default function EnrollmentPage() {
 
     const levelByClassId: Record<string, string> = {};
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (sysCls as any[]).forEach((c: { id: string; level: string }) => { levelByClassId[c.id] = c.level ?? "—"; });
+    (sysCls as any[]).forEach((c: { id: string; class_levels: { name: string } | null }) => { levelByClassId[c.id] = c.class_levels?.name ?? "—"; });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const sysIds = (sysCls as any[]).map((c: { id: string }) => c.id);
 
@@ -571,7 +571,7 @@ export default function EnrollmentPage() {
       guardianName: primaryG?.full_name ?? "—", guardianPhone: primaryG?.phone ?? "—",
       lastSchoolYearName: displayEnroll?.school_years?.name ?? "—",
       lastClassName: displayEnroll?.classes?.name ?? "—",
-      lastClassLevel: displayEnroll?.classes?.level ?? "—",
+      lastClassLevel: displayEnroll?.classes?.class_levels?.name ?? "—",
       progressionStatus, progressionNotes, recommendedNextLevel, derivedStatus, activeYearClassName,
     };
   }
@@ -591,7 +591,7 @@ export default function EnrollmentPage() {
           guardians(full_name, phone, is_primary),
           enrollments(
             id, status, progression_status, progression_notes, school_year_id,
-            classes(name, level, next_level),
+            classes(name, next_level, class_levels(name)),
             school_years(name)
           )
         `)
@@ -620,7 +620,7 @@ export default function EnrollmentPage() {
           guardians(full_name, phone, is_primary),
           enrollments(
             id, status, progression_status, progression_notes, school_year_id,
-            classes(name, level, next_level),
+            classes(name, next_level, class_levels(name)),
             school_years(name)
           )
         `)
@@ -662,7 +662,7 @@ export default function EnrollmentPage() {
         guardians(full_name, phone, is_primary),
         enrollments(
           id, status, progression_status, progression_notes, school_year_id,
-          classes(name, level, next_level),
+          classes(name, next_level, class_levels(name)),
           school_years(name)
         )
       `)

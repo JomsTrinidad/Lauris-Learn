@@ -220,14 +220,14 @@ export default function BillingPage() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result = await (supabase as any)
       .from("enrollments")
-      .select("student_id, class_id, students(first_name, last_name, student_code), classes(name, level)")
+      .select("student_id, class_id, students(first_name, last_name, student_code), classes(name, class_levels(name))")
       .eq("school_year_id", activeYear.id).eq("status", "enrolled");
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     setStudentOptions(((result.data ?? []) as any[]).map((e: any) => ({
       id: e.student_id,
       name: e.students ? `${e.students.first_name} ${e.students.last_name}` : e.student_id,
       studentCode: e.students?.student_code ?? null,
-      classId: e.class_id ?? null, className: e.classes?.name ?? "—", level: e.classes?.level ?? "",
+      classId: e.class_id ?? null, className: e.classes?.name ?? "—", level: e.classes?.class_levels?.name ?? "",
     })).sort((a: StudentOption, b: StudentOption) => a.name.localeCompare(b.name)));
   }
 
@@ -242,16 +242,17 @@ export default function BillingPage() {
   async function loadClasses() {
     if (!activeYear?.id || !schoolId) return;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data } = await (supabase as any).from("classes").select("id, name, level")
+    const { data } = await (supabase as any).from("classes").select("id, name, class_levels(name)")
       .eq("school_id", schoolId).eq("school_year_id", activeYear.id).eq("is_active", true).eq("is_system", false).order("name");
-    const rows = (data ?? []) as { id: string; name: string; level: string | null }[];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows = (data ?? []) as Array<{ id: string; name: string; class_levels: { name: string } | null }>;
     if (rows.length > 0) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: enr } = await (supabase as any).from("enrollments").select("class_id").in("class_id", rows.map((r) => r.id)).eq("status", "enrolled");
       const countByClass: Record<string, number> = {};
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ((enr ?? []) as any[]).forEach((e: { class_id: string }) => { countByClass[e.class_id] = (countByClass[e.class_id] ?? 0) + 1; });
-      setClassOptions(rows.map((r) => ({ id: r.id, name: r.name, level: r.level ?? "", enrolled: countByClass[r.id] ?? 0 })));
+      setClassOptions(rows.map((r) => ({ id: r.id, name: r.name, level: r.class_levels?.name ?? "", enrolled: countByClass[r.id] ?? 0 })));
     } else { setClassOptions([]); }
   }
 

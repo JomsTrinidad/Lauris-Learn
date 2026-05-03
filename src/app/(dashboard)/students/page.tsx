@@ -26,7 +26,7 @@ import { useSchoolContext } from "@/contexts/SchoolContext";
 
 type EnrollmentStatus = "enrolled" | "waitlisted" | "inquiry" | "withdrawn" | "completed";
 type CommPref = "app" | "sms_phone" | "printed_note" | "in_person" | "assisted_by_school";
-type ClassificationAction = "eligible" | "not_eligible_retained" | "not_eligible_other" | "graduated" | "not_continuing" | "unset";
+type ClassificationAction = "eligible" | "not_eligible_retained" | "not_eligible_other" | "graduated" | "not_continuing" | "withdrawn" | "unset";
 type StudentsTab = "students" | "promote";
 
 const COMM_PREF_LABELS: Record<CommPref, string> = {
@@ -260,8 +260,15 @@ export default function StudentsPage() {
   }, [schoolId, activeYear?.id]);
 
   useEffect(() => {
-    if (activeTab === "promote" && !promoteInitialized && schoolId) {
+    if (!schoolId) return;
+    if (activeTab === "promote" && !promoteInitialized) {
       loadPromoteSetup();
+      return;
+    }
+    // Once the Promote tab has been visited, switching back to Students refetches
+    // so just-saved classifications are reflected without a manual reload.
+    if (activeTab === "students" && promoteInitialized) {
+      loadStudents();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, promoteInitialized, schoolId]);
@@ -349,7 +356,7 @@ export default function StudentsPage() {
         allergies, medical_conditions, emergency_contact_name, emergency_contact_phone,
         authorized_pickups, primary_language, special_needs, teacher_notes, admin_notes,
         guardians(id, full_name, relationship, phone, email, is_primary, communication_preference),
-        enrollments(id, status, class_id, school_year_id, academic_period_id, start_date, end_date, created_at, progression_status, progression_notes, classes(name, level, next_level), academic_periods(name), school_years(name))
+        enrollments(id, status, class_id, school_year_id, academic_period_id, start_date, end_date, created_at, progression_status, progression_notes, classes(name, next_level, class_levels(name)), academic_periods(name), school_years(name))
       `)
       .eq("school_id", schoolId!)
       .eq("is_active", true)
@@ -377,7 +384,7 @@ export default function StudentsPage() {
           id: e.id,
           classId: e.class_id,
           className: e.classes?.name ?? "—",
-          classLevel: e.classes?.level ?? "",
+          classLevel: e.classes?.class_levels?.name ?? "",
           periodId: e.academic_period_id ?? null,
           periodName: e.academic_periods?.name ?? null,
           schoolYearId: e.school_year_id,
@@ -407,7 +414,7 @@ export default function StudentsPage() {
           preferredName: sx.preferred_name ?? null,
           classId: activeEnrollment?.class_id ?? null,
           className: activeEnrollment?.classes?.name ?? "—",
-          classLevel: activeEnrollment?.classes?.level ?? "",
+          classLevel: activeEnrollment?.classes?.class_levels?.name ?? "",
           enrollmentId: activeEnrollment?.id ?? null,
           enrollmentStatus: activeEnrollment?.status ?? null,
           enrollmentYearId: activeEnrollment?.school_year_id ?? null,
@@ -450,7 +457,7 @@ export default function StudentsPage() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data } = await (supabase as any)
       .from("classes")
-      .select("id, name, level, capacity")
+      .select("id, name, capacity, class_levels(name)")
       .eq("school_id", schoolId!)
       .eq("school_year_id", activeYear.id)
       .eq("is_active", true)
@@ -474,7 +481,7 @@ export default function StudentsPage() {
     setClassOptions(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (data ?? []).map((c: any) => ({
-        id: c.id, name: c.name, level: c.level ?? "", capacity: c.capacity ?? 0, enrolled: enrolledByClass[c.id] ?? 0,
+        id: c.id, name: c.name, level: c.class_levels?.name ?? "", capacity: c.capacity ?? 0, enrolled: enrolledByClass[c.id] ?? 0,
       }))
     );
   }
@@ -639,11 +646,20 @@ export default function StudentsPage() {
       } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
     }
 
-    const progressionPayload = {
+    // Mirror /api/students/promote so the per-student override behaves the
+    // same as bulk Year-End Classification:
+    //   - 'withdrawn'   → enrollments.status = 'withdrawn' (mid-year exit)
+    //   - any other classification → enrollments.status = 'completed' (year done)
+    //   - clearing the classification → leave status untouched (don't auto-revert
+    //     a previously completed/withdrawn enrollment back to enrolled)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const progressionPayload: any = {
       progression_status: editForm.progressionStatus || null,
       progression_notes: editForm.progressionNotes.trim() || null,
-      slot_reserved_at: editForm.progressionStatus === "slot_reserved" ? new Date().toISOString() : undefined,
     };
+    if (editForm.progressionStatus) {
+      progressionPayload.status = editForm.progressionStatus === "withdrawn" ? "withdrawn" : "completed";
+    }
     if (editingStudent.enrollmentId) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await (supabase as any).from("enrollments").update(progressionPayload).eq("id", editingStudent.enrollmentId);
@@ -744,7 +760,7 @@ export default function StudentsPage() {
       .select(`
         id, student_id, progression_notes,
         students(first_name, last_name, school_id),
-        classes(name, level),
+        classes(name, class_levels(name)),
         school_years(name)
       `)
       .eq("status", "completed")
@@ -780,7 +796,7 @@ export default function StudentsPage() {
         enrollmentId: e.id,
         studentId: e.student_id,
         studentName: e.students ? `${e.students.first_name} ${e.students.last_name}` : e.student_id,
-        currentLevel: e.classes?.level ?? "",
+        currentLevel: e.classes?.class_levels?.name ?? "",
         progressionNotes: e.progression_notes ?? null,
         sourceYearName: e.school_years?.name ?? "—",
         sourceClassName: e.classes?.name ?? "—",
@@ -872,7 +888,7 @@ export default function StudentsPage() {
       .select(`
         id, student_id, class_id,
         students(first_name, last_name),
-        classes(id, name, level, next_level)
+        classes(id, name, next_level, class_levels(name))
       `)
       .eq("school_year_id", src)
       .eq("status", "enrolled")
@@ -892,7 +908,7 @@ export default function StudentsPage() {
         currentEnrollmentId: e.id,
         currentClassId: e.class_id,
         currentClassName: cls?.name ?? "—",
-        currentClassLevel: cls?.level ?? "",
+        currentClassLevel: cls?.class_levels?.name ?? "",
         nextLevel,
         classification: (nextLevel === "GRADUATE" ? "graduated" : nextLevel && nextLevel !== "NON_PROMOTIONAL" ? "eligible" : "unset") as ClassificationAction,
       };
@@ -941,9 +957,10 @@ export default function StudentsPage() {
         case "eligible":             return r.nextLevel && r.nextLevel !== "GRADUATE" && r.nextLevel !== "NON_PROMOTIONAL"
                                       ? `Eligible for ${r.nextLevel}` : "Eligible for next level";
         case "not_eligible_retained": return `Retained in ${r.currentClassLevel || "current level"}`;
-        case "not_eligible_other":   return "Not eligible — other reason";
+        case "not_eligible_other":   return "Requires review";
         case "graduated":            return `Graduated from ${r.currentClassLevel || "current level"}`;
-        case "not_continuing":       return "Withdrawn";
+        case "not_continuing":       return "Not continuing next school year";
+        case "withdrawn":            return "Withdrawn during school year";
         default: return "";
       }
     }
@@ -1098,6 +1115,7 @@ export default function StudentsPage() {
   const otherCount      = classPromoteRows.filter((r) => r.classification === "not_eligible_other").length;
   const graduatedCount  = classPromoteRows.filter((r) => r.classification === "graduated").length;
   const notContCount    = classPromoteRows.filter((r) => r.classification === "not_continuing").length;
+  const withdrawnCount  = classPromoteRows.filter((r) => r.classification === "withdrawn").length;
   const unsetCount      = classPromoteRows.filter((r) => r.classification === "unset").length;
   const classifiedCount = classPromoteRows.length - unsetCount;
 
@@ -1247,7 +1265,7 @@ export default function StudentsPage() {
                 <thead className="bg-muted border-b border-border">
                   <tr>
                     <th className="text-left px-5 py-3 font-medium text-muted-foreground">Student</th>
-                    <th className="text-left px-5 py-3 font-medium text-muted-foreground">Class</th>
+                    <th className="text-left px-5 py-3 font-medium text-muted-foreground">Level</th>
                     <th className="text-left px-5 py-3 font-medium text-muted-foreground">School Year - Status</th>
                     <th className="text-left px-5 py-3 font-medium text-muted-foreground">Parent / Guardian</th>
                     <th className="text-left px-5 py-3 font-medium text-muted-foreground">Contact</th>
@@ -1290,7 +1308,7 @@ export default function StudentsPage() {
                             </div>
                           </div>
                         </td>
-                        <td className="px-5 py-4 text-muted-foreground">{disp.className}</td>
+                        <td className="px-5 py-4 text-muted-foreground">{disp.classLevel || "—"}</td>
                         <td className="px-5 py-4">
                           {disp.isPending ? (
                             <span className="text-xs font-medium whitespace-nowrap text-foreground">
@@ -1317,21 +1335,42 @@ export default function StudentsPage() {
                               ps === "not_eligible_retained" ? "text-amber-700 bg-amber-50 border-amber-200" :
                               ps === "not_eligible_other"    ? "text-orange-700 bg-orange-50 border-orange-200" :
                               ps === "graduated"             ? "text-muted-foreground bg-muted border-border" :
-                              ps === "not_continuing"        ? "text-red-700 bg-red-50 border-red-200" :
+                              ps === "not_continuing"        ? "text-rose-700 bg-rose-50 border-rose-200" :
+                              ps === "withdrawn"             ? "text-red-700 bg-red-50 border-red-200" :
                                                               "text-muted-foreground bg-muted border-border";
                             const label =
                               ps === "eligible"              ? "Eligible" :
                               ps === "not_eligible_retained" ? "Retained" :
-                              ps === "not_eligible_other"    ? "Not Eligible" :
+                              ps === "not_eligible_other"    ? "Needs Review" :
                               ps === "graduated"             ? "Graduated" :
-                              ps === "not_continuing"        ? "Not Continuing" : ps;
+                              ps === "not_continuing"        ? "Not Continuing" :
+                              ps === "withdrawn"             ? "Withdrawn" : ps;
+                            // Resolve what to show under the classification badge.
+                            // Mirrors the Year-End table's logic so the two views stay consistent.
+                            //   - graduated / not_continuing / withdrawn → no next level (terminal state)
+                            //   - not_eligible_retained → student stays at current level
+                            //   - otherwise → class's promotion-path target, pretty-printed
+                            let nextLine: { display: string; showYear: boolean } | null = null;
+                            if (ps === "not_eligible_retained") {
+                              if (student.classLevel) nextLine = { display: student.classLevel, showYear: true };
+                            } else if (ps !== "graduated" && ps !== "not_continuing" && ps !== "withdrawn") {
+                              const nl = student.recommendedNextLevel;
+                              if (nl) {
+                                nextLine = {
+                                  display: nl === "GRADUATE" ? "Graduate / Moving Up"
+                                         : nl === "NON_PROMOTIONAL" ? "Non-promotional"
+                                         : nl,
+                                  showYear: nl !== "GRADUATE" && nl !== "NON_PROMOTIONAL",
+                                };
+                              }
+                            }
                             return (
                               <div className="space-y-0.5">
                                 <span className={`inline-block px-2 py-0.5 rounded-full border text-xs font-medium ${color}`}>{label}</span>
-                                {student.recommendedNextLevel && (
+                                {nextLine && (
                                   <p className="text-xs text-muted-foreground">
-                                    → {student.recommendedNextLevel}
-                                    {nextLevelYear && <span> ({nextLevelYear.name})</span>}
+                                    → {nextLine.display}
+                                    {nextLine.showYear && nextLevelYear && <span> ({nextLevelYear.name})</span>}
                                   </p>
                                 )}
                               </div>
@@ -1574,6 +1613,10 @@ export default function StudentsPage() {
                           <tr className="bg-muted border-b border-border">
                             <th className="text-left px-4 py-3 font-medium text-muted-foreground">Student</th>
                             <th className="text-left px-4 py-3 font-medium text-muted-foreground">
+                              Current Level
+                              {sourceYear && <p className="text-xs font-normal text-muted-foreground/60 mt-0.5">{sourceYear.name}</p>}
+                            </th>
+                            <th className="text-left px-4 py-3 font-medium text-muted-foreground">
                               Recommended Next Level
                               {targetYear && <p className="text-xs font-normal text-muted-foreground/60 mt-0.5">{targetYear.name}</p>}
                             </th>
@@ -1586,7 +1629,10 @@ export default function StudentsPage() {
                             <tr key={row.studentId} className={`transition-colors ${row.classification === "unset" ? "hover:bg-muted/30" : "hover:bg-muted/40"}`}>
                               <td className="px-4 py-3 font-medium">{row.studentName}</td>
                               <td className="px-4 py-3">
-                                {row.classification === "graduated" || row.classification === "not_continuing" ? (
+                                <span className="text-xs font-medium">{row.currentClassLevel || "—"}</span>
+                              </td>
+                              <td className="px-4 py-3">
+                                {row.classification === "graduated" || row.classification === "not_continuing" || row.classification === "withdrawn" ? (
                                   <span className="text-xs text-muted-foreground">—</span>
                                 ) : row.classification === "not_eligible_retained" ? (
                                   <span className="text-xs font-medium">{row.currentClassLevel || "—"}</span>
@@ -1614,20 +1660,29 @@ export default function StudentsPage() {
                                       Graduate
                                     </ActionBtn>
                                   )}
-                                  {!isGraduatingClass && (
-                                    <ActionBtn active={row.classification === "not_continuing"} onClick={() => setRowClassification(row.studentId, "not_continuing")}
-                                      className="text-rose-600 border-rose-300 bg-rose-50">
-                                      Withdrawn
-                                    </ActionBtn>
-                                  )}
                                   <ActionBtn active={row.classification === "not_eligible_retained"} onClick={() => setRowClassification(row.studentId, "not_eligible_retained")}
                                     className="text-amber-600 border-amber-300 bg-amber-50">
                                     Retain
                                   </ActionBtn>
                                   <ActionBtn active={row.classification === "not_eligible_other"} onClick={() => setRowClassification(row.studentId, "not_eligible_other")}
                                     className="text-orange-600 border-orange-300 bg-orange-50">
-                                    Other
+                                    Needs Review
                                   </ActionBtn>
+                                  {/* Not Continuing only makes sense when the student is finishing a year that has a real next level to continue to.
+                                       Hide for graduating classes (nextLevel === "GRADUATE") and unset paths (no nextLevel).
+                                       Keep visible if the row already has the value saved, so legacy picks aren't lost. */}
+                                  {((row.nextLevel && row.nextLevel !== "GRADUATE") || row.classification === "not_continuing") && (
+                                    <ActionBtn active={row.classification === "not_continuing"} onClick={() => setRowClassification(row.studentId, "not_continuing")}
+                                      className="text-rose-600 border-rose-300 bg-rose-50">
+                                      Not Continuing
+                                    </ActionBtn>
+                                  )}
+                                  {(!isGraduatingClass || row.classification === "withdrawn") && (
+                                    <ActionBtn active={row.classification === "withdrawn"} onClick={() => setRowClassification(row.studentId, "withdrawn")}
+                                      className="text-red-700 border-red-300 bg-red-50">
+                                      Withdrawn
+                                    </ActionBtn>
+                                  )}
                                 </div>
                               </td>
                             </tr>
@@ -1648,13 +1703,16 @@ export default function StudentsPage() {
                         <p><span className="font-semibold text-amber-600">{retainedCount} student{retainedCount !== 1 ? "s" : ""}</span> retained</p>
                       )}
                       {otherCount > 0 && (
-                        <p><span className="font-semibold text-orange-600">{otherCount} student{otherCount !== 1 ? "s" : ""}</span> not eligible — other reason</p>
+                        <p><span className="font-semibold text-orange-600">{otherCount} student{otherCount !== 1 ? "s" : ""}</span> needs review</p>
                       )}
                       {graduatedCount > 0 && (
                         <p><span className="font-semibold text-green-700">{graduatedCount} student{graduatedCount !== 1 ? "s" : ""}</span> graduated</p>
                       )}
                       {notContCount > 0 && (
-                        <p className="text-muted-foreground text-xs">{notContCount} withdrawn</p>
+                        <p className="text-muted-foreground text-xs">{notContCount} not continuing</p>
+                      )}
+                      {withdrawnCount > 0 && (
+                        <p className="text-muted-foreground text-xs">{withdrawnCount} withdrawn (mid-year)</p>
                       )}
                       {unsetCount > 0 && (
                         <p className="text-muted-foreground text-xs">{unsetCount} not yet classified</p>
@@ -1807,24 +1865,36 @@ export default function StudentsPage() {
               </div>
             )}
 
-            {selectedStudent.progressionStatus && (
-              <div className="border border-border rounded-lg p-4 text-sm">
-                <p className="font-semibold text-xs uppercase tracking-wide text-muted-foreground mb-2">Next Year Progression</p>
-                <div className="flex items-center gap-2">
-                  <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${
-                    selectedStudent.progressionStatus === "slot_reserved" ? "bg-green-100 text-green-700" :
-                    selectedStudent.progressionStatus === "not_continuing" ? "bg-red-100 text-red-700" :
-                    selectedStudent.progressionStatus === "intent_confirmed" ? "bg-blue-100 text-blue-700" :
-                    "bg-muted text-muted-foreground"
-                  }`}>
-                    {selectedStudent.progressionStatus.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
-                  </span>
+            {selectedStudent.progressionStatus && (() => {
+              const ps = selectedStudent.progressionStatus;
+              const color =
+                ps === "eligible"              ? "bg-green-100 text-green-700" :
+                ps === "not_eligible_retained" ? "bg-amber-100 text-amber-700" :
+                ps === "not_eligible_other"    ? "bg-orange-100 text-orange-700" :
+                ps === "graduated"             ? "bg-muted text-muted-foreground" :
+                ps === "not_continuing"        ? "bg-rose-100 text-rose-700" :
+                ps === "withdrawn"             ? "bg-red-100 text-red-700" :
+                                                 "bg-muted text-muted-foreground";
+              const label =
+                ps === "eligible"              ? "Eligible" :
+                ps === "not_eligible_retained" ? "Retained" :
+                ps === "not_eligible_other"    ? "Needs Review" :
+                ps === "graduated"             ? "Graduated" :
+                ps === "not_continuing"        ? "Not Continuing" :
+                ps === "withdrawn"             ? "Withdrawn" :
+                  ps.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+              return (
+                <div className="border border-border rounded-lg p-4 text-sm">
+                  <p className="font-semibold text-xs uppercase tracking-wide text-muted-foreground mb-2">Year-End Classification</p>
+                  <div className="flex items-center gap-2">
+                    <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${color}`}>{label}</span>
+                  </div>
+                  {selectedStudent.progressionNotes && (
+                    <p className="mt-1 text-muted-foreground">{selectedStudent.progressionNotes}</p>
+                  )}
                 </div>
-                {selectedStudent.progressionNotes && (
-                  <p className="mt-1 text-muted-foreground">{selectedStudent.progressionNotes}</p>
-                )}
-              </div>
-            )}
+              );
+            })()}
 
             <div className="border border-border rounded-lg p-4 space-y-3 text-sm">
               <div className="flex items-center justify-between">
@@ -2075,21 +2145,24 @@ export default function StudentsPage() {
             </SectionToggle>
 
             {isEdit && (
-              <SectionToggle title="Next Year Progression">
+              <SectionToggle title="Year-End Classification">
+                <p className="text-xs text-muted-foreground -mt-1">
+                  Use this to override an individual student&apos;s outcome — typically when bulk Year-End Classification flagged them as <strong>Needs Review</strong>.
+                </p>
                 <div>
-                  <label className="block text-sm font-medium mb-1">Progression Status</label>
+                  <label className="block text-sm font-medium mb-1">Classification</label>
                   <Select value={f.progressionStatus} onChange={(e) => setF({ ...f, progressionStatus: e.target.value })}>
                     <option value="">— Not set —</option>
                     <option value="eligible">Eligible for Next Level</option>
-                    <option value="intent_confirmed">Parent Expressed Intent to Continue</option>
-                    <option value="slot_reserved">Slot Reserved</option>
+                    <option value="graduated">Graduate</option>
+                    <option value="not_eligible_retained">Retain</option>
                     <option value="not_continuing">Not Continuing</option>
-                    <option value="undecided">Undecided</option>
+                    <option value="withdrawn">Withdrawn</option>
                   </Select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-1">Progression Notes</label>
-                  <Textarea value={f.progressionNotes} onChange={(e) => setF({ ...f, progressionNotes: e.target.value })} rows={2} placeholder="Notes about next year enrollment intent..." />
+                  <label className="block text-sm font-medium mb-1">Notes</label>
+                  <Textarea value={f.progressionNotes} onChange={(e) => setF({ ...f, progressionNotes: e.target.value })} rows={2} placeholder="Reason for this classification…" />
                 </div>
               </SectionToggle>
             )}
@@ -2369,7 +2442,7 @@ export default function StudentsPage() {
                     id: "promote",
                     icon: GraduationCap,
                     title: "Review and confirm promotion outcomes at year-end",
-                    searchText: "classify classification year-end eligible retain graduate not continuing end year promotion path next level section placement review recommendations exceptions outcome refresh",
+                    searchText: "classify classification year-end eligible retain graduate not continuing withdrawn needs review mid-year exit permanent leave end year promotion path next level section placement review recommendations exceptions outcome refresh",
                     body: (
                       <div className="space-y-2">
                         <p>Promotion outcomes are pre-filled from each class&apos;s Promotion Path. Review recommendations and handle individual exceptions.</p>
@@ -2377,8 +2450,17 @@ export default function StudentsPage() {
                           <Step n={1} text={<span>Open <strong>Year-End Classification</strong> and select a class.</span>} />
                           <Step n={2} text={<span><strong>Step 1</strong> shows the Promotion Path and recommended outcome. No action needed here.</span>} />
                           <Step n={3} text={<span>Wrong recommendation? Update the Promotion Path in <strong>Classes</strong>, then click <strong>Refresh</strong> in Step 1.</span>} />
-                          <Step n={4} text={<span><strong>Step 2</strong>: override individual students only — Retain, Withdraw, or Graduate as needed.</span>} />
+                          <Step n={4} text={<span><strong>Step 2</strong>: override individual students only — Retain, Needs Review, Not Continuing, Withdrawn, or Graduate as needed.</span>} />
                           <Step n={5} text={<span>Click <strong>Save Year-End Classifications</strong>.</span>} />
+                        </div>
+                        <div className="space-y-1.5 mt-3 pt-3 border-t border-border">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Outcomes</p>
+                          <p className="text-sm"><strong>Eligible</strong> — student moves up to the recommended next level.</p>
+                          <p className="text-sm"><strong>Graduate</strong> — student finishes the program (only on graduating classes).</p>
+                          <p className="text-sm"><strong>Retain</strong> — student stays in the same level next year.</p>
+                          <p className="text-sm"><strong>Needs Review</strong> — outcome undecided; requires further evaluation before promotion.</p>
+                          <p className="text-sm"><strong>Not Continuing</strong> — student completed the year but will not return next school year (permanent exit after the year).</p>
+                          <p className="text-sm"><strong>Withdrawn</strong> — student left before completing the school year and may return later. Year is not treated as completed; remains eligible for future enrollment.</p>
                         </div>
                         <Note><strong>Recommended Next Level</strong> shows a level, not a section. Section assignment happens at enrollment.</Note>
                         <Note>Promotion Path Not Set (amber)? Edit the class in <strong>Classes</strong> first.</Note>

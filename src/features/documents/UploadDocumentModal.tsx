@@ -106,26 +106,26 @@ export function UploadDocumentModal({
   }, [open, defaultStudentId]);
 
   // ── Load students for picker ──────────────────────────────────────────────
+  // Fetches student_code + date_of_birth so we can disambiguate duplicate names
+  // (e.g. multiple "Aaron Gonzalez" rows from repeated demo seeds). The
+  // discriminator is only appended when the base name actually collides.
   useEffect(() => {
     if (!open || !schoolId) return;
     let cancelled = false;
     setStudentsLoading(true);
     supabase
       .from("students")
-      .select("id, first_name, last_name")
+      .select("id, first_name, last_name, student_code, date_of_birth")
       .eq("school_id", schoolId)
+      .eq("is_active", true)
       .order("first_name", { ascending: true })
+      .order("last_name",  { ascending: true })
       .then(({ data, error: err }) => {
         if (cancelled) return;
         if (err) {
           setError(err.message);
         } else {
-          setStudents(
-            (data ?? []).map((s) => ({
-              id: s.id,
-              name: `${s.first_name} ${s.last_name}`.trim(),
-            })),
-          );
+          setStudents(buildStudentOptions(data ?? []));
         }
         setStudentsLoading(false);
       });
@@ -445,6 +445,46 @@ function Field({
       {children}
     </div>
   );
+}
+
+interface StudentRowFromDB {
+  id: string;
+  first_name: string;
+  last_name: string;
+  student_code: string | null;
+  date_of_birth: string | null;
+}
+
+/**
+ * Produce dropdown labels from raw student rows. When a base name (first +
+ * last) collides, append the smallest discriminator that uniquely identifies
+ * the row, in this order: student_code → date_of_birth → short id.
+ *
+ * Non-colliding names render with no suffix — the common case stays clean.
+ */
+function buildStudentOptions(rows: StudentRowFromDB[]): StudentOption[] {
+  const baseNameOf = (r: StudentRowFromDB) =>
+    `${r.first_name} ${r.last_name}`.trim();
+
+  const counts = new Map<string, number>();
+  for (const r of rows) {
+    const k = baseNameOf(r).toLowerCase();
+    counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+
+  return rows.map((r) => {
+    const base = baseNameOf(r);
+    const isDup = (counts.get(base.toLowerCase()) ?? 0) > 1;
+    if (!isDup) return { id: r.id, name: base };
+
+    if (r.student_code && r.student_code.trim().length > 0) {
+      return { id: r.id, name: `${base} · ${r.student_code}` };
+    }
+    if (r.date_of_birth) {
+      return { id: r.id, name: `${base} (b. ${r.date_of_birth})` };
+    }
+    return { id: r.id, name: `${base} · #${r.id.slice(-6)}` };
+  });
 }
 
 function guessMimeFromExt(ext: string): string {

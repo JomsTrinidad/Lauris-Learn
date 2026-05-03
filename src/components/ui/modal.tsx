@@ -9,7 +9,11 @@ export function useModalClose() { return useContext(ModalCloseCtx); }
 
 export function ModalCancelButton({ label = "Cancel" }: { label?: string }) {
   const tryClose = useModalClose();
-  return <Button variant="outline" onClick={tryClose}>{label}</Button>;
+  // type="button" is REQUIRED — without it, browsers default <button> to
+  // type="submit" inside a <form>, which silently submits the form when the
+  // user clicks Cancel. That bypassed the dirty-changes confirm prompt
+  // because the form's onSubmit path closes the modal on success.
+  return <Button type="button" variant="outline" onClick={tryClose}>{label}</Button>;
 }
 
 interface ModalProps {
@@ -23,6 +27,7 @@ interface ModalProps {
 export function Modal({ open, onClose, title, children, className }: ModalProps) {
   const [isDirty, setIsDirty] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const overlayRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const backdropMouseDown = useRef(false);
   const onCloseRef = useRef(onClose);
@@ -36,12 +41,20 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
     setShowConfirm(false);
   }, [open]);
 
-  // Detect any form field change inside the modal content
+  // Detect any form field change inside the modal content. Nested modals also
+  // render inside this contentRef, so their events bubble up — ignore any
+  // event whose nearest [data-modal-overlay] is a different (nested) modal.
   useEffect(() => {
     if (!open) return;
     const el = contentRef.current;
     if (!el) return;
-    const mark = () => setIsDirty(true);
+    const mark = (e: Event) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      const closestOverlay = target.closest("[data-modal-overlay]");
+      if (closestOverlay !== overlayRef.current) return;
+      setIsDirty(true);
+    };
     el.addEventListener("input", mark);
     el.addEventListener("change", mark);
     return () => {
@@ -82,6 +95,8 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
   return (
     <ModalCloseCtx.Provider value={tryClose}>
       <div
+        ref={overlayRef}
+        data-modal-overlay
         className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
         onMouseDown={(e) => { backdropMouseDown.current = e.target === e.currentTarget; }}
         onClick={(e) => { if (e.target === e.currentTarget && backdropMouseDown.current) tryClose(); }}
@@ -97,6 +112,7 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
           <div className="flex items-center justify-between p-6 border-b border-border">
             <h2 className="text-lg font-semibold">{title}</h2>
             <button
+              type="button"
               onClick={tryClose}
               className="p-1 hover:bg-accent rounded-lg transition-colors"
             >
@@ -113,12 +129,14 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
               </div>
               <div className="flex items-center gap-2 flex-shrink-0">
                 <button
+                  type="button"
                   onClick={() => setShowConfirm(false)}
                   className="text-xs font-medium text-amber-800 hover:text-amber-900 px-2 py-1 rounded hover:bg-amber-100 transition-colors"
                 >
                   Keep editing
                 </button>
                 <button
+                  type="button"
                   onClick={doClose}
                   className="text-xs font-medium text-white bg-amber-600 hover:bg-amber-700 px-3 py-1 rounded transition-colors"
                 >

@@ -8,6 +8,7 @@ const VALID_CLASSIFICATIONS = [
   "not_eligible_other",
   "graduated",
   "not_continuing",
+  "withdrawn",
 ] as const;
 type ClassificationStatus = (typeof VALID_CLASSIFICATIONS)[number];
 
@@ -111,10 +112,15 @@ export async function POST(req: NextRequest) {
   const result: ClassifyResult = { classified: 0, errors: [] };
 
   for (const row of parsedClassify) {
+    // "withdrawn" = mid-year exit. Year is NOT treated as completed; the
+    // enrollment status mirrors a normal mid-year withdrawal so the student
+    // remains eligible for future enrollment flows.
+    const enrollmentStatus = row.classificationStatus === "withdrawn" ? "withdrawn" : "completed";
+
     const { error: updErr } = await admin
       .from("enrollments")
       .update({
-        status:             "completed",
+        status:             enrollmentStatus,
         progression_status: row.classificationStatus,
         progression_notes:  row.notes || null,
       })
@@ -132,7 +138,7 @@ export async function POST(req: NextRequest) {
         recordId:    row.enrollmentId,
         action:      "UPDATE",
         newValues:   {
-          status:             "completed",
+          status:             enrollmentStatus,
           progression_status: row.classificationStatus,
           source:             "year_end_classification",
         },

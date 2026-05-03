@@ -173,7 +173,7 @@ export default function FinancePage() {
         .order("last_name"),
       supabase
         .from("classes")
-        .select("id, name, level, school_year_id")
+        .select("id, name, school_year_id, class_levels(name)")
         .eq("school_id", schoolId)
         .eq("is_active", true)
         .order("name"),
@@ -217,7 +217,7 @@ export default function FinancePage() {
     setClasses(((classesRes.data ?? []) as any[]).map((c: any) => ({
       id: c.id,
       name: c.name,
-      level: c.level ?? "",
+      level: c.class_levels?.name ?? "",
       schoolYearId: c.school_year_id,
     })));
 

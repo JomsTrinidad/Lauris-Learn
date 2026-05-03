@@ -61,6 +61,7 @@ interface ClassRecord {
   id: string;
   name: string;
   level: string;
+  levelId: string | null;
   startTime: string;
   endTime: string;
   teacherId: string | null;
@@ -78,9 +79,23 @@ interface TeacherOption {
   fullName: string;
 }
 
+type ClassLevelKind = "core" | "sped" | "bridge" | "summer" | "mixed_age" | "enrichment" | "other";
+
+interface ClassLevelOption {
+  id: string;
+  name: string;
+  kind: ClassLevelKind;
+  archived: boolean;
+}
+
+const CLASS_LEVEL_KIND_LABELS: Record<ClassLevelKind, string> = {
+  core: "Core", sped: "SPED", bridge: "Bridge", summer: "Summer",
+  mixed_age: "Mixed Age", enrichment: "Enrichment", other: "Other",
+};
+
 interface ClassForm {
   name: string;
-  level: string;
+  levelId: string;
   startTime: string;
   endTime: string;
   teacherId: string;
@@ -92,7 +107,7 @@ interface ClassForm {
 }
 
 const EMPTY_FORM: ClassForm = {
-  name: "", level: "", startTime: "08:00", endTime: "10:00",
+  name: "", levelId: "", startTime: "08:00", endTime: "10:00",
   teacherId: "", capacity: "20", isActive: true, meetingLink: "", messengerLink: "", nextLevel: "",
 };
 
@@ -102,6 +117,7 @@ export default function ClassesPage() {
 
   const [classes, setClasses] = useState<ClassRecord[]>([]);
   const [teachers, setTeachers] = useState<TeacherOption[]>([]);
+  const [classLevels, setClassLevels] = useState<ClassLevelOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -123,8 +139,24 @@ export default function ClassesPage() {
   async function loadAll() {
     setLoading(true);
     setError(null);
-    await Promise.all([loadClasses(), loadTeachers()]);
+    await Promise.all([loadClasses(), loadTeachers(), loadClassLevels()]);
     setLoading(false);
+  }
+
+  async function loadClassLevels() {
+    if (!schoolId) { setClassLevels([]); return; }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data } = await (supabase as any)
+      .from("class_levels")
+      .select("id, name, kind, archived_at, display_order")
+      .eq("school_id", schoolId)
+      .order("display_order")
+      .order("name");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    setClassLevels(((data ?? []) as any[]).map((l) => ({
+      id: l.id, name: l.name, kind: l.kind as ClassLevelKind,
+      archived: !!l.archived_at,
+    })));
   }
 
   async function loadClasses() {
@@ -134,7 +166,8 @@ export default function ClassesPage() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: classRows, error: classErr } = await (supabase as any)
       .from("classes")
-      .select(`id, name, level, start_time, end_time, capacity, is_active, meeting_link, messenger_link, next_level,
+      .select(`id, name, level_id, start_time, end_time, capacity, is_active, meeting_link, messenger_link, next_level,
+        class_levels(name),
         class_teachers(teacher_id, teacher:teacher_profiles(full_name))`)
       .eq("school_id", schoolId!)
       .eq("school_year_id", yearId)
@@ -162,7 +195,9 @@ export default function ClassesPage() {
         return {
           id: c.id,
           name: c.name,
-          level: c.level ?? "",
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          level: ((c as any).class_levels?.name as string | undefined) ?? "",
+          levelId: c.level_id ?? null,
           startTime: c.start_time,
           endTime: c.end_time,
           capacity: c.capacity ?? 0,
@@ -203,7 +238,7 @@ export default function ClassesPage() {
     setEditingClass(cls);
     setForm({
       name: cls.name,
-      level: cls.level,
+      levelId: cls.levelId ?? "",
       startTime: cls.startTime,
       endTime: cls.endTime,
       teacherId: cls.teacherId ?? "",
@@ -247,7 +282,7 @@ export default function ClassesPage() {
       school_id: schoolId!,
       school_year_id: activeYear.id,
       name: form.name.trim(),
-      level: form.level.trim() || null,
+      level_id: form.levelId || null,
       start_time: form.startTime,
       end_time: form.endTime,
       capacity: cap,
@@ -641,7 +676,7 @@ export default function ClassesPage() {
                           Summer Class · Bridge Class · Enrichment Class · Trial / Readiness Class · Mixed-age Program · After-school Program.
                         </Note>
                         <Note>Promotion Path is required. Year-End Classification reads from this field.</Note>
-                        <Tip>Fill in <strong>Level / Age Group</strong> on every class first — the Next Level dropdown is built from those values.</Tip>
+                        <Tip>The <strong>Level / Age Group</strong> dropdown is managed in <strong>Settings → Class Levels</strong>. Add core, SPED, bridge, summer, mixed-age, or enrichment levels there before assigning them here.</Tip>
                       </div>
                     ),
                   },
@@ -754,7 +789,34 @@ export default function ClassesPage() {
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">Level / Age Group</label>
-              <Input value={form.level} onChange={(e) => setForm({ ...form, level: e.target.value })} placeholder="e.g. 2–3 years" />
+              <Select value={form.levelId} onChange={(e) => setForm({ ...form, levelId: e.target.value })}>
+                <option value="">— None —</option>
+                {(() => {
+                  const grouped: Record<ClassLevelKind, ClassLevelOption[]> = {
+                    core: [], sped: [], bridge: [], summer: [], mixed_age: [], enrichment: [], other: [],
+                  };
+                  // Show active levels, plus the currently-selected level even if archived
+                  for (const l of classLevels) {
+                    if (!l.archived || l.id === form.levelId) grouped[l.kind].push(l);
+                  }
+                  return (Object.keys(grouped) as ClassLevelKind[])
+                    .filter((k) => grouped[k].length > 0)
+                    .map((k) => (
+                      <optgroup key={k} label={CLASS_LEVEL_KIND_LABELS[k]}>
+                        {grouped[k].map((l) => (
+                          <option key={l.id} value={l.id}>
+                            {l.name}{l.archived ? " (archived)" : ""}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ));
+                })()}
+              </Select>
+              {classLevels.filter((l) => !l.archived).length === 0 && (
+                <p className="text-xs text-amber-600 mt-1">
+                  No levels configured. Add some in <strong>Settings → Class Levels</strong> first.
+                </p>
+              )}
             </div>
           </div>
 
@@ -814,11 +876,25 @@ export default function ClassesPage() {
             <Select value={form.nextLevel} onChange={(e) => setForm({ ...form, nextLevel: e.target.value })}>
               <option value="">— Select next level —</option>
               <optgroup label="Next Level">
-                {[...new Set(classes.map((c) => c.level).filter((l): l is string => !!l))]
-                  .sort()
-                  .map((l) => (
-                    <option key={l} value={l}>{l}</option>
-                  ))}
+                {(() => {
+                  // Source from class_levels catalog so promotion targets exist as configured
+                  // levels even if no class currently uses them. Include archived levels only
+                  // when they're already the saved next_level value, so the existing pick stays
+                  // visible during edit.
+                  const names = classLevels
+                    .filter((l) => !l.archived || l.name === form.nextLevel)
+                    .map((l) => l.name);
+                  // Preserve any custom next_level value not in the catalog (legacy classes)
+                  if (form.nextLevel
+                    && form.nextLevel !== "GRADUATE"
+                    && form.nextLevel !== "NON_PROMOTIONAL"
+                    && !names.includes(form.nextLevel)) {
+                    names.push(form.nextLevel);
+                  }
+                  return [...new Set(names)]
+                    .sort()
+                    .map((l) => <option key={l} value={l}>{l}</option>);
+                })()}
               </optgroup>
               <optgroup label="Special Cases">
                 <option value="GRADUATE">Graduate / Moving Up</option>
