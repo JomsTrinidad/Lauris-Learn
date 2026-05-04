@@ -139,12 +139,177 @@ export type Database = {
           photo_url: string | null;
           notes: string | null;
           is_active: boolean;
+          child_profile_id: string | null;
           created_at: string;
           updated_at: string;
         };
-        Insert: { id?: string; school_id: string; first_name: string; last_name: string; date_of_birth?: string | null; gender?: string | null; photo_url?: string | null; notes?: string | null; is_active?: boolean; created_at?: string; updated_at?: string };
-        Update: { id?: string; school_id?: string; first_name?: string; last_name?: string; date_of_birth?: string | null; gender?: string | null; photo_url?: string | null; notes?: string | null; is_active?: boolean; updated_at?: string };
-        Relationships: [{ foreignKeyName: "students_school_id_fkey"; columns: ["school_id"]; isOneToOne: false; referencedRelation: "schools"; referencedColumns: ["id"] }];
+        Insert: { id?: string; school_id: string; first_name: string; last_name: string; date_of_birth?: string | null; gender?: string | null; photo_url?: string | null; notes?: string | null; is_active?: boolean; child_profile_id?: string | null; created_at?: string; updated_at?: string };
+        Update: { id?: string; school_id?: string; first_name?: string; last_name?: string; date_of_birth?: string | null; gender?: string | null; photo_url?: string | null; notes?: string | null; is_active?: boolean; child_profile_id?: string | null; updated_at?: string };
+        Relationships: [
+          { foreignKeyName: "students_school_id_fkey"; columns: ["school_id"]; isOneToOne: false; referencedRelation: "schools"; referencedColumns: ["id"] },
+          { foreignKeyName: "students_child_profile_id_fkey"; columns: ["child_profile_id"]; isOneToOne: false; referencedRelation: "child_profiles"; referencedColumns: ["id"] }
+        ];
+      };
+      child_profiles: {
+        Row: {
+          id: string;
+          display_name: string;
+          legal_name: string | null;
+          first_name: string | null;
+          middle_name: string | null;
+          last_name: string | null;
+          preferred_name: string | null;
+          date_of_birth: string | null;
+          sex_at_birth: string | null;
+          gender_identity: string | null;
+          primary_language: string | null;
+          country_code: string | null;
+          origin_organization_id: string | null;
+          created_in_app: string;
+          created_by_user_id: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: { id?: string; display_name: string; legal_name?: string | null; first_name?: string | null; middle_name?: string | null; last_name?: string | null; preferred_name?: string | null; date_of_birth?: string | null; sex_at_birth?: string | null; gender_identity?: string | null; primary_language?: string | null; country_code?: string | null; origin_organization_id?: string | null; created_in_app?: string; created_by_user_id?: string | null; created_at?: string; updated_at?: string };
+        Update: { id?: string; display_name?: string; legal_name?: string | null; first_name?: string | null; middle_name?: string | null; last_name?: string | null; preferred_name?: string | null; date_of_birth?: string | null; sex_at_birth?: string | null; gender_identity?: string | null; primary_language?: string | null; country_code?: string | null; origin_organization_id?: string | null; created_in_app?: string; created_by_user_id?: string | null; updated_at?: string };
+        Relationships: [
+          { foreignKeyName: "child_profiles_created_by_user_id_fkey"; columns: ["created_by_user_id"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] },
+          { foreignKeyName: "child_profiles_origin_organization_id_fkey"; columns: ["origin_organization_id"]; isOneToOne: false; referencedRelation: "organizations"; referencedColumns: ["id"] }
+        ];
+      };
+      child_identifiers: {
+        Row: {
+          id: string;
+          child_profile_id: string;
+          identifier_type: string;
+          identifier_value: string;
+          label: string | null;
+          country_code: string | null;
+          issued_by: string | null;
+          valid_from: string | null;
+          valid_to: string | null;
+          created_at: string;
+        };
+        Insert: { id?: string; child_profile_id: string; identifier_type: string; identifier_value: string; label?: string | null; country_code?: string | null; issued_by?: string | null; valid_from?: string | null; valid_to?: string | null; created_at?: string };
+        Update: { id?: string; child_profile_id?: string; identifier_type?: string; identifier_value?: string; label?: string | null; country_code?: string | null; issued_by?: string | null; valid_from?: string | null; valid_to?: string | null; created_at?: string };
+        Relationships: [
+          { foreignKeyName: "child_identifiers_child_profile_id_fkey"; columns: ["child_profile_id"]; isOneToOne: false; referencedRelation: "child_profiles"; referencedColumns: ["id"] }
+        ];
+      };
+      organizations: {
+        Row: {
+          id: string;
+          kind: string;
+          name: string;
+          country_code: string | null;
+          school_id: string | null;
+          created_in_app: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: { id?: string; kind: string; name: string; country_code?: string | null; school_id?: string | null; created_in_app?: string; created_at?: string; updated_at?: string };
+        Update: { id?: string; kind?: string; name?: string; country_code?: string | null; school_id?: string | null; created_in_app?: string; updated_at?: string };
+        Relationships: [
+          { foreignKeyName: "organizations_school_id_fkey"; columns: ["school_id"]; isOneToOne: false; referencedRelation: "schools"; referencedColumns: ["id"] }
+        ];
+      };
+      child_profile_memberships: {
+        Row: {
+          id: string;
+          child_profile_id: string;
+          organization_id: string;
+          relationship_kind: string;
+          status: string;
+          started_at: string | null;
+          ended_at: string | null;
+          created_in_app: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: { id?: string; child_profile_id: string; organization_id: string; relationship_kind: string; status?: string; started_at?: string | null; ended_at?: string | null; created_in_app?: string; created_at?: string; updated_at?: string };
+        Update: { id?: string; child_profile_id?: string; organization_id?: string; relationship_kind?: string; status?: string; started_at?: string | null; ended_at?: string | null; created_in_app?: string; updated_at?: string };
+        Relationships: [
+          { foreignKeyName: "child_profile_memberships_child_profile_id_fkey"; columns: ["child_profile_id"]; isOneToOne: false; referencedRelation: "child_profiles"; referencedColumns: ["id"] },
+          { foreignKeyName: "child_profile_memberships_organization_id_fkey"; columns: ["organization_id"]; isOneToOne: false; referencedRelation: "organizations"; referencedColumns: ["id"] }
+        ];
+      };
+      organization_memberships: {
+        Row: {
+          id: string;
+          organization_id: string;
+          profile_id: string;
+          role: string;
+          status: string;
+          started_at: string | null;
+          ended_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: { id?: string; organization_id: string; profile_id: string; role: string; status?: string; started_at?: string | null; ended_at?: string | null; created_at?: string; updated_at?: string };
+        Update: { id?: string; organization_id?: string; profile_id?: string; role?: string; status?: string; started_at?: string | null; ended_at?: string | null; updated_at?: string };
+        Relationships: [
+          { foreignKeyName: "organization_memberships_organization_id_fkey"; columns: ["organization_id"]; isOneToOne: false; referencedRelation: "organizations"; referencedColumns: ["id"] },
+          { foreignKeyName: "organization_memberships_profile_id_fkey"; columns: ["profile_id"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] }
+        ];
+      };
+      child_profile_access_grants: {
+        Row: {
+          id: string;
+          child_profile_id: string;
+          scope: string;
+          source_organization_id: string;
+          target_organization_id: string;
+          granted_by_profile_id: string;
+          granted_by_kind: string;
+          purpose: string | null;
+          status: string;
+          valid_from: string;
+          valid_until: string;
+          revoked_at: string | null;
+          revoked_by_profile_id: string | null;
+          revoke_reason: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: { id?: string; child_profile_id: string; scope?: string; source_organization_id: string; target_organization_id: string; granted_by_profile_id: string; granted_by_kind: string; purpose?: string | null; status?: string; valid_from?: string; valid_until?: string; revoked_at?: string | null; revoked_by_profile_id?: string | null; revoke_reason?: string | null; created_at?: string; updated_at?: string };
+        Update: { id?: string; status?: string; valid_until?: string; revoked_at?: string | null; revoked_by_profile_id?: string | null; revoke_reason?: string | null; updated_at?: string };
+        Relationships: [
+          { foreignKeyName: "child_profile_access_grants_child_profile_id_fkey"; columns: ["child_profile_id"]; isOneToOne: false; referencedRelation: "child_profiles"; referencedColumns: ["id"] },
+          { foreignKeyName: "child_profile_access_grants_source_organization_id_fkey"; columns: ["source_organization_id"]; isOneToOne: false; referencedRelation: "organizations"; referencedColumns: ["id"] },
+          { foreignKeyName: "child_profile_access_grants_target_organization_id_fkey"; columns: ["target_organization_id"]; isOneToOne: false; referencedRelation: "organizations"; referencedColumns: ["id"] },
+          { foreignKeyName: "child_profile_access_grants_granted_by_profile_id_fkey"; columns: ["granted_by_profile_id"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] },
+          { foreignKeyName: "child_profile_access_grants_revoked_by_profile_id_fkey"; columns: ["revoked_by_profile_id"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] }
+        ];
+      };
+      document_organization_access_grants: {
+        Row: {
+          id: string;
+          document_id: string;
+          scope: string;
+          source_school_id: string;
+          target_organization_id: string;
+          granted_by_profile_id: string;
+          granted_by_kind: string;
+          purpose: string | null;
+          permissions: Json;
+          status: string;
+          valid_from: string;
+          valid_until: string;
+          revoked_at: string | null;
+          revoked_by_profile_id: string | null;
+          revoke_reason: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: { id?: string; document_id: string; scope?: string; source_school_id: string; target_organization_id: string; granted_by_profile_id: string; granted_by_kind: string; purpose?: string | null; permissions?: Json; status?: string; valid_from?: string; valid_until?: string; revoked_at?: string | null; revoked_by_profile_id?: string | null; revoke_reason?: string | null; created_at?: string; updated_at?: string };
+        Update: { id?: string; status?: string; valid_until?: string; revoked_at?: string | null; revoked_by_profile_id?: string | null; revoke_reason?: string | null; updated_at?: string };
+        Relationships: [
+          { foreignKeyName: "document_organization_access_grants_document_id_fkey"; columns: ["document_id"]; isOneToOne: false; referencedRelation: "child_documents"; referencedColumns: ["id"] },
+          { foreignKeyName: "document_organization_access_grants_source_school_id_fkey"; columns: ["source_school_id"]; isOneToOne: false; referencedRelation: "schools"; referencedColumns: ["id"] },
+          { foreignKeyName: "document_organization_access_grants_target_organization_id_fkey"; columns: ["target_organization_id"]; isOneToOne: false; referencedRelation: "organizations"; referencedColumns: ["id"] },
+          { foreignKeyName: "document_organization_access_grants_granted_by_profile_id_fkey"; columns: ["granted_by_profile_id"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] },
+          { foreignKeyName: "document_organization_access_grants_revoked_by_profile_id_fkey"; columns: ["revoked_by_profile_id"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] }
+        ];
       };
       guardians: {
         Row: {
@@ -731,6 +896,121 @@ export type Database = {
           { foreignKeyName: "document_access_events_school_id_fkey"; columns: ["school_id"]; isOneToOne: false; referencedRelation: "schools"; referencedColumns: ["id"] }
         ];
       };
+      student_plans: {
+        Row: {
+          id: string;
+          school_id: string;
+          student_id: string;
+          school_year_id: string | null;
+          plan_type: "iep" | "support" | "behavior" | "other";
+          title: string;
+          status: "draft" | "submitted" | "in_review" | "approved" | "archived";
+          diagnosis: string | null;
+          strengths: string | null;
+          areas_of_need: string | null;
+          background_notes: string | null;
+          parent_notes: string | null;
+          parent_concerns: string | null;
+          home_support_notes: string | null;
+          review_date: string | null;
+          reviewed_by_teacher_id: string | null;
+          reviewed_by_admin_id: string | null;
+          parent_acknowledged_at: string | null;
+          parent_acknowledged_by_guardian_id: string | null;
+          approved_at: string | null;
+          approved_by: string | null;
+          archived_at: string | null;
+          archive_reason: string | null;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: { id?: string; school_id: string; student_id: string; school_year_id?: string | null; plan_type?: "iep" | "support" | "behavior" | "other"; title: string; status?: "draft" | "submitted" | "in_review" | "approved" | "archived"; diagnosis?: string | null; strengths?: string | null; areas_of_need?: string | null; background_notes?: string | null; parent_notes?: string | null; parent_concerns?: string | null; home_support_notes?: string | null; review_date?: string | null; reviewed_by_teacher_id?: string | null; reviewed_by_admin_id?: string | null; parent_acknowledged_at?: string | null; parent_acknowledged_by_guardian_id?: string | null; approved_at?: string | null; approved_by?: string | null; archived_at?: string | null; archive_reason?: string | null; created_by?: string | null; created_at?: string; updated_at?: string };
+        Update: { id?: string; school_id?: string; student_id?: string; school_year_id?: string | null; plan_type?: "iep" | "support" | "behavior" | "other"; title?: string; status?: "draft" | "submitted" | "in_review" | "approved" | "archived"; diagnosis?: string | null; strengths?: string | null; areas_of_need?: string | null; background_notes?: string | null; parent_notes?: string | null; parent_concerns?: string | null; home_support_notes?: string | null; review_date?: string | null; reviewed_by_teacher_id?: string | null; reviewed_by_admin_id?: string | null; parent_acknowledged_at?: string | null; parent_acknowledged_by_guardian_id?: string | null; approved_at?: string | null; approved_by?: string | null; archived_at?: string | null; archive_reason?: string | null; created_by?: string | null; updated_at?: string };
+        Relationships: [
+          { foreignKeyName: "student_plans_school_id_fkey"; columns: ["school_id"]; isOneToOne: false; referencedRelation: "schools"; referencedColumns: ["id"] },
+          { foreignKeyName: "student_plans_student_id_fkey"; columns: ["student_id"]; isOneToOne: false; referencedRelation: "students"; referencedColumns: ["id"] },
+          { foreignKeyName: "student_plans_school_year_id_fkey"; columns: ["school_year_id"]; isOneToOne: false; referencedRelation: "school_years"; referencedColumns: ["id"] },
+          { foreignKeyName: "student_plans_reviewed_by_teacher_id_fkey"; columns: ["reviewed_by_teacher_id"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] },
+          { foreignKeyName: "student_plans_reviewed_by_admin_id_fkey"; columns: ["reviewed_by_admin_id"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] },
+          { foreignKeyName: "student_plans_parent_acknowledged_by_guardian_id_fkey"; columns: ["parent_acknowledged_by_guardian_id"]; isOneToOne: false; referencedRelation: "guardians"; referencedColumns: ["id"] },
+          { foreignKeyName: "student_plans_approved_by_fkey"; columns: ["approved_by"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] },
+          { foreignKeyName: "student_plans_created_by_fkey"; columns: ["created_by"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] }
+        ];
+      };
+      student_plan_goals: {
+        Row: {
+          id: string;
+          plan_id: string;
+          domain: string | null;
+          description: string;
+          target_date: string | null;
+          measurement_method: string | null;
+          baseline: string | null;
+          success_criteria: string | null;
+          sort_order: number;
+          created_at: string;
+        };
+        Insert: { id?: string; plan_id: string; domain?: string | null; description: string; target_date?: string | null; measurement_method?: string | null; baseline?: string | null; success_criteria?: string | null; sort_order?: number; created_at?: string };
+        Update: { id?: string; plan_id?: string; domain?: string | null; description?: string; target_date?: string | null; measurement_method?: string | null; baseline?: string | null; success_criteria?: string | null; sort_order?: number };
+        Relationships: [
+          { foreignKeyName: "student_plan_goals_plan_id_fkey"; columns: ["plan_id"]; isOneToOne: false; referencedRelation: "student_plans"; referencedColumns: ["id"] }
+        ];
+      };
+      student_plan_interventions: {
+        Row: {
+          id: string;
+          plan_id: string;
+          strategy: string;
+          frequency: string | null;
+          responsible_person: string | null;
+          environment: string | null;
+          notes: string | null;
+          sort_order: number;
+          created_at: string;
+        };
+        Insert: { id?: string; plan_id: string; strategy: string; frequency?: string | null; responsible_person?: string | null; environment?: string | null; notes?: string | null; sort_order?: number; created_at?: string };
+        Update: { id?: string; plan_id?: string; strategy?: string; frequency?: string | null; responsible_person?: string | null; environment?: string | null; notes?: string | null; sort_order?: number };
+        Relationships: [
+          { foreignKeyName: "student_plan_interventions_plan_id_fkey"; columns: ["plan_id"]; isOneToOne: false; referencedRelation: "student_plans"; referencedColumns: ["id"] }
+        ];
+      };
+      student_plan_progress_entries: {
+        Row: {
+          id: string;
+          plan_id: string;
+          linked_goal_id: string | null;
+          entry_date: string;
+          progress_note: string;
+          observed_by: string | null;
+          next_step: string | null;
+          created_by: string | null;
+          created_at: string;
+        };
+        Insert: { id?: string; plan_id: string; linked_goal_id?: string | null; entry_date?: string; progress_note: string; observed_by?: string | null; next_step?: string | null; created_by?: string | null; created_at?: string };
+        Update: { id?: string; plan_id?: string; linked_goal_id?: string | null; entry_date?: string; progress_note?: string; observed_by?: string | null; next_step?: string | null; created_by?: string | null };
+        Relationships: [
+          { foreignKeyName: "student_plan_progress_entries_plan_id_fkey"; columns: ["plan_id"]; isOneToOne: false; referencedRelation: "student_plans"; referencedColumns: ["id"] },
+          { foreignKeyName: "student_plan_progress_entries_linked_goal_id_fkey"; columns: ["linked_goal_id"]; isOneToOne: false; referencedRelation: "student_plan_goals"; referencedColumns: ["id"] },
+          { foreignKeyName: "student_plan_progress_entries_created_by_fkey"; columns: ["created_by"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] }
+        ];
+      };
+      student_plan_attachments: {
+        Row: {
+          id: string;
+          plan_id: string;
+          document_id: string;
+          attached_by: string | null;
+          attached_at: string;
+        };
+        Insert: { id?: string; plan_id: string; document_id: string; attached_by?: string | null; attached_at?: string };
+        Update: { id?: string; plan_id?: string; document_id?: string; attached_by?: string | null; attached_at?: string };
+        Relationships: [
+          { foreignKeyName: "student_plan_attachments_plan_id_fkey"; columns: ["plan_id"]; isOneToOne: false; referencedRelation: "student_plans"; referencedColumns: ["id"] },
+          { foreignKeyName: "student_plan_attachments_document_id_fkey"; columns: ["document_id"]; isOneToOne: false; referencedRelation: "child_documents"; referencedColumns: ["id"] },
+          { foreignKeyName: "student_plan_attachments_attached_by_fkey"; columns: ["attached_by"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] }
+        ];
+      };
     };
     Views: Record<string, never>;
     Functions: {
@@ -743,6 +1023,15 @@ export type Database = {
         };
         Returns: Json;
       };
+      log_document_access_for_organizations: {
+        Args: {
+          p_doc_id: string;
+          p_action: "view" | "download" | "signed_url_issued" | "preview_opened";
+          p_ip?: string | null;
+          p_user_agent?: string | null;
+        };
+        Returns: Json;
+      };
       list_school_staff_for_sharing: {
         Args: { p_school_id: string };
         Returns: {
@@ -751,6 +1040,67 @@ export type Database = {
           email: string;
           role: "super_admin" | "school_admin" | "teacher" | "parent";
         }[];
+      };
+      list_documents_for_organization: {
+        Args: { p_org_id: string };
+        Returns: {
+          document_id: string;
+          title: string;
+          document_type:
+            | "iep"
+            | "therapy_evaluation"
+            | "therapy_progress"
+            | "school_accommodation"
+            | "medical_certificate"
+            | "dev_pediatrician_report"
+            | "parent_provided"
+            | "other_supporting";
+          doc_status: "draft" | "active" | "shared" | "archived" | "revoked";
+          current_version_id: string;
+          version_number: number;
+          mime_type: string;
+          file_name: string;
+          file_size_bytes: number | null;
+          child_profile_id: string | null;
+          permissions: Json;
+          grant_valid_until: string;
+          grant_created_at: string;
+        }[];
+      };
+      list_clinic_organizations_for_sharing: {
+        Args: { p_query?: string | null; p_limit?: number };
+        Returns: {
+          id: string;
+          name: string;
+          kind: string;
+          country_code: string | null;
+          created_at: string;
+        }[];
+      };
+      create_clinic_organization_for_sharing: {
+        Args: {
+          p_kind: string;
+          p_name: string;
+          p_country_code?: string | null;
+        };
+        Returns: string;
+      };
+      lookup_clinic_organizations: {
+        Args: { p_ids: string[] };
+        Returns: {
+          id: string;
+          name: string;
+          kind: string;
+        }[];
+      };
+      log_clinic_document_access: {
+        Args: {
+          p_doc_id: string;
+          p_action: string;
+          p_ip?: string | null;
+          p_user_agent?: string | null;
+        };
+        Returns: Json;
       };
     };
     Enums: Record<string, never>;

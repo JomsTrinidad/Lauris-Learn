@@ -58,6 +58,7 @@ import { HideVersionModal } from "./HideVersionModal";
 import { ConfirmStatusModal, type StatusTransition } from "./ConfirmStatusModal";
 import { ShareDocumentModal } from "./ShareDocumentModal";
 import { RevokeAccessModal } from "./RevokeAccessModal";
+import { ShareDocumentWithClinicModal } from "@/features/clinic-sharing/ShareDocumentWithClinicModal";
 
 type Tab = "overview" | "versions" | "access" | "activity";
 
@@ -102,6 +103,7 @@ export function DocumentDetailModal({ docId, onClose, onChanged }: DocumentDetai
   const [versionToHide, setVersionToHide] = useState<ChildDocumentVersionRow | null>(null);
   const [pendingTransition, setPendingTransition] = useState<StatusTransition | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
+  const [shareClinicOpen, setShareClinicOpen] = useState(false);
   const [grantToRevoke, setGrantToRevoke] = useState<InternalGrantRow | null>(null);
 
   const isStaff = userRole === "school_admin" || userRole === "teacher";
@@ -379,6 +381,11 @@ export function DocumentDetailModal({ docId, onClose, onChanged }: DocumentDetai
               canRevoke={isAdmin}
               shareDisabledReason={shareDisabledReason(doc, isAdmin)}
               onShare={() => setShareOpen(true)}
+              onShareWithClinic={
+                isAdmin && (doc.status === "active" || doc.status === "shared")
+                  ? () => setShareClinicOpen(true)
+                  : null
+              }
               onRevoke={(g) => setGrantToRevoke(g)}
             />
           )}
@@ -473,6 +480,21 @@ export function DocumentDetailModal({ docId, onClose, onChanged }: DocumentDetai
             title:         doc.title,
           }}
           userId={userId}
+        />
+      )}
+
+      {doc && userId && isAdmin && (
+        <ShareDocumentWithClinicModal
+          open={shareClinicOpen}
+          schoolId={doc.school_id}
+          userId={userId}
+          lockedDocumentId={doc.id}
+          lockedDocumentTitle={doc.title}
+          onClose={() => setShareClinicOpen(false)}
+          onShared={() => {
+            setShareClinicOpen(false);
+            handleSubChange();
+          }}
         />
       )}
     </Modal>
@@ -731,6 +753,7 @@ function AccessTab({
   canRevoke,
   shareDisabledReason,
   onShare,
+  onShareWithClinic,
   onRevoke,
 }: {
   grants: InternalGrantRow[];
@@ -742,6 +765,7 @@ function AccessTab({
   canRevoke: boolean;
   shareDisabledReason: string | null;
   onShare: () => void;
+  onShareWithClinic: (() => void) | null;
   onRevoke: (g: InternalGrantRow) => void;
 }) {
   const now = new Date();
@@ -754,6 +778,18 @@ function AccessTab({
     <div className="space-y-3">
       {/* Share action bar — admin only */}
       <div className="flex justify-end items-center gap-2">
+        {onShareWithClinic && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onShareWithClinic}
+            disabled={!canShare}
+            title={canShare ? undefined : shareDisabledReason ?? undefined}
+          >
+            <Share2 className="w-3.5 h-3.5 mr-1.5" />
+            Share with Clinic
+          </Button>
+        )}
         <Button
           size="sm"
           onClick={onShare}

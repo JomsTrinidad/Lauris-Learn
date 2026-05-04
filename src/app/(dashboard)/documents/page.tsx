@@ -22,6 +22,8 @@ import {
   Lock,
   CheckCircle2,
   UserCircle2,
+  ClipboardList,
+  Share2,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -52,12 +54,14 @@ import { UploadDocumentModal } from "@/features/documents/UploadDocumentModal";
 import { RequestDocumentModal } from "@/features/documents/RequestDocumentModal";
 import { RequestsList } from "@/features/documents/RequestsList";
 import { CancelRequestModal } from "@/features/documents/CancelRequestModal";
+import { PlansAndFormsView } from "@/features/plans/PlansAndFormsView";
+import { ClinicSharingView } from "@/features/clinic-sharing/ClinicSharingView";
 import { cn } from "@/lib/utils";
 
 const STATUS_OPTIONS: DocumentStatus[] = ["draft", "active", "shared", "archived", "revoked"];
 const REQUEST_STATUS_OPTIONS: RequestStatus[] = ["requested", "submitted", "reviewed", "cancelled"];
 
-type ViewMode = "documents" | "requests";
+type ViewMode = "documents" | "requests" | "plans-forms" | "clinic-sharing";
 
 interface ResolvedStudent {
   id: string;
@@ -65,7 +69,7 @@ interface ResolvedStudent {
 }
 
 export default function DocumentsPage() {
-  const { schoolId, userId, userRole, loading: ctxLoading } = useSchoolContext();
+  const { schoolId, userId, userRole, activeYear, loading: ctxLoading } = useSchoolContext();
   const supabase = useMemo(() => createClient(), []);
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -273,6 +277,20 @@ export default function DocumentsPage() {
           icon={<Inbox className="w-3.5 h-3.5" />}
           label={`Requests${requests.length ? ` (${requests.length})` : ""}`}
         />
+        <ViewTab
+          active={viewMode === "plans-forms"}
+          onClick={() => setViewMode("plans-forms")}
+          icon={<ClipboardList className="w-3.5 h-3.5" />}
+          label="Plans & Forms"
+        />
+        {userRole === "school_admin" && (
+          <ViewTab
+            active={viewMode === "clinic-sharing"}
+            onClick={() => setViewMode("clinic-sharing")}
+            icon={<Share2 className="w-3.5 h-3.5" />}
+            label="Clinic Sharing"
+          />
+        )}
       </div>
 
       {/* Active student-filter chip (when navigated from a student row) */}
@@ -291,7 +309,8 @@ export default function DocumentsPage() {
         </div>
       )}
 
-      {/* Filters — different controls per view */}
+      {/* Filters — different controls per view (Plans & Forms and Clinic Sharing have their own) */}
+      {viewMode !== "plans-forms" && viewMode !== "clinic-sharing" && (
       <Card>
         <CardContent className="p-4 flex flex-wrap items-center gap-3">
           {viewMode === "documents" ? (
@@ -340,9 +359,20 @@ export default function DocumentsPage() {
           )}
         </CardContent>
       </Card>
+      )}
 
       {/* Body */}
-      {viewMode === "documents" ? (
+      {viewMode === "clinic-sharing" ? (
+        <ClinicSharingView schoolId={schoolId ?? ""} userId={userId ?? ""} />
+      ) : viewMode === "plans-forms" ? (
+        <PlansAndFormsView
+          schoolId={schoolId}
+          schoolYearId={activeYear?.id ?? null}
+          userId={userId ?? ""}
+          userRole={userRole}
+          defaultStudentId={studentFilter?.id ?? null}
+        />
+      ) : viewMode === "documents" ? (
         <>
           {error && <ErrorAlert message={error} />}
           {loading ? (

@@ -5,6 +5,7 @@ import {
   Link as LinkIcon, Copy, Check, BookOpen,
   ArrowRight, RefreshCw, Users, GraduationCap,
   HelpCircle, AlertTriangle, ChevronRight, X, UserPlus, UserCheck, FileText,
+  Share2,
 } from "lucide-react";
 import { DatePicker } from "@/components/ui/datepicker";
 import { AvatarUpload } from "@/components/ui/avatar-upload";
@@ -21,6 +22,8 @@ import { compressImage, PROFILE_PHOTO_MAX_W, PROFILE_PHOTO_MAX_BYTES } from "@/l
 import { trackUpload } from "@/lib/track-upload";
 import { createClient } from "@/lib/supabase/client";
 import { useSchoolContext } from "@/contexts/SchoolContext";
+import { ShareIdentityWithClinicModal } from "@/features/clinic-sharing/ShareIdentityWithClinicModal";
+import { getSchoolOrganizationId } from "@/features/clinic-sharing/queries";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -77,6 +80,9 @@ interface Student {
   progressionStatus: string | null; progressionNotes: string | null;
   recommendedNextLevel: string | null;
   photoUrl: string | null;
+  childProfileId: string | null;
+  lrn: string | null;
+  lrnIdentifierId: string | null;
 }
 
 interface ClassOption { id: string; name: string; level: string; enrolled: number; capacity: number; }
@@ -90,6 +96,7 @@ interface StudentForm {
   emergencyContactPhone: string; specialNeeds: string; teacherNotes: string;
   adminNotes: string; authorizedPickups: string; primaryLanguage: string;
   progressionStatus: string; progressionNotes: string; photoUrl: string;
+  lrn: string;
 }
 
 // Pending placement tab types
@@ -125,6 +132,7 @@ const EMPTY_FORM: StudentForm = {
   authorizedPickups: "", primaryLanguage: "",
   progressionStatus: "", progressionNotes: "",
   photoUrl: "",
+  lrn: "",
 };
 
 const STATUS_OPTIONS = [
@@ -172,11 +180,138 @@ function ActionBtn({ active, onClick, className, children }: {
 
 interface SchoolCodeConfig { prefix: string; padding: number; includeYear: boolean; }
 
+// === LRN DATA LOGIC (Phase 1.5) ===
+//
+// Isolated upsert/update/delete path for a student's Learner Reference Number.
+// Kept top-level (not embedded in a UI handler) so it can be extracted to a
+// dedicated module later without touching the page's render logic.
+//
+// Storage model (from migration 071):
+//   - LRN lives in `child_identifiers` keyed on a `child_profile_id`.
+//   - `child_profiles` is school-agnostic; the link to a school student is
+//     `students.child_profile_id` (nullable FK). Post-migration NEW students
+//     have NULL until something explicitly links them.
+//   - This helper lazy-creates a `child_profiles` row + UPDATEs the student
+//     link the first time an LRN is set. RLS requires the link to exist
+//     BEFORE the identifier write, so the order is strictly sequential.
+//
+// Empty-string `lrnInput` means "clear the LRN" — deletes the existing
+// identifier row (if any) but leaves the child_profile alone.
+async function upsertStudentLrn(
+  supabase: ReturnType<typeof createClient>,
+  args: {
+    studentId: string;
+    lrnInput: string;
+    currentChildProfileId: string | null;
+    currentLrnIdentifierId: string | null;
+    firstName: string;
+    lastName: string;
+    preferredName: string | null;
+    dateOfBirth: string | null;
+  }
+): Promise<{ ok: boolean; error: string | null; childProfileId?: string | null; identifierId?: string | null }> {
+  const lrn = args.lrnInput.trim();
+
+  // Clear path
+  if (!lrn) {
+    if (args.currentLrnIdentifierId) {
+      const { error } = await supabase
+        .from("child_identifiers")
+        .delete()
+        .eq("id", args.currentLrnIdentifierId);
+      if (error) return { ok: false, error: error.message };
+    }
+    return { ok: true, error: null, childProfileId: args.currentChildProfileId, identifierId: null };
+  }
+
+  // Lazy-create child_profile if the student isn't linked yet.
+  let cpid = args.currentChildProfileId;
+  if (!cpid) {
+    const first = (args.firstName ?? "").trim();
+    const last = (args.lastName ?? "").trim();
+    const display = `${first} ${last}`.trim() || "Unknown";
+    const { data: cpRow, error: cpErr } = await supabase
+      .from("child_profiles")
+      .insert({
+        display_name: display,
+        first_name: first || null,
+        last_name: last || null,
+        preferred_name: (args.preferredName ?? "").trim() || null,
+        date_of_birth: args.dateOfBirth || null,
+        created_in_app: "lauris_learn",
+      } as never)
+      .select("id")
+      .single();
+    if (cpErr || !cpRow) {
+      return { ok: false, error: cpErr?.message ?? "Failed to create child profile." };
+    }
+    cpid = (cpRow as { id: string }).id;
+
+    const { error: linkErr } = await supabase
+      .from("students")
+      .update({ child_profile_id: cpid } as never)
+      .eq("id", args.studentId);
+    if (linkErr) return { ok: false, error: linkErr.message };
+  }
+
+  // Update existing identifier (no other fields).
+  if (args.currentLrnIdentifierId) {
+    const { error } = await supabase
+      .from("child_identifiers")
+      .update({ identifier_value: lrn } as never)
+      .eq("id", args.currentLrnIdentifierId);
+    if (error) {
+      if (error.code === "23505" || /duplicate|unique/i.test(error.message)) {
+        return { ok: false, error: "This LRN is already registered to another child." };
+      }
+      return { ok: false, error: error.message };
+    }
+    return { ok: true, error: null, childProfileId: cpid, identifierId: args.currentLrnIdentifierId };
+  }
+
+  // Insert new identifier.
+  const { data: insRow, error: insErr } = await supabase
+    .from("child_identifiers")
+    .insert({
+      child_profile_id: cpid,
+      identifier_type: "lrn",
+      identifier_value: lrn,
+      country_code: "PH",
+    } as never)
+    .select("id")
+    .single();
+  if (insErr || !insRow) {
+    if (insErr?.code === "23505" || /duplicate|unique/i.test(insErr?.message ?? "")) {
+      return { ok: false, error: "This LRN is already registered to another child." };
+    }
+    return { ok: false, error: insErr?.message ?? "Failed to save LRN." };
+  }
+  return { ok: true, error: null, childProfileId: cpid, identifierId: (insRow as { id: string }).id };
+}
+
 // ─── Page component ───────────────────────────────────────────────────────────
 
 export default function StudentsPage() {
-  const { schoolId, activeYear, userId, isReadOnly, allSchoolYears: schoolYearList } = useSchoolContext();
+  const { schoolId, activeYear, userId, userRole, isReadOnly, allSchoolYears: schoolYearList } = useSchoolContext();
   const supabase = createClient();
+
+  // Phase 6D — Share-with-Clinic shortcut state.
+  const [shareClinicTarget, setShareClinicTarget] = useState<{
+    childProfileId: string;
+    name: string;
+  } | null>(null);
+  const [schoolOrgId, setSchoolOrgId] = useState<string | null>(null);
+  useEffect(() => {
+    if (userRole !== "school_admin" || !schoolId) {
+      setSchoolOrgId(null);
+      return;
+    }
+    let cancelled = false;
+    getSchoolOrganizationId(schoolId).then((id) => {
+      if (!cancelled) setSchoolOrgId(id);
+    });
+    return () => { cancelled = true; };
+  }, [schoolId, userRole]);
 
   // Tab
   const [activeTab, setActiveTab] = useState<StudentsTab>("students");
@@ -352,7 +487,7 @@ export default function StudentsPage() {
       .from("students")
       .select(`
         id, first_name, last_name, date_of_birth, gender,
-        student_code, preferred_name, photo_url,
+        student_code, preferred_name, photo_url, child_profile_id,
         allergies, medical_conditions, emergency_contact_name, emergency_contact_phone,
         authorized_pickups, primary_language, special_needs, teacher_notes, admin_notes,
         guardians(id, full_name, relationship, phone, email, is_primary, communication_preference),
@@ -363,6 +498,27 @@ export default function StudentsPage() {
       .order("last_name");
 
     if (err) { setError(err.message); return; }
+
+    // Phase 1.5 — fetch LRN identifiers in a separate query and map by
+    // child_profile_id. Kept out of the main SELECT so a stale schema cache
+    // or relationship resolution on `child_identifiers` can't break the
+    // students list.
+    const profileIds = (data ?? [])
+      .map((s) => (s as { child_profile_id: string | null }).child_profile_id)
+      .filter((id): id is string => !!id);
+    const lrnByProfile = new Map<string, { id: string; value: string }>();
+    if (profileIds.length > 0) {
+      const { data: idRows } = await supabase
+        .from("child_identifiers")
+        .select("id, child_profile_id, identifier_value")
+        .eq("identifier_type", "lrn")
+        .in("child_profile_id", profileIds);
+      ((idRows ?? []) as Array<{ id: string; child_profile_id: string; identifier_value: string }>).forEach((r) => {
+        if (!lrnByProfile.has(r.child_profile_id)) {
+          lrnByProfile.set(r.child_profile_id, { id: r.id, value: r.identifier_value });
+        }
+      });
+    }
 
     setStudents(
       (data ?? []).map((s) => {
@@ -446,6 +602,9 @@ export default function StudentsPage() {
           recommendedNextLevel: (activeEnrollment as any)?.classes?.next_level ??
             (classifiedEnroll && classifiedEnroll.id === activeEnrollment?.id ? classifiedEnroll?.classes?.next_level : null),
           photoUrl: sx.photo_url ?? null,
+          childProfileId: sx.child_profile_id ?? null,
+          lrn: sx.child_profile_id ? (lrnByProfile.get(sx.child_profile_id)?.value ?? null) : null,
+          lrnIdentifierId: sx.child_profile_id ? (lrnByProfile.get(sx.child_profile_id)?.id ?? null) : null,
         };
       })
     );
@@ -529,6 +688,26 @@ export default function StudentsPage() {
 
     await generateStudentCode(student.id);
 
+    // LRN — Phase 1.5. Lazy-create child_profile + identifier when LRN is set.
+    if (form.lrn.trim()) {
+      const lrnRes = await upsertStudentLrn(supabase, {
+        studentId: student.id,
+        lrnInput: form.lrn,
+        currentChildProfileId: null,
+        currentLrnIdentifierId: null,
+        firstName: form.firstName,
+        lastName: form.lastName,
+        preferredName: form.preferredName,
+        dateOfBirth: form.dateOfBirth || null,
+      });
+      if (!lrnRes.ok) {
+        setFormError(lrnRes.error ?? "Failed to save LRN.");
+        setSaving(false);
+        await loadAll();
+        return;
+      }
+    }
+
     if (addPhotoFile) {
       const photoUrl = await uploadProfilePhoto(student.id, addPhotoFile);
       if (photoUrl) {
@@ -596,6 +775,7 @@ export default function StudentsPage() {
       progressionStatus: student.progressionStatus ?? "",
       progressionNotes: student.progressionNotes ?? "",
       photoUrl: student.photoUrl ?? "",
+      lrn: student.lrn ?? "",
     });
     setEditPhotoFile(null);
     setEditFormError(null);
@@ -630,6 +810,25 @@ export default function StudentsPage() {
       .eq("id", editingStudent.id);
 
     if (sErr) { setEditFormError(sErr.message); setSaving(false); return; }
+
+    // LRN — Phase 1.5. Insert / update / delete in one helper call.
+    {
+      const lrnRes = await upsertStudentLrn(supabase, {
+        studentId: editingStudent.id,
+        lrnInput: editForm.lrn,
+        currentChildProfileId: editingStudent.childProfileId,
+        currentLrnIdentifierId: editingStudent.lrnIdentifierId,
+        firstName: editForm.firstName,
+        lastName: editForm.lastName,
+        preferredName: editForm.preferredName,
+        dateOfBirth: editForm.dateOfBirth || null,
+      });
+      if (!lrnRes.ok) {
+        setEditFormError(lrnRes.error ?? "Failed to save LRN.");
+        setSaving(false);
+        return;
+      }
+    }
 
     if (editingStudent.guardianId) {
       await supabase.from("guardians").update({
@@ -1390,6 +1589,22 @@ export default function StudentsPage() {
                             >
                               <FileText className="w-4 h-4" />
                             </a>
+                            {userRole === "school_admin" && student.childProfileId && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setShareClinicTarget({
+                                    childProfileId: student.childProfileId!,
+                                    name: `${student.firstName} ${student.lastName}`.trim(),
+                                  });
+                                }}
+                                className="text-muted-foreground hover:text-foreground transition-colors"
+                                title="Share with Clinic"
+                              >
+                                <Share2 className="w-4 h-4" />
+                              </button>
+                            )}
                             <button onClick={() => openEdit(student)} className="text-muted-foreground hover:text-foreground transition-colors" title="Edit">
                               <Pencil className="w-4 h-4" />
                             </button>
@@ -1801,6 +2016,11 @@ export default function StudentsPage() {
                     ID: {selectedStudent.studentCode}
                   </p>
                 )}
+                {selectedStudent.lrn && (
+                  <p className="text-xs font-mono text-muted-foreground mt-0.5 ml-1 bg-muted px-2 py-0.5 rounded inline-block">
+                    LRN: {selectedStudent.lrn}
+                  </p>
+                )}
                 <p className="text-sm text-muted-foreground mt-0.5">{selectedStudent.className}</p>
               </div>
               <div className="ml-auto">
@@ -2096,6 +2316,21 @@ export default function StudentsPage() {
                 ))}
               </Select>
             </div>
+
+            <SectionToggle title="Government Identifiers">
+              <div>
+                <label className="block text-sm font-medium mb-1">Learner Reference Number (LRN)</label>
+                <Input
+                  value={f.lrn}
+                  onChange={(e) => setF({ ...f, lrn: e.target.value })}
+                  placeholder="e.g. 123456789012"
+                  inputMode="numeric"
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  Optional. The 12-digit Department of Education learner ID (Philippines). Leave blank if not applicable.
+                </p>
+              </div>
+            </SectionToggle>
 
             <SectionToggle title="Health & Medical Info">
               <div>
@@ -2485,6 +2720,23 @@ export default function StudentsPage() {
                       </div>
                     ),
                   },
+                  {
+                    id: "lrn",
+                    icon: FileText,
+                    title: "Learner Reference Number (LRN)",
+                    searchText: "lrn learner reference number deped department of education government identifier philippines",
+                    body: (
+                      <div className="space-y-2">
+                        <p>The LRN is the 12-digit DepEd learner ID assigned to every Philippine student. Lauris Learn stores it as an optional government identifier, separate from the internal student code.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Open <strong>Add Student Profile</strong> or <strong>Edit Student</strong> and expand <strong>Government Identifiers</strong>.</span>} />
+                          <Step n={2} text={<span>Enter the LRN and save. You can leave it blank — it's not required.</span>} />
+                          <Step n={3} text={<span>The LRN appears next to the internal ID at the top of the student profile modal.</span>} />
+                        </div>
+                        <Note>LRNs are unique nationally. If you enter an LRN that's already on another child's record, the save will be rejected with an explanation. Only school admins can view or edit LRNs — parents and teachers don't see them in their portals.</Note>
+                      </div>
+                    ),
+                  },
                 ];
 
                 const q = helpSearch.trim().toLowerCase();
@@ -2542,6 +2794,21 @@ export default function StudentsPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Phase 6D — Share-with-Clinic shortcut. Locks the modal to the
+          student's child_profile_id. Only mounts for school_admin. */}
+      {userRole === "school_admin" && schoolOrgId && (
+        <ShareIdentityWithClinicModal
+          open={!!shareClinicTarget}
+          schoolId={schoolId ?? ""}
+          schoolOrganizationId={schoolOrgId}
+          userId={userId ?? ""}
+          lockedChildProfileId={shareClinicTarget?.childProfileId}
+          lockedStudentName={shareClinicTarget?.name}
+          onClose={() => setShareClinicTarget(null)}
+          onShared={() => setShareClinicTarget(null)}
+        />
       )}
     </div>
   );
