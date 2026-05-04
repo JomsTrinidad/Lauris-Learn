@@ -189,6 +189,72 @@ export interface ClinicDocAccessDenied {
   message?: string;
 }
 
+/** Phase 6E — therapy sessions. */
+export type TherapyType = "speech" | "occupational" | "behavioral" | "other";
+export type SessionStatus = "scheduled" | "completed" | "cancelled" | "no_show";
+
+export interface TherapySession {
+  id: string;
+  clinicOrganizationId: string;
+  childProfileId: string;
+  childDisplayName: string | null;
+  therapistProfileId: string;
+  therapistName: string | null;
+  therapyType: TherapyType;
+  scheduledAt: string;
+  durationMinutes: number | null;
+  status: SessionStatus;
+  notes: string | null;
+  parentVisibleSummary: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ClinicMember {
+  id: string;
+  fullName: string | null;
+  email: string;
+  role: string;
+  status: string;
+}
+
+/** Phase 6E.1 — structured session notes (1:1 with TherapySession). */
+export interface TherapySessionNote {
+  id: string;
+  therapySessionId: string;
+  authoredByProfileId: string;
+  authorName: string | null;
+  sessionObjective: string | null;
+  activities: string | null;
+  childResponse: string | null;
+  progressObserved: string | null;
+  homePractice: string | null;
+  privateInternalNote: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TherapySessionNotePatch {
+  sessionObjective?: string | null;
+  activities?: string | null;
+  childResponse?: string | null;
+  progressObserved?: string | null;
+  homePractice?: string | null;
+  privateInternalNote?: string | null;
+}
+
+/** Per-child membership state for the active clinic.
+ *  - 'owned'           — child belongs to the clinic (clinic_client).
+ *  - 'accepted'        — school-shared child accepted as therapy_client.
+ *  - 'shared_pending'  — school-shared child with active grant but no
+ *                        membership yet; clinic_admin can accept.
+ *  - 'shared_no_grant' — visible only via grant; can't be accepted. */
+export type ChildClinicMembershipState =
+  | "owned"
+  | "accepted"
+  | "shared_pending"
+  | "shared_no_grant";
+
 // RPC return shape (from log_document_access_for_organizations)
 export type LogDocumentAccessForOrgsResult =
   | {

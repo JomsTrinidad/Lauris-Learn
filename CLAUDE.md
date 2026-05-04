@@ -159,6 +159,12 @@ src/features/care/                — Phase 6A read-only Lauris Care portal feat
   UploadClinicDocumentModal.tsx      — Phase 6C clinic-admin only. Title + kind (datalist of common kinds, normalized server-side to LOWER(TRIM)) + description + dates + file (PDF/JPEG/PNG/WebP, ≤25 MB) + allow_download checkbox. Initial status defaults to 'active' once a usable version is attached.
   ClinicDocumentsList.tsx            — per-child clinic-internal document list. Per-row View + Download buttons (Download hidden when permissions.download=false and caller isn't admin); admin actions: toggle download, archive / restore.
   ClinicDocumentAccessButton.tsx    — Calls POST /api/care/clinic-documents/[id]/access. Signed URL never stored in state; opened via window.open with noopener.
+  sessions-api.ts                   — Phase 6E: listSessionsForClinic, listSessionsForChild, createSession, updateSession, listClinicMembers (wraps `list_clinic_members` RPC for therapist picker + name resolution), acceptChildAsTherapyClient, getChildClinicMembershipState (returns 'owned' | 'accepted' | 'shared_pending' | 'shared_no_grant' for the active clinic).
+  ScheduleSessionModal.tsx          — child-locked. Therapist dropdown driven by list_clinic_members; therapy_type radios; date+time; duration (optional); notes. Defaults therapist to caller when caller is a clinic member.
+  EditSessionModal.tsx              — same shape as Schedule plus a Status selector (scheduled / completed / no_show / cancelled). Column-guard trigger keeps clinic_organization_id, child_profile_id, created_by_profile_id immutable post-insert.
+  TherapySessionsList.tsx           — list view with status + therapy_type badges. Click-to-edit when onSelect provided; otherwise links to the child detail page.
+  SessionsView.tsx                  — clinic-wide /care/sessions body. Filters: date range (default −7d → +14d), status, therapy_type. Mounts EditSessionModal on row click.
+  AcceptAsTherapyClientCard.tsx     — clinic_admin only. Inserts a 'therapy_client' membership for a school-shared child the active clinic has an active identity grant on. RLS enforces both conditions.
 ```
 
 src/features/clinic-sharing/  — Phase 6D school-side clinic-sharing feature module
@@ -171,6 +177,8 @@ src/features/clinic-sharing/  — Phase 6D school-side clinic-sharing feature mo
   IdentityGrantsTable.tsx           — Active + No-longer-active sections, per-row Revoke action on active grants. Reuses Badge variants (active / revoked / archived).
   DocumentGrantsTable.tsx           — Same shape, with permission pills (View / Download).
   ClinicSharingView.tsx             — Mounts inside /documents as the 4th tab "Clinic Sharing". Two sections (Identity grants, Document grants), each with status filter (Active / All) + New share button. School-admin only.
+
+After migration 082: `supabase/migrations/082_therapy_sessions.sql` adds the basic therapy sessions subsystem (Phase 6E). One new table `therapy_sessions` (single therapist FK column — schema can evolve into a join-table model for multi-therapist sessions without breaking compatibility); CHECK enums on `therapy_type IN ('speech','occupational','behavioral','other')` and `status IN ('scheduled','completed','cancelled','no_show')`. `permissions` is NOT introduced — sessions don't carry per-doc permission shape. `parent_visible_summary TEXT` reserved for future parent portal (never displayed in v1). One trigger `ts_immutable_columns_guard` (BEFORE UPDATE) locks `clinic_organization_id`, `child_profile_id`, `created_by_profile_id` post-insert with 42501; `is_super_admin()` bypass. RLS: SELECT for any active clinic member AND active (`clinic_client` OR `therapy_client`) membership on (child, clinic); INSERT/UPDATE require role IN ('clinic_admin','therapist') of the clinic AND the chosen `therapist_profile_id` must itself be an active member (anti-spoof check); no DELETE policy → use `status='cancelled'`. **One new permissive INSERT policy** `clinic_admin_accept_granted_child` on `child_profile_memberships` allows `clinic_admin` to insert a `'therapy_client'` row when an active `child_profile_access_grants` exists on (child, org). The existing 078 INSERT policy for `'clinic_client'` is unchanged — both paths now succeed via permissive OR. New helper RPC `list_clinic_members(p_org_id UUID)` SECURITY DEFINER STABLE — returns active members of an org for the therapist picker + name resolution (mirrors `list_school_staff_for_sharing` from 065). **Two relationship_kinds** are now in active use: `'clinic_client'` for clinic-owned children (078 path, ownership-based), `'therapy_client'` for accepted school-shared children (this phase, treatment-based). Ownership and treatment are distinct concepts. **Strictly does NOT modify** `accessible_document_ids()`, `log_document_access*`, `list_documents_for_organization`, `caller_owned_child_profile_ids`, the existing 078 INSERT policy, or any school-side artifact — smoke 082 T-2 mechanically asserts byte-cleanliness.
 
 After migration 081: `supabase/migrations/081_clinic_documents.sql` adds the clinic-internal document subsystem (Phase 6C). Three new tables — `clinic_documents` (head), `clinic_document_versions` (chain), `clinic_document_access_events` (audit). New private storage bucket `clinic-documents` with INSERT/UPDATE policies gated to `clinic_admin` of `foldername(name)[1]`; no client SELECT (service-role-only via the API route, same choke-point pattern as `child-documents`). New SECURITY DEFINER RPC `log_clinic_document_access(p_doc_id, p_action, p_ip, p_user_agent)` returns the same JSONB shape as `log_document_access_for_organizations` (5B); honours per-doc permissions JSONB `{view, download}` with `clinic_admin` of origin always allowed to download (override). Three triggers: origin/child consistency (SECURITY DEFINER), immutability column-guard (origin_organization_id, child_profile_id, created_by_profile_id all locked post-insert with `is_super_admin()` bypass), and document_kind normalization (BEFORE INSERT/UPDATE → `LOWER(TRIM(kind))`). Status enum tightened to `draft|active|archived` (no `shared`/`revoked` — cross-org sharing is deferred). RLS: SELECT for any active member of origin org, INSERT/UPDATE for `clinic_admin` only, no DELETE policy. **Strictly does NOT modify** `accessible_document_ids()`, `log_document_access`, `log_document_access_for_organizations`, `list_documents_for_organization`, `caller_owned_child_profile_ids`, or any existing policy on `child_documents` / `child_document_versions` / `document_access_events` — smoke 081 mechanically asserts this.
 
@@ -529,6 +537,85 @@ Help drawer implementation pattern (consistent across all pages):
 ---
 
 ## Session Log
+
+### 2026-05-04 — Basic Therapy Sessions (Phase 6E)
+
+Lauris Care now has an actual therapy workflow. Clinic admins and therapists can schedule, edit, and cancel sessions for clinic-owned children and for school-shared children that have been **explicitly accepted** as therapy clients. **Strictly additive and isolated** — no school-side change, no edits to existing helpers/RPCs, no changes to `child_documents` / `clinic_documents` / `student_plans`.
+
+**Two relationship_kinds in active use** (Phase 6E adjustment 1).
+- `'clinic_client'` — clinic-owned children. Auto-created at clinic-admin's NewChildModal flow (078 INSERT policy + auto-membership in `createOwnedChild`). Ownership-based.
+- `'therapy_client'` — school-shared children that the clinic has accepted via the new acceptance flow. Treatment-based; requires an active identity grant from the school side.
+
+Ownership and treatment stay distinct concepts; reusing `'clinic_client'` for both would have collapsed the semantics in a way that hurts future multi-org workflows (e.g. a doctor's office that sees a kid as a one-off consult should be able to do so without "owning" them).
+
+**Migration 082.** One table + one trigger + RLS + one INSERT policy on `child_profile_memberships` + one helper RPC.
+- `therapy_sessions` — single therapist FK column. CHECK enums `therapy_type IN ('speech','occupational','behavioral','other')` and `status IN ('scheduled','completed','cancelled','no_show')`. `parent_visible_summary` reserved for future parent portal. Indexes on `(clinic_organization_id, scheduled_at DESC)` and `(child_profile_id, scheduled_at DESC)`.
+- `ts_immutable_columns_guard` (BEFORE UPDATE) — Phase 6E adjustment 3 implication. Locks `clinic_organization_id`, `child_profile_id`, `created_by_profile_id` post-insert. Lifecycle columns (`therapist_profile_id`, `therapy_type`, `scheduled_at`, `duration_minutes`, `status`, `notes`, `parent_visible_summary`) remain mutable.
+- RLS — SELECT requires active clinic membership AND active `(clinic_client | therapy_client)` membership on (child, clinic). INSERT/UPDATE additionally require role IN `('clinic_admin', 'therapist')` AND the chosen `therapist_profile_id` must itself be an active member (anti-spoof). DELETE has no policy → cancellation only.
+- Acceptance INSERT policy — `clinic_admin_accept_granted_child` on `child_profile_memberships`. Permissive policy added alongside the 078 `clinic_admin_insert_child_profile_memberships` (Phase 6B's owned-child insert). PostgreSQL ORs permissive policies, so both INSERT paths now succeed: `'clinic_client'` via 078, `'therapy_client'` via 082. The acceptance policy enforces (a) caller is clinic_admin of the org, (b) the kind is exactly `'therapy_client'`, (c) an active `child_profile_access_grants` exists on (child, org).
+- `list_clinic_members(p_org_id UUID)` — SECURITY DEFINER STABLE. Twin of `list_school_staff_for_sharing` (065). Caller-must-be-member gate (returns empty otherwise). Used for the therapist picker dropdown + name resolution in the sessions list.
+
+**Inline EXISTS for now** (Phase 6E adjustment 2). The session SELECT/INSERT/UPDATE policies use inline `EXISTS` against `organization_memberships` + `child_profile_memberships` rather than introducing a `caller_treated_child_profile_ids()` helper. If a second consumer needs the same predicate, extract the helper at that point.
+
+**Single therapist per session in v1** (Phase 6E adjustment 3). The schema can evolve to multi-therapist via a future `therapy_session_therapists` join table without breaking compatibility — `therapist_profile_id` becomes the "primary therapist" anchor, and additional participants live in the join table.
+
+**App-side additions.**
+- `src/features/care/sessions-api.ts` — `listSessionsForClinic`, `listSessionsForChild`, `createSession`, `updateSession`, `listClinicMembers`, `acceptChildAsTherapyClient`, `getChildClinicMembershipState` (returns one of `'owned' | 'accepted' | 'shared_pending' | 'shared_no_grant'`). Friendly error mapping for RLS rejections (e.g. "Acceptance failed. Confirm there's an active identity grant for this child to your clinic.").
+- `src/features/care/ScheduleSessionModal.tsx` — child-locked, therapist dropdown via `list_clinic_members` (defaults to caller when caller is a member), therapy-type radios, date + time, duration (optional minutes), notes.
+- `src/features/care/EditSessionModal.tsx` — same shape plus Status selector. Mounted both on the per-child detail page and inside the global SessionsView.
+- `src/features/care/TherapySessionsList.tsx` — status + therapy-type badges. Per-row click opens `EditSessionModal`. When `showChildColumn=true`, rows link to the child detail page (used by the global view).
+- `src/features/care/SessionsView.tsx` — clinic-wide list body for `/care/sessions`. Filters: date range (default `−7d → +14d`), status, therapy_type. Mounts EditSessionModal on row click.
+- `src/features/care/AcceptAsTherapyClientCard.tsx` — clinic_admin-only card surfaced on shared-child detail pages when membership state is `shared_pending`. Single button "Accept as therapy client" → `acceptChildAsTherapyClient`.
+- `src/app/care/sessions/page.tsx` — new route. Uses `useCareContext` for `activeOrganizationId` and `activeOrganizationName`.
+- `src/app/care/layout.tsx` — added `Calendar` icon import; nav array grew from 2 to 3 entries (Children → **Sessions** → Documents).
+
+**App-side edits.**
+- `src/lib/types/database.ts` — added `list_clinic_members` Function type.
+- `src/features/care/types.ts` — added `TherapyType`, `SessionStatus`, `TherapySession`, `ClinicMember`, `ChildClinicMembershipState`.
+- `src/features/care/ChildDetailView.tsx` — branches on `membershipState`. Owned/accepted children get the Sessions card + Schedule button; shared children with pending acceptance get the AcceptAsTherapyClientCard (clinic_admin only); shared children without a grant render no session UI. Mounts `ScheduleSessionModal` and `EditSessionModal` for treated children.
+- `src/app/care/children/[childProfileId]/page.tsx` — fetches sessions + membership state alongside identity / shared docs / clinic docs. Threads `sessions`, `membershipState`, `activeOrganizationId` into `ChildDetailView`.
+
+**Defense matrix verified by smoke 082** — clinic-A admin attempting INSERT:
+
+| target | result |
+|---|---|
+| owned child (existing 'clinic_client' membership) | ✅ allowed |
+| shared child after acceptance ('therapy_client' membership) | ✅ allowed |
+| shared child WITHOUT acceptance | ❌ RLS reject |
+| clinic-B's child (cross-clinic) | ❌ RLS reject |
+| owned child but `therapist_profile_id` is non-member | ❌ RLS reject (anti-spoof) |
+| `clinic_organization_id` / `child_profile_id` / `created_by_profile_id` UPDATE | ❌ trigger 42501 |
+| `status='completed_with_notes'` typo | ❌ CHECK 23514 |
+| DELETE on therapy_sessions | ❌ silent 0-rows (no policy) |
+
+**Smoke 082** — 17 scenarios. T-2 mechanically asserts `accessible_document_ids`, `log_document_access*`, `list_documents_for_organization`, `caller_owned_child_profile_ids`, `caller_visible_child_profile_ids*`, `log_clinic_document_access` bodies don't reference any 6E artifact. T-7 confirms school_admin sees zero sessions. T-9–T-11 cover the acceptance gate. T-16 verifies `list_clinic_members` returns empty for non-members.
+
+**Out of scope (deferred).**
+- Calendar view / weekly grid UI.
+- Bulk cancel / bulk reschedule.
+- Session-attached files (would extend `clinic_documents` with a session FK in 6E.1).
+- Multi-therapist sessions (the schema can evolve via a join table).
+- Therapy goals / progress notes (richer than `notes` TEXT).
+- Billing.
+- Reports / charts.
+- Parent portal visibility (the `parent_visible_summary` column is reserved but never displayed in v1).
+- Un-accept flow — a clinic_admin who wants to stop treating a school-shared child currently sets `child_profile_memberships.status='ended'` via SQL. UI ships in 6E.1 if needed; the session SELECT policy correctly drops access the moment the membership flips out of `'active'`.
+- "Therapist availability" gating — admins can schedule on top of existing sessions without conflict detection.
+
+**Manual setup for testing.**
+1. Apply migration 082. Run `supabase/tests/082_therapy_sessions_smoke.sql` — expect `✓ All 082 smoke tests passed.`
+2. Sign in as clinic_admin → bottom nav now shows Children · Sessions · Documents (3 items).
+3. Open `/care/sessions` → empty state with default range −7d → +14d.
+4. Open an owned child → Therapy sessions card with Schedule Session button. Click → modal. Pick date + time, therapy_type=speech, save → row appears in the per-child list AND on `/care/sessions`.
+5. Click the row in `/care/sessions` → EditSessionModal opens; flip status=completed, add notes, save.
+6. Promote a second clinic-A user to `role='therapist'` and sign in as them. Confirm Sessions tab visible; can SELECT all clinic sessions; can create new sessions.
+7. Acceptance flow: open a shared-child page (active grant). Sessions card hidden; AcceptAsTherapyClientCard visible (clinic_admin only). Click Accept → page reloads → AcceptCard gone → Sessions card visible. Schedule a session.
+8. Pre-acceptance block: in SQL editor as clinic_admin, attempt `INSERT INTO therapy_sessions ... (clinic_organization_id, <other_shared_child_with_grant_but_not_accepted>, ...)` → INSERT rejected.
+9. Cross-clinic: as clinic-B admin → SELECT therapy_sessions WHERE clinic_organization_id = clinic-A returns 0; INSERT for clinic-A's child rejected.
+10. Anti-spoof: as clinic-A admin, attempt `INSERT INTO therapy_sessions (..., therapist_profile_id = <clinic_B_member>, ...)` → REJECTED.
+11. School isolation: as school_admin → `SELECT * FROM therapy_sessions` returns 0 rows; `/documents` workspace unaffected.
+12. Column-guard: attempt `UPDATE therapy_sessions SET clinic_organization_id = '<other>'` as clinic_admin → 42501.
+13. Existing flows unaffected: school sharing UI, clinic-doc upload, school doc viewing on /care/documents — all still work end-to-end.
 
 ### 2026-05-04 — Clinic-Internal Document Upload (Phase 6C)
 

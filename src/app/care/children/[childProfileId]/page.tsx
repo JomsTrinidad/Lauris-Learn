@@ -15,13 +15,20 @@ import {
   listSharedDocuments,
 } from "@/features/care/queries";
 import { listClinicDocumentsForChild } from "@/features/care/clinic-documents-api";
+import {
+  getChildClinicMembershipState,
+  listSessionIdsWithNotes,
+  listSessionsForChild,
+} from "@/features/care/sessions-api";
 import { ChildDetailView } from "@/features/care/ChildDetailView";
 import type {
   CareChildRow,
+  ChildClinicMembershipState,
   ChildIdentifier,
   ChildIdentity,
   ClinicDocument,
   SharedDocument,
+  TherapySession,
 } from "@/features/care/types";
 
 export default function CareChildDetailPage() {
@@ -35,6 +42,12 @@ export default function CareChildDetailPage() {
   const [match, setMatch] = useState<CareChildRow | null>(null);
   const [documents, setDocuments] = useState<SharedDocument[]>([]);
   const [clinicDocuments, setClinicDocuments] = useState<ClinicDocument[]>([]);
+  const [sessions, setSessions] = useState<TherapySession[]>([]);
+  const [sessionsWithNotes, setSessionsWithNotes] = useState<Set<string>>(
+    new Set(),
+  );
+  const [membershipState, setMembershipState] =
+    useState<ChildClinicMembershipState>("shared_no_grant");
   const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
@@ -46,13 +59,24 @@ export default function CareChildDetailPage() {
     setLoading(true);
 
     (async () => {
-      const [owned, grants, idy, ids, docs, clinicDocs] = await Promise.all([
+      const [
+        owned,
+        grants,
+        idy,
+        ids,
+        docs,
+        clinicDocs,
+        sess,
+        memberState,
+      ] = await Promise.all([
         listOwnedChildren(activeOrganizationId),
         listGrantedChildren(activeOrganizationId),
         getChildIdentity(childProfileId),
         listChildIdentifiers(childProfileId),
         listSharedDocuments(activeOrganizationId, childProfileId),
         listClinicDocumentsForChild(childProfileId),
+        listSessionsForChild(activeOrganizationId, childProfileId),
+        getChildClinicMembershipState(activeOrganizationId, childProfileId),
       ]);
       if (cancelled) return;
 
@@ -88,6 +112,19 @@ export default function CareChildDetailPage() {
       setIdentifiers(ids);
       setDocuments(docs);
       setClinicDocuments(clinicDocs);
+      setSessions(sess);
+      setMembershipState(memberState);
+
+      // Phase 6E.1 — second-pass fetch for the "has notes" indicator
+      // and the timeline. Cheap one-shot using the freshly fetched
+      // session ids.
+      if (sess.length > 0) {
+        const noteIds = await listSessionIdsWithNotes(sess.map((s) => s.id));
+        if (!cancelled) setSessionsWithNotes(noteIds);
+      } else {
+        setSessionsWithNotes(new Set());
+      }
+
       setLoading(false);
     })();
 
@@ -134,6 +171,10 @@ export default function CareChildDetailPage() {
       origin={match}
       documents={documents}
       clinicDocuments={clinicDocuments}
+      sessions={sessions}
+      sessionsWithNotes={sessionsWithNotes}
+      membershipState={membershipState}
+      activeOrganizationId={activeOrganizationId}
       canEdit={isClinicAdmin && match.originType === "owned"}
       isClinicAdmin={isClinicAdmin}
       uploaderProfileId={userId ?? undefined}

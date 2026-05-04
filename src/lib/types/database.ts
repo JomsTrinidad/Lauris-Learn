@@ -1102,6 +1102,16 @@ export type Database = {
         };
         Returns: Json;
       };
+      list_clinic_members: {
+        Args: { p_org_id: string };
+        Returns: {
+          id: string;
+          full_name: string | null;
+          email: string;
+          role: string;
+          status: string;
+        }[];
+      };
     };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;

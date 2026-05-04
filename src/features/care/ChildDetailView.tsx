@@ -14,18 +14,25 @@ import {
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Upload } from "lucide-react";
+import { Upload, Calendar, Plus } from "lucide-react";
 import { SharedDocumentsList } from "./SharedDocumentsList";
 import { EditChildModal } from "./EditChildModal";
 import { ManageIdentifiersModal } from "./ManageIdentifiersModal";
 import { ClinicDocumentsList } from "./ClinicDocumentsList";
 import { UploadClinicDocumentModal } from "./UploadClinicDocumentModal";
+import { TherapySessionsList } from "./TherapySessionsList";
+import { ScheduleSessionModal } from "./ScheduleSessionModal";
+import { EditSessionModal } from "./EditSessionModal";
+import { AcceptAsTherapyClientCard } from "./AcceptAsTherapyClientCard";
+import { ChildTimeline } from "./ChildTimeline";
 import type {
   CareChildRow,
+  ChildClinicMembershipState,
   ChildIdentifier,
   ChildIdentity,
   ClinicDocument,
   SharedDocument,
+  TherapySession,
 } from "./types";
 
 interface Props {
@@ -48,6 +55,16 @@ interface Props {
    *  the active CareContext organization id when origin.originType ===
    *  'owned'. */
   originOrganizationId?: string;
+  /** Phase 6E — therapy sessions for this child in the active clinic. */
+  sessions?: TherapySession[];
+  /** Phase 6E.1 — set of session ids that already have a note row. */
+  sessionsWithNotes?: Set<string>;
+  /** Phase 6E — child↔clinic membership state, drives the Sessions /
+   *  Accept-as-therapy-client branch. */
+  membershipState?: ChildClinicMembershipState;
+  /** Phase 6E — active CareContext organization id (used by sessions
+   *  modals for the clinic_organization_id payload). */
+  activeOrganizationId?: string;
   /** Called after a successful edit so the parent page can refetch. */
   onChanged?: () => void;
 }
@@ -80,8 +97,13 @@ export function ChildDetailView({
   isClinicAdmin = false,
   uploaderProfileId,
   originOrganizationId,
+  sessions = [],
+  sessionsWithNotes,
+  membershipState,
+  activeOrganizationId,
   onChanged,
 }: Props) {
+  const notesSet = sessionsWithNotes ?? new Set<string>();
   const isOwned = origin.originType === "owned";
   // For shared children, identifiers visibility depends on grant scope.
   // For owned children, the owning clinic always sees identifiers (the
@@ -98,6 +120,20 @@ export function ChildDetailView({
   const showClinicDocsBlock = isOwned;
   const canUploadClinicDoc =
     isOwned && isClinicAdmin && !!uploaderProfileId && !!originOrganizationId;
+
+  // Phase 6E — sessions surface depends on the child↔clinic membership
+  // state. Owned + accepted children get the Sessions card. Shared
+  // children with an active grant but no membership get the Accept
+  // card (clinic_admin only). Everything else hides session UI.
+  const isClinicallyTreated =
+    membershipState === "owned" || membershipState === "accepted";
+  const canAcceptAsTherapyClient =
+    membershipState === "shared_pending" && isClinicAdmin;
+  const canScheduleSession =
+    isClinicallyTreated && !!uploaderProfileId && !!activeOrganizationId;
+
+  const [scheduleSessionOpen, setScheduleSessionOpen] = useState(false);
+  const [editSessionTarget, setEditSessionTarget] = useState<TherapySession | null>(null);
 
   function handleSaved() {
     setEditOpen(false);
@@ -251,6 +287,43 @@ export function ChildDetailView({
         </CardContent>
       </Card>
 
+      {/* Phase 6E — Therapy sessions / Accept-as-therapy-client */}
+      {canAcceptAsTherapyClient && activeOrganizationId && (
+        <AcceptAsTherapyClientCard
+          organizationId={activeOrganizationId}
+          childProfileId={identity.id}
+          childName={identity.displayName}
+          onAccepted={() => onChanged?.()}
+        />
+      )}
+
+      {isClinicallyTreated && (
+        <div className="space-y-2">
+          <div className="flex items-start justify-between gap-2 px-1">
+            <h2 className="font-semibold flex items-center gap-2">
+              <Calendar className="w-4 h-4" />
+              Therapy sessions
+            </h2>
+            {canScheduleSession && (
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => setScheduleSessionOpen(true)}
+              >
+                <Plus className="w-3.5 h-3.5 mr-1" />
+                Schedule Session
+              </Button>
+            )}
+          </div>
+          <TherapySessionsList
+            sessions={sessions}
+            showChildColumn={false}
+            sessionsWithNotes={notesSet}
+            onSelect={(s) => setEditSessionTarget(s)}
+          />
+        </div>
+      )}
+
       {/* Documents — section depends on origin type. */}
       {showClinicDocsBlock ? (
         <div className="space-y-2">
@@ -315,6 +388,45 @@ export function ChildDetailView({
             setUploadClinicDocOpen(false);
             onChanged?.();
           }}
+        />
+      )}
+
+      {canScheduleSession && uploaderProfileId && activeOrganizationId && (
+        <ScheduleSessionModal
+          open={scheduleSessionOpen}
+          organizationId={activeOrganizationId}
+          childProfileId={identity.id}
+          childName={identity.displayName}
+          callerProfileId={uploaderProfileId}
+          onClose={() => setScheduleSessionOpen(false)}
+          onCreated={() => {
+            setScheduleSessionOpen(false);
+            onChanged?.();
+          }}
+        />
+      )}
+
+      {isClinicallyTreated && (
+        <EditSessionModal
+          open={editSessionTarget !== null}
+          session={editSessionTarget}
+          callerProfileId={uploaderProfileId ?? null}
+          onClose={() => setEditSessionTarget(null)}
+          onSaved={() => {
+            setEditSessionTarget(null);
+            onChanged?.();
+          }}
+        />
+      )}
+
+      {/* Phase 6E.1 — Timeline (clinically-treated children only). */}
+      {isClinicallyTreated && (
+        <ChildTimeline
+          sessions={sessions}
+          clinicDocuments={clinicDocuments}
+          sharedDocuments={documents}
+          sessionsWithNotes={notesSet}
+          onSelectSession={(s) => setEditSessionTarget(s)}
         />
       )}
     </div>

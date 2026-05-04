@@ -9,6 +9,7 @@ import {
   FileText,
   LogOut,
   ChevronDown,
+  Calendar,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { Spinner } from "@/components/ui/spinner";
@@ -18,6 +19,7 @@ import type { ClinicMembership } from "@/features/care/types";
 
 const NAV = [
   { href: "/care/children",  icon: Users,    label: "Children" },
+  { href: "/care/sessions",  icon: Calendar, label: "Sessions" },
   { href: "/care/documents", icon: FileText, label: "Documents" },
 ];
 
