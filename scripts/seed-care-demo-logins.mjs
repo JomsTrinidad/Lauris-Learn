@@ -159,30 +159,47 @@ async function ensureClinicOrg(name, kind) {
 }
 
 /**
- * Ensure exactly one active membership for (orgId, profileId).
+ * Ensure exactly one active membership for (orgId, profileId) with the correct role.
  *
- * - If active membership exists with correct role: no-op.
- * - If active membership exists with different role: updates role.
- * - If no active membership: inserts one.
+ * Robust strategy:
+ *   1. Fetch ALL active memberships for this profile across all orgs.
+ *   2. Keep only the row for this specific org (by id); remove all others for this profile.
+ *   3. If the matching row has the wrong role, update it.
+ *   4. If no matching row exists, insert one.
  *
- * organization_memberships INSERT/UPDATE require super_admin under RLS.
- * This script uses the service-role client which bypasses RLS entirely.
+ * This handles the stale-org-id edge case: if a duplicate clinic org was created at
+ * some point and the profile was given a membership in the old org, this removes those
+ * stale rows so only one active membership remains.
  */
 async function ensureMembership(orgId, profileId, role, email) {
-  const { data: existing } = await admin
+  const { data: allActive, error: fetchErr } = await admin
     .from("organization_memberships")
-    .select("id, role")
-    .eq("organization_id", orgId)
+    .select("id, role, organization_id")
     .eq("profile_id", profileId)
-    .eq("status", "active")
-    .maybeSingle();
+    .eq("status", "active");
 
-  if (existing) {
-    if (existing.role !== role) {
+  if (fetchErr) throw new Error(`fetch memberships(${email}): ${fetchErr.message}`);
+
+  const rows = allActive ?? [];
+  const matching = rows.find((r) => r.organization_id === orgId);
+  const stale    = rows.filter((r) => r.organization_id !== orgId);
+
+  // Remove stale memberships pointing at other orgs for this profile
+  for (const s of stale) {
+    const { error } = await admin
+      .from("organization_memberships")
+      .delete()
+      .eq("id", s.id);
+    if (error) throw new Error(`delete stale membership(${email}, org=${s.organization_id}): ${error.message}`);
+    console.log(`  🗑  removed stale membership (${email}, org=${s.organization_id.slice(0, 8)}…)`);
+  }
+
+  if (matching) {
+    if (matching.role !== role) {
       const { error } = await admin
         .from("organization_memberships")
         .update({ role })
-        .eq("id", existing.id);
+        .eq("id", matching.id);
       if (error) throw new Error(`update membership role for ${email}: ${error.message}`);
       console.log(`  ↩  membership role updated → ${role} (${email})`);
     } else {

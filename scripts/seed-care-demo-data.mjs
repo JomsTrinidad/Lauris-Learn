@@ -451,6 +451,14 @@ async function ensureParentAuthUser(email, fullName) {
   }
   // Ensure profiles.role = 'parent' so the Care portal recognises them
   await admin.from("profiles").upsert({ id: userId, role: "parent", full_name: fullName, email }, { onConflict: "id" });
+
+  // Remove any org memberships for parent accounts — parents must never appear
+  // as clinic staff. If a stale membership exists, the Care navbar shows the
+  // wrong role badge for everyone because CareContext returns the first active
+  // membership it finds.
+  const { error: omErr } = await admin.from("organization_memberships").delete().eq("profile_id", userId);
+  if (omErr) console.warn(`    ⚠  org_memberships cleanup(${email}): ${omErr.message}`);
+
   return userId;
 }
 
@@ -791,6 +799,32 @@ async function main() {
   const speechS  = await getProfileByEmail("care.speech.south@lauris.demo");
   const otS      = await getProfileByEmail("care.ot.south@lauris.demo");
   console.log("  ✓  All staff profiles resolved");
+
+  // 2b. Re-assert clinic_admin role for admin accounts — defensive fix so
+  //     running the data seed alone can't leave admin accounts with wrong roles.
+  console.log("\n── Re-asserting Admin Roles ───────────────");
+  for (const side of ["north", "south"]) {
+    const profileId = adminProfileIds[side];
+    const orgId = orgs[side].id;
+    const { data: existing } = await admin
+      .from("organization_memberships")
+      .select("id, role")
+      .eq("profile_id", profileId)
+      .eq("organization_id", orgId)
+      .eq("status", "active")
+      .maybeSingle();
+    if (existing) {
+      if (existing.role !== "clinic_admin") {
+        const { error } = await admin.from("organization_memberships").update({ role: "clinic_admin" }).eq("id", existing.id);
+        if (error) console.warn(`  ⚠  role update failed for ${DEMO_ADMIN_EMAILS[side]}: ${error.message}`);
+        else console.log(`  ✓  ${DEMO_ADMIN_EMAILS[side]} → role=clinic_admin (was ${existing.role})`);
+      } else {
+        console.log(`  ↩  ${DEMO_ADMIN_EMAILS[side]} already clinic_admin`);
+      }
+    } else {
+      console.warn(`  ⚠  No active membership for ${DEMO_ADMIN_EMAILS[side]} — run seed-care-demo-logins.mjs first`);
+    }
+  }
 
   const therapistMap = {
     north: { speech: speechN, occupational: otN, behavioral: behaviorN, other: adminProfileIds.north },
