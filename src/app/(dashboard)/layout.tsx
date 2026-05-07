@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
 import { AlertTriangle, XCircle, Eye, X, Ban } from "lucide-react";
@@ -141,10 +142,12 @@ function HistoricalViewBanner() {
 function ImpersonationBanner() {
   const { isImpersonating, schoolName, stopImpersonation } = useSchoolContext();
   const router = useRouter();
+  const queryClient = useQueryClient();
 
   if (!isImpersonating) return null;
 
   function handleExit() {
+    queryClient.clear(); // Clear all cached queries before switching schools
     stopImpersonation();
     router.push("/super-admin/schools");
   }

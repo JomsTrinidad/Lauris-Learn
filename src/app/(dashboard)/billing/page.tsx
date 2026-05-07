@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Search, Plus, Banknote, Pencil, CheckSquare, History,
   Printer, AlertTriangle, Wand2, Check, ImageIcon, HelpCircle,
@@ -14,9 +15,12 @@ import { Modal, ModalCancelButton } from "@/components/ui/modal";
 import { DatePicker } from "@/components/ui/datepicker";
 import { MonthPicker } from "@/components/ui/monthpicker";
 import { PageSpinner, ErrorAlert } from "@/components/ui/spinner";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { formatCurrency } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { useSchoolContext } from "@/contexts/SchoolContext";
+import { queryKeys } from "@/lib/query-client";
+import { auditBillingMutation, generateRequestId } from "@/lib/monitoring";
 import { validateUpload, contentTypeFromExt, RECEIPT_MAX_BYTES } from "@/lib/upload-validate";
 import { trackUpload } from "@/lib/track-upload";
 import {
@@ -36,6 +40,7 @@ import { SetupAdjustmentsTab } from "@/features/billing/SetupAdjustmentsTab";
 
 export default function BillingPage() {
   const { schoolId, schoolName, activeYear, userId } = useSchoolContext();
+  const queryClient = useQueryClient();
   const supabase = createClient();
 
   // Core data
@@ -427,9 +432,17 @@ export default function BillingPage() {
     const balance = paymentModal.amountDue - paymentModal.amountPaid;
     if (amount > balance + 0.01) { setFormError(`Payment of ${formatCurrency(amount)} exceeds the remaining balance of ${formatCurrency(balance)}.`); return; }
     if (paymentSequenceWarning && !paymentOverrideReason.trim()) { setFormError("Please provide a reason to proceed despite earlier unpaid months."); return; }
+
+    // Validate receipt file BEFORE saving payment
+    if (payment.receiptFile) {
+      const uploadError = validateUpload(payment.receiptFile, RECEIPT_MAX_BYTES);
+      if (uploadError) { setFormError(`Receipt validation failed: ${uploadError}`); return; }
+    }
+
     setSaving(true); setFormError(null);
     const noteParts = [payment.notes.trim(), paymentOverrideReason.trim() ? `Sequence override: ${paymentOverrideReason.trim()}` : ""].filter(Boolean);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const requestId = generateRequestId();
     const pResult = await (supabase as any).from("payments").insert({
       billing_record_id: paymentModal.id, amount, payment_method: payment.method,
       reference_number: payment.reference || null, or_number: payment.orNumber || null,
@@ -437,23 +450,21 @@ export default function BillingPage() {
       payment_date: payment.date, status: "confirmed", recorded_by: userId || null,
     }).select("id").single();
     if (pResult.error) { setFormError(pResult.error.message); setSaving(false); return; }
+
+    // Audit log payment recording
+    auditBillingMutation("payment_recorded", {
+      schoolId: schoolId || undefined,
+      userId: userId || undefined,
+      billingRecordId: paymentModal.id,
+      studentId: paymentModal.studentId,
+      amount,
+      method: payment.method,
+      requestId,
+    });
+
+    // Upload receipt after payment is saved; if upload fails, payment stays saved but receipt_photo_path remains null
     if (payment.receiptFile && pResult.data?.id) {
-      const uploadError = validateUpload(payment.receiptFile, RECEIPT_MAX_BYTES);
-      if (uploadError) {
-        // Payment is already saved — show the upload error without blocking the payment record
-        setFormError(`Payment recorded, but receipt not uploaded: ${uploadError}`);
-        setSaving(false);
-        setPaymentModal(null);
-        setPayment(EMPTY_PAYMENT);
-        setPaymentType("installment");
-        setPaymentSequenceWarning(null);
-        setPaymentOverrideReason("");
-        showToast(`Payment of ${formatCurrency(amount)} recorded. To view payment details, go to the Payments tab.`);
-        await refreshData();
-        return;
-      }
       const ext = ("." + (payment.receiptFile.name.split(".").pop() ?? "jpeg")).toLowerCase();
-      // School-scoped path keeps receipts separate from class-update photos within the bucket
       const path = `payment-receipts/${schoolId}/${pResult.data.id}${ext}`;
       const { error: uploadErr } = await supabase.storage
         .from("updates-media")
@@ -461,15 +472,24 @@ export default function BillingPage() {
           upsert: true,
           contentType: contentTypeFromExt(payment.receiptFile.name),
         });
-      if (!uploadErr) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (supabase as any).from("payments").update({ receipt_photo_path: path }).eq("id", pResult.data.id);
-        await trackUpload(supabase, {
-          schoolId, uploadedBy: userId, entityType: "payment_receipt", entityId: pResult.data.id,
-          bucket: "updates-media", storagePath: path,
-          fileSize: payment.receiptFile!.size, mimeType: contentTypeFromExt(payment.receiptFile!.name),
-        });
+      if (uploadErr) {
+        // Receipt upload failed — payment is already saved, so we log the error but don't block the success flow
+        console.error("[Billing] Receipt upload failed:", uploadErr.message);
+        setFormError(`Payment recorded, but receipt photo upload failed: ${uploadErr.message}`);
+        setSaving(false); setPaymentModal(null); setPayment(EMPTY_PAYMENT); setPaymentType("installment");
+        setPaymentSequenceWarning(null); setPaymentOverrideReason("");
+        showToast(`Payment of ${formatCurrency(amount)} recorded. To view payment details, go to the Payments tab.`);
+        await refreshData();
+        return;
       }
+      // Receipt uploaded successfully — update the payment row
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (supabase as any).from("payments").update({ receipt_photo_path: path }).eq("id", pResult.data.id);
+      await trackUpload(supabase, {
+        schoolId, uploadedBy: userId, entityType: "payment_receipt", entityId: pResult.data.id,
+        bucket: "updates-media", storagePath: path,
+        fileSize: payment.receiptFile!.size, mimeType: contentTypeFromExt(payment.receiptFile!.name),
+      });
     }
     const newPaid = paymentModal.amountPaid + amount;
     const newStatus = computeStatus("unpaid", paymentModal.amountDue, newPaid, paymentModal.dueDate);
@@ -478,6 +498,11 @@ export default function BillingPage() {
     setSaving(false); setPaymentModal(null); setPayment(EMPTY_PAYMENT); setPaymentType("installment");
     setPaymentSequenceWarning(null); setPaymentOverrideReason("");
     showToast(`Payment of ${formatCurrency(amount)} recorded successfully. To view payment details, go to the Payments tab.`);
+    // Invalidate query caches so hooks refetch fresh data
+    void queryClient.invalidateQueries({ queryKey: queryKeys.payments.list(schoolId || "", activeYear?.id || "") });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.billingRecords.list(schoolId || "", activeYear?.id || "") });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.billingSummary.for(schoolId || "", activeYear?.id || "") });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.studentBillingRecords.for(paymentModal.studentId) });
     await refreshData();
   }
 
@@ -530,6 +555,13 @@ export default function BillingPage() {
     }
     setSaving(false); setAddModal(false); setAddForm(EMPTY_ADD);
     setAddDuplicateWarning(null); setAddOverrideReason("");
+    // Invalidate query caches so hooks refetch fresh data
+    void queryClient.invalidateQueries({ queryKey: queryKeys.billingRecords.list(schoolId || "", activeYear?.id || "") });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.billingSummary.for(schoolId || "", activeYear?.id || "") });
+    if (addForm.markAsPaid) {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.payments.list(schoolId || "", activeYear?.id || "") });
+    }
+    void queryClient.invalidateQueries({ queryKey: queryKeys.studentBillingRecords.for(addForm.studentId) });
     await refreshData();
   }
 
@@ -557,6 +589,10 @@ export default function BillingPage() {
     const { error } = await (supabase as any).from("billing_records").update(updateData).eq("id", editModal.id);
     if (error) { setFormError(error.message); setSaving(false); return; }
     setSaving(false); setEditModal(null);
+    // Invalidate query caches so hooks refetch fresh data
+    void queryClient.invalidateQueries({ queryKey: queryKeys.billingRecords.list(schoolId || "", activeYear?.id || "") });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.billingSummary.for(schoolId || "", activeYear?.id || "") });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.studentBillingRecords.for(editModal.studentId) });
     await refreshData();
   }
 
@@ -578,6 +614,14 @@ export default function BillingPage() {
       await (supabase as any).from("billing_records").update({ status: "paid", changed_by: userId || null, changed_at: new Date().toISOString(), change_reason: "Bulk mark as paid" }).eq("id", record.id);
     }
     setSelectedIds(new Set()); setBulkSaving(false);
+    // Invalidate query caches so hooks refetch fresh data
+    void queryClient.invalidateQueries({ queryKey: queryKeys.payments.list(schoolId || "", activeYear?.id || "") });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.billingRecords.list(schoolId || "", activeYear?.id || "") });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.billingSummary.for(schoolId || "", activeYear?.id || "") });
+    // Invalidate for all affected students
+    for (const record of bulkConfirmModal.records) {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.studentBillingRecords.for(record.studentId) });
+    }
     await refreshData();
   }
 
@@ -610,16 +654,21 @@ export default function BillingPage() {
 
   async function handleEditPayment() {
     if (!editPaymentModal || !schoolId) return;
+
+    // Validate receipt file BEFORE saving
+    if (editPaymentForm.receiptFile) {
+      const uploadError = validateUpload(editPaymentForm.receiptFile, RECEIPT_MAX_BYTES);
+      if (uploadError) { setEditPaymentError(`Receipt validation failed: ${uploadError}`); return; }
+    }
+
     setEditPaymentSaving(true); setEditPaymentError(null);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const update: Record<string, any> = { or_number: editPaymentForm.orNumber.trim() || null };
     if (editPaymentForm.receiptFile) {
-      const uploadError = validateUpload(editPaymentForm.receiptFile, RECEIPT_MAX_BYTES);
-      if (uploadError) { setEditPaymentError(uploadError); setEditPaymentSaving(false); return; }
       const ext = ("." + (editPaymentForm.receiptFile.name.split(".").pop() ?? "jpeg")).toLowerCase();
       const path = `payment-receipts/${schoolId}/${editPaymentModal.id}${ext}`;
       const { error: uploadErr } = await supabase.storage.from("updates-media").upload(path, editPaymentForm.receiptFile, { upsert: true, contentType: contentTypeFromExt(editPaymentForm.receiptFile.name) });
-      if (uploadErr) { setEditPaymentError(uploadErr.message); setEditPaymentSaving(false); return; }
+      if (uploadErr) { setEditPaymentError(`Receipt upload failed: ${uploadErr.message}`); setEditPaymentSaving(false); return; }
       update.receipt_photo_path = path;
       await trackUpload(supabase, {
         schoolId, uploadedBy: userId, entityType: "payment_receipt", entityId: editPaymentModal.id,
@@ -632,6 +681,9 @@ export default function BillingPage() {
     if (error) { setEditPaymentError(error.message); setEditPaymentSaving(false); return; }
     setEditPaymentSaving(false);
     setEditPaymentModal(null);
+    // Invalidate cache after successful update
+    void queryClient.invalidateQueries({ queryKey: queryKeys.payments.list(schoolId || "", activeYear?.id || "") });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.studentBillingRecords.for(editPaymentModal?.id || "") });
     // Reopen history modal so the updated row is visible
     if (editPaymentRecord) await openHistoryModal(editPaymentRecord);
     await refreshData();
@@ -714,6 +766,7 @@ export default function BillingPage() {
   if (loading) return <PageSpinner />;
 
   return (
+    <ErrorBoundary section="billing" fallback="minimal">
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
@@ -2018,5 +2071,6 @@ export default function BillingPage() {
         </div>
       )}
     </div>
+    </ErrorBoundary>
   );
 }

@@ -214,9 +214,12 @@ export default function ParentUpdatesPage() {
       return;
     }
     if (broadcastPhotos.length > 0) {
-      const imagePaths = await uploadPhotos(inserted.id, broadcastPhotos);
-      if (imagePaths.length > 0) {
-        await sb.from("parent_updates").update({ image_urls: imagePaths }).eq("id", inserted.id);
+      const uploadResult = await uploadPhotos(inserted.id, broadcastPhotos);
+      if (uploadResult.failedCount > 0) {
+        setBroadcastError(`⚠️ Broadcast sent, but ${uploadResult.failedCount} photo${uploadResult.failedCount > 1 ? "s" : ""} failed to upload: ${uploadResult.failureErrors.join(", ")}`);
+      }
+      if (uploadResult.successfulPaths.length > 0) {
+        await sb.from("parent_updates").update({ image_urls: uploadResult.successfulPaths }).eq("id", inserted.id);
       }
     }
     setBroadcastSending(false);
@@ -368,26 +371,35 @@ export default function ParentUpdatesPage() {
 
   // ── Upload helpers ──────────────────────────────────────────────────────────
 
-  async function uploadPhotos(updateId: string, items: PhotoItem[]): Promise<string[]> {
-    const paths: string[] = [];
+  interface PhotoUploadResult {
+    successfulPaths: string[];
+    failedCount: number;
+    failureErrors: string[];
+  }
+
+  async function uploadPhotos(updateId: string, items: PhotoItem[]): Promise<PhotoUploadResult> {
+    const successfulPaths: string[] = [];
+    const failureErrors: string[] = [];
     let newIndex = 0;
     for (const item of items) {
       if (item.uploadedPath) {
-        paths.push(item.uploadedPath);
+        successfulPaths.push(item.uploadedPath);
       } else if (item.file) {
         const path = `updates/${updateId}/${newIndex++}.jpg`;
         const { error } = await supabase.storage.from("updates-media").upload(path, item.file, { upsert: true });
         if (!error) {
-          paths.push(path);
+          successfulPaths.push(path);
           await trackUpload(supabase, {
             schoolId, uploadedBy: userId, entityType: "parent_update", entityId: updateId,
             bucket: "updates-media", storagePath: path,
             fileSize: item.file.size, mimeType: "image/jpeg",
           });
+        } else {
+          failureErrors.push(item.file.name);
         }
       }
     }
-    return paths;
+    return { successfulPaths, failedCount: failureErrors.length, failureErrors };
   }
 
   // ── Post / Draft ────────────────────────────────────────────────────────────
@@ -401,12 +413,15 @@ export default function ParentUpdatesPage() {
 
     if (editingDraftId) {
       // Posting an edited draft — update the existing record
-      const imageUrls = photoItems.length > 0 ? await uploadPhotos(editingDraftId, photoItems) : [];
+      const uploadResult = photoItems.length > 0 ? await uploadPhotos(editingDraftId, photoItems) : { successfulPaths: [], failedCount: 0, failureErrors: [] };
+      if (uploadResult.failedCount > 0) {
+        setError(`⚠️ Posted, but ${uploadResult.failedCount} photo${uploadResult.failedCount > 1 ? "s" : ""} failed to upload: ${uploadResult.failureErrors.join(", ")}`);
+      }
       const { error: e } = await sb.from("parent_updates").update({
         content: postContent.trim(),
         class_id: postClass || null,
         status: "posted",
-        image_urls: imageUrls,
+        image_urls: uploadResult.successfulPaths,
       }).eq("id", editingDraftId);
       if (e) { setError(e.message); setPosting(false); return; }
     } else {
@@ -417,9 +432,12 @@ export default function ParentUpdatesPage() {
         .select("id").single();
       if (insertErr || !inserted) { setError(insertErr?.message ?? "Failed to post update."); setPosting(false); return; }
       if (photoItems.length > 0) {
-        const imageUrls = await uploadPhotos(inserted.id, photoItems);
-        if (imageUrls.length > 0) {
-          await sb.from("parent_updates").update({ image_urls: imageUrls }).eq("id", inserted.id);
+        const uploadResult = await uploadPhotos(inserted.id, photoItems);
+        if (uploadResult.failedCount > 0) {
+          setError(`⚠️ Posted, but ${uploadResult.failedCount} photo${uploadResult.failedCount > 1 ? "s" : ""} failed to upload: ${uploadResult.failureErrors.join(", ")}`);
+        }
+        if (uploadResult.successfulPaths.length > 0) {
+          await sb.from("parent_updates").update({ image_urls: uploadResult.successfulPaths }).eq("id", inserted.id);
         }
       }
     }
@@ -439,11 +457,14 @@ export default function ParentUpdatesPage() {
 
     if (editingDraftId) {
       // Updating an existing draft
-      const imageUrls = photoItems.length > 0 ? await uploadPhotos(editingDraftId, photoItems) : [];
+      const uploadResult = photoItems.length > 0 ? await uploadPhotos(editingDraftId, photoItems) : { successfulPaths: [], failedCount: 0, failureErrors: [] };
+      if (uploadResult.failedCount > 0) {
+        setError(`⚠️ Draft saved, but ${uploadResult.failedCount} photo${uploadResult.failedCount > 1 ? "s" : ""} failed to upload: ${uploadResult.failureErrors.join(", ")}`);
+      }
       const { error: e } = await sb.from("parent_updates").update({
         content: postContent.trim(),
         class_id: postClass || null,
-        image_urls: imageUrls,
+        image_urls: uploadResult.successfulPaths,
       }).eq("id", editingDraftId);
       if (e) { setError(e.message); setSavingDraft(false); return; }
     } else {
@@ -454,9 +475,12 @@ export default function ParentUpdatesPage() {
         .select("id").single();
       if (insertErr || !inserted) { setError(insertErr?.message ?? "Failed to save draft."); setSavingDraft(false); return; }
       if (photoItems.length > 0) {
-        const imageUrls = await uploadPhotos(inserted.id, photoItems);
-        if (imageUrls.length > 0) {
-          await sb.from("parent_updates").update({ image_urls: imageUrls }).eq("id", inserted.id);
+        const uploadResult = await uploadPhotos(inserted.id, photoItems);
+        if (uploadResult.failedCount > 0) {
+          setError(`⚠️ Draft saved, but ${uploadResult.failedCount} photo${uploadResult.failedCount > 1 ? "s" : ""} failed to upload: ${uploadResult.failureErrors.join(", ")}`);
+        }
+        if (uploadResult.successfulPaths.length > 0) {
+          await sb.from("parent_updates").update({ image_urls: uploadResult.successfulPaths }).eq("id", inserted.id);
         }
       }
     }

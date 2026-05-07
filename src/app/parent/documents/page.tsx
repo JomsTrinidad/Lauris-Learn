@@ -1,24 +1,22 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { FileText, Calendar, ShieldCheck, AlertCircle, BellRing, Upload } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PageSpinner, ErrorAlert } from "@/components/ui/spinner";
 import { createClient } from "@/lib/supabase/client";
+import { queryKeys } from "@/lib/query-client";
+import { useParentDocuments } from "@/lib/hooks/useParentDocuments";
 import {
   formatDocumentType,
   formatDate,
   daysUntil,
 } from "@/features/documents/utils";
-import {
-  listParentDocuments,
-  listConsentsForStudentDocument,
-  isConsentLive,
-  type ParentDocumentListItem,
-} from "@/features/documents/parent-api";
+import type { ParentDocumentListItem } from "@/features/documents/parent-api";
 import { ParentDocumentDetailModal } from "@/features/documents/ParentDocumentDetailModal";
 import { ParentUploadDocumentModal } from "@/features/documents/ParentUploadDocumentModal";
 import { PendingConsentsPanel } from "@/features/documents/PendingConsentsPanel";
@@ -28,6 +26,7 @@ import { useParentContext } from "../layout";
 
 export default function ParentDocumentsPage() {
   const { childId, child, schoolId } = useParentContext();
+  const queryClient = useQueryClient();
   const supabase = useMemo(() => createClient(), []);
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -54,63 +53,16 @@ export default function ParentDocumentsPage() {
   const studentParam = searchParams.get("student");
   const effectiveStudentId = studentParam === childId ? childId : childId;
 
-  const [docs, setDocs] = useState<ParentDocumentListItem[]>([]);
-  const [pendingByDoc, setPendingByDoc] = useState<Record<string, number>>({});
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // Hook: documents shared with parent for the selected child
+  const docsQuery = useParentDocuments(effectiveStudentId);
+
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
 
-  const load = useCallback(
-    async (signal?: AbortSignal) => {
-      if (!effectiveStudentId) {
-        setLoading(false);
-        setDocs([]);
-        return;
-      }
-      setLoading(true);
-      setError(null);
-      try {
-        const rows = await listParentDocuments(supabase, effectiveStudentId);
-        if (signal?.aborted) return;
-        setDocs(rows);
-
-        // Per-doc count of live "pending" consents — drives the
-        // "Pending your approval" badge on each card. We fan these out
-        // in parallel; volumes are tiny per child.
-        const counts: Record<string, number> = {};
-        await Promise.all(
-          rows.map(async (d) => {
-            try {
-              const cs = await listConsentsForStudentDocument(supabase, {
-                id:            d.id,
-                document_type: d.document_type,
-                student_id:    d.student_id,
-                school_id:     d.school_id,
-              });
-              const n = cs.filter((c) => c.status === "pending" && isConsentLive(c)).length;
-              if (n > 0) counts[d.id] = n;
-            } catch {
-              // Non-fatal — list still renders without the badge.
-            }
-          }),
-        );
-        if (signal?.aborted) return;
-        setPendingByDoc(counts);
-      } catch (err) {
-        if (signal?.aborted) return;
-        setError(err instanceof Error ? err.message : "Couldn't load documents.");
-      } finally {
-        if (!signal?.aborted) setLoading(false);
-      }
-    },
-    [effectiveStudentId, supabase],
-  );
-
-  useEffect(() => {
-    const ctrl = new AbortController();
-    void load(ctrl.signal);
-    return () => ctrl.abort();
-  }, [load]);
+  const invalidateDocs = () => {
+    queryClient.invalidateQueries({
+      queryKey: queryKeys.parentDocuments.list(effectiveStudentId || ""),
+    });
+  };
 
   // Resolve auth.uid() once for the upload modal's created_by / uploader_user_id.
   useEffect(() => {
@@ -130,6 +82,8 @@ export default function ParentDocumentsPage() {
   }, [studentParam, childId, router]);
 
   const canUpload = !!(schoolId && childId && parentUserId);
+  const docs = docsQuery.data?.documents ?? [];
+  const pendingByDoc = docsQuery.data?.pendingByDoc ?? {};
 
   return (
     <div className="space-y-5">
@@ -170,12 +124,12 @@ export default function ParentDocumentsPage() {
       <PendingConsentsPanel
         studentId={effectiveStudentId}
         refreshKey={consentsRefresh}
-        onChanged={() => { void load(); }}
+        onChanged={() => { invalidateDocs(); }}
       />
 
-      {error && <ErrorAlert message={error} />}
+      {docsQuery.error && <ErrorAlert message={docsQuery.error.message} />}
 
-      {loading ? (
+      {docsQuery.isLoading ? (
         <PageSpinner />
       ) : docs.length === 0 ? (
         <EmptyState />
@@ -199,7 +153,7 @@ export default function ParentDocumentsPage() {
           // Detail-modal grants/revokes can flip a doc from invisible to
           // visible (or vice versa) AND clear a row from the pending-consents
           // panel — refresh both so the UI doesn't go stale.
-          void load();
+          invalidateDocs();
           setConsentsRefresh((n) => n + 1);
         }}
       />
@@ -216,7 +170,7 @@ export default function ParentDocumentsPage() {
             // Refresh the list (new draft appears immediately) and the
             // requests panel (fulfilled row should flip to submitted), then
             // open the detail modal for the just-uploaded doc.
-            void load();
+            invalidateDocs();
             if (fulfillCtx) setRequestsRefresh((n) => n + 1);
             setFulfillCtx(null);
             setSelectedDocId(docId);

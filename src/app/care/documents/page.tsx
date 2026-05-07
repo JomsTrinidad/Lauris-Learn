@@ -1,51 +1,31 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { FileText } from "lucide-react";
-import { Spinner } from "@/components/ui/spinner";
+import { Spinner, ErrorAlert } from "@/components/ui/spinner";
 import { useCareContext } from "@/features/care/CareContext";
-import {
-  listGrantedChildren,
-  listSharedDocuments,
-} from "@/features/care/queries";
+import { useCareSharedDocuments, useGrantedChildren } from "@/lib/hooks";
 import { SharedDocumentsList } from "@/features/care/SharedDocumentsList";
-import type { GrantedChild, SharedDocument } from "@/features/care/types";
 
 export default function CareDocumentsPage() {
   const { activeOrganizationId, activeOrganizationName } = useCareContext();
 
-  const [loading, setLoading] = useState(true);
-  const [documents, setDocuments] = useState<SharedDocument[]>([]);
-  const [children, setChildren] = useState<GrantedChild[]>([]);
+  // Hook: documents shared with this clinic
+  const docsQuery = useCareSharedDocuments(activeOrganizationId);
 
-  useEffect(() => {
-    if (!activeOrganizationId) {
-      setLoading(false);
-      return;
-    }
-    let cancelled = false;
-    setLoading(true);
-    Promise.all([
-      listSharedDocuments(activeOrganizationId),
-      listGrantedChildren(activeOrganizationId),
-    ]).then(([docs, kids]) => {
-      if (cancelled) return;
-      setDocuments(docs);
-      setChildren(kids);
-      setLoading(false);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [activeOrganizationId]);
+  // Hook: children granted to this clinic
+  const childrenQuery = useGrantedChildren(activeOrganizationId);
 
+  // Build child names map from granted children
   const childNamesById = useMemo(() => {
     const map: Record<string, string> = {};
-    for (const c of children) map[c.childProfileId] = c.displayName;
+    for (const c of childrenQuery.data ?? []) map[c.childProfileId] = c.displayName;
     return map;
-  }, [children]);
+  }, [childrenQuery.data]);
 
   if (!activeOrganizationId) return null;
+
+  const isLoading = docsQuery.isLoading || childrenQuery.isLoading;
 
   return (
     <div className="space-y-4">
@@ -60,13 +40,14 @@ export default function CareDocumentsPage() {
         </p>
       </div>
 
-      {loading ? (
+      {docsQuery.error && <ErrorAlert message={docsQuery.error.message} />}
+      {isLoading ? (
         <div className="py-12 flex justify-center">
           <Spinner />
         </div>
       ) : (
         <SharedDocumentsList
-          documents={documents}
+          documents={docsQuery.data ?? []}
           childNamesById={childNamesById}
         />
       )}

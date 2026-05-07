@@ -5,32 +5,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PageSpinner } from "@/components/ui/spinner";
 import { getInitials } from "@/lib/utils";
-import { createClient } from "@/lib/supabase/client";
 import { useParentContext } from "../layout";
-
-interface StudentDetail {
-  id: string;
-  firstName: string;
-  lastName: string;
-  preferredName: string | null;
-  dateOfBirth: string | null;
-  age: string;
-  gender: string | null;
-  studentCode: string | null;
-  className: string;
-  enrollmentStatus: string | null;
-  primaryLanguage: string | null;
-  allergies: string | null;
-  medicalConditions: string | null;
-  photoUrl: string | null;
-}
-
-interface AttendanceRecord {
-  id: string;
-  date: string;
-  status: "present" | "late" | "absent" | "excused";
-  notes: string | null;
-}
+import { useParentStudentDetail, useStudentAttendance } from "@/lib/hooks";
 
 const ATTENDANCE_CONFIG = {
   present: { icon: CheckCircle, color: "text-green-600", label: "Present" },
@@ -55,72 +31,22 @@ function calcAge(dob: string | null): string {
 
 export default function ParentStudentPage() {
   const { childId } = useParentContext();
-  const supabase = createClient();
-  const [loading, setLoading] = useState(true);
-  const [student, setStudent] = useState<StudentDetail | null>(null);
-  const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
+  const detailQuery = useParentStudentDetail(childId);
+  const attendanceQuery = useStudentAttendance(childId);
+  const [displayStudent, setDisplayStudent] = useState(detailQuery.data);
 
+  // Enrich student detail with calculated age
   useEffect(() => {
-    if (!childId) { setLoading(false); return; }
-    loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [childId]);
-
-  async function loadAll() {
-    setLoading(true);
-    await Promise.all([loadStudent(), loadAttendance()]);
-    setLoading(false);
-  }
-
-  async function loadStudent() {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data } = await (supabase as any)
-      .from("students")
-      .select(`
-        id, first_name, last_name, date_of_birth, gender, student_code, preferred_name,
-        photo_url, allergies, medical_conditions, primary_language,
-        enrollments(status, classes(name))
-      `)
-      .eq("id", childId)
-      .single();
-
-    if (data) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const d = data as any;
-      const enrollment = (d.enrollments ?? [])[0] ?? null;
-      setStudent({
-        id: d.id,
-        firstName: d.first_name,
-        lastName: d.last_name,
-        preferredName: d.preferred_name ?? null,
-        dateOfBirth: d.date_of_birth ?? null,
-        age: calcAge(d.date_of_birth),
-        gender: d.gender ?? null,
-        studentCode: d.student_code ?? null,
-        className: enrollment?.classes?.name ?? "—",
-        enrollmentStatus: enrollment?.status ?? null,
-        primaryLanguage: d.primary_language ?? null,
-        allergies: d.allergies ?? null,
-        medicalConditions: d.medical_conditions ?? null,
-        photoUrl: d.photo_url ?? null,
-      });
+    if (detailQuery.data) {
+      setDisplayStudent({
+        ...detailQuery.data,
+        age: calcAge(detailQuery.data.dateOfBirth),
+      } as any);
     }
-  }
+  }, [detailQuery.data]);
 
-  async function loadAttendance() {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data } = await (supabase as any)
-      .from("attendance_records")
-      .select("id, date, status, notes")
-      .eq("student_id", childId)
-      .order("date", { ascending: false })
-      .limit(30);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    setAttendance((data ?? []) as AttendanceRecord[]);
-  }
-
-  if (loading) return <PageSpinner />;
-  if (!student) {
+  if (detailQuery.isLoading || attendanceQuery.isLoading) return <PageSpinner />;
+  if (!displayStudent) {
     return (
       <div className="text-center py-16 text-muted-foreground">
         <User className="w-12 h-12 mx-auto mb-3 opacity-30" />
@@ -129,6 +55,7 @@ export default function ParentStudentPage() {
     );
   }
 
+  const student = displayStudent as any;
   return (
     <div className="space-y-5">
       <h1 className="text-xl font-semibold">My Child</h1>
@@ -219,11 +146,11 @@ export default function ParentStudentPage() {
       <Card>
         <CardContent className="p-5">
           <h3 className="font-semibold text-muted-foreground text-xs uppercase tracking-wide mb-4">Attendance — Last 30 Days</h3>
-          {attendance.length === 0 ? (
+          {!attendanceQuery.data || attendanceQuery.data.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-4">No attendance records yet.</p>
           ) : (
             <div className="space-y-2">
-              {attendance.map((rec) => {
+              {attendanceQuery.data.map((rec) => {
                 const cfg = ATTENDANCE_CONFIG[rec.status];
                 const Icon = cfg.icon;
                 const dateLabel = new Date(rec.date + "T00:00:00").toLocaleDateString("en-PH", {

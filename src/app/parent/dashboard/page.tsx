@@ -4,6 +4,7 @@ import Link from "next/link";
 import { CheckCircle, XCircle, Clock, Bell, CalendarDays, CreditCard, ChevronRight, AlertCircle, AlertTriangle, Megaphone, Star, ShieldCheck, Inbox } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { PageSpinner } from "@/components/ui/spinner";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { createClient } from "@/lib/supabase/client";
 import { listPendingConsentsForStudent } from "@/features/documents/parent-api";
 import { listOpenRequestsForStudent } from "@/features/documents/requests-api";
@@ -350,6 +351,7 @@ export default function ParentDashboard() {
   const AttendanceIcon = attendanceConfig.icon;
 
   return (
+    <ErrorBoundary section="parent-dashboard" fallback="minimal">
     <div className="space-y-5">
       <div>
         <h1 className="text-xl font-semibold">
@@ -613,5 +615,6 @@ export default function ParentDashboard() {
         </div>
       )}
     </div>
+    </ErrorBoundary>
   );
 }

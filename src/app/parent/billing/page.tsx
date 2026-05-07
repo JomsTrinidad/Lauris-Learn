@@ -7,8 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/modal";
 import { PageSpinner } from "@/components/ui/spinner";
 import { formatCurrency } from "@/lib/utils";
-import { createClient } from "@/lib/supabase/client";
 import { useParentContext } from "../layout";
+import { useStudentBillingRecords } from "@/lib/hooks";
 
 type PaymentMethod = "cash" | "bank_transfer" | "gcash" | "maya" | "other";
 
@@ -69,68 +69,34 @@ function printContent(elementId: string, title: string) {
 
 export default function ParentBillingPage() {
   const { childId, child, schoolName } = useParentContext();
-  const supabase = createClient();
 
-  const [loading, setLoading] = useState(true);
-  const [records, setRecords] = useState<BillingRecord[]>([]);
+  // Use cached student billing records hook
+  const recordsQuery = useStudentBillingRecords(childId);
+
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [receiptData, setReceiptData] = useState<{ payment: Payment; record: BillingRecord } | null>(null);
   const [statementOpen, setStatementOpen] = useState(false);
 
-  useEffect(() => {
-    if (!childId) { setLoading(false); return; }
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [childId]);
+  // Map hook data to BillingRecord format for backward compatibility
+  const records: BillingRecord[] = (recordsQuery.data ?? []).map((r) => ({
+    id: r.id,
+    description: r.description,
+    billingMonth: r.billingMonth,
+    amountDue: r.amountDue,
+    amountPaid: r.amountPaid,
+    dueDate: r.dueDate,
+    status: r.status,
+    payments: r.payments.map((p) => ({
+      id: p.id,
+      amount: p.amount,
+      method: p.method as PaymentMethod,
+      date: p.date,
+      reference: p.reference,
+      orNumber: p.orNumber,
+    })),
+  }));
 
-  async function load() {
-    setLoading(true);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: billingRows } = await (supabase as any)
-      .from("billing_records")
-      .select("id, description, billing_month, amount_due, due_date, status")
-      .eq("student_id", childId)
-      .order("billing_month", { ascending: false });
-
-    const ids = ((billingRows ?? []) as { id: string }[]).map((b) => b.id);
-    const paymentsByRecord: Record<string, Payment[]> = {};
-
-    if (ids.length > 0) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: pmts } = await (supabase as any)
-        .from("payments")
-        .select("id, billing_record_id, amount, payment_method, payment_date, reference_number, or_number")
-        .eq("status", "confirmed")
-        .in("billing_record_id", ids)
-        .order("payment_date", { ascending: true });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ((pmts ?? []) as any[]).forEach((p: any) => {
-        if (!paymentsByRecord[p.billing_record_id]) paymentsByRecord[p.billing_record_id] = [];
-        paymentsByRecord[p.billing_record_id].push({
-          id: p.id, amount: Number(p.amount), method: p.payment_method as PaymentMethod,
-          date: p.payment_date, reference: p.reference_number ?? null, orNumber: p.or_number ?? null,
-        });
-      });
-    }
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    setRecords(((billingRows ?? []) as any[]).map((b: any) => {
-      const payments = paymentsByRecord[b.id] ?? [];
-      return {
-        id: b.id,
-        description: b.description ?? "",
-        billingMonth: b.billing_month ?? "",
-        amountDue: Number(b.amount_due),
-        amountPaid: payments.reduce((s, p) => s + p.amount, 0),
-        dueDate: b.due_date ?? null,
-        status: b.status,
-        payments,
-      };
-    }));
-    setLoading(false);
-  }
-
-  if (loading) return <PageSpinner />;
+  if (recordsQuery.isLoading) return <PageSpinner />;
 
   const totalDue = records.filter((r) => r.status !== "cancelled").reduce((s, r) => s + r.amountDue, 0);
   const totalPaid = records.reduce((s, r) => s + r.amountPaid, 0);

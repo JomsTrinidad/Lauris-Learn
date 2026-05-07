@@ -1,5 +1,6 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Search, Plus, Pencil, ChevronDown, ChevronUp,
   Link as LinkIcon, Copy, Check, BookOpen,
@@ -22,8 +23,10 @@ import { compressImage, PROFILE_PHOTO_MAX_W, PROFILE_PHOTO_MAX_BYTES } from "@/l
 import { trackUpload } from "@/lib/track-upload";
 import { createClient } from "@/lib/supabase/client";
 import { useSchoolContext } from "@/contexts/SchoolContext";
+import { queryKeys } from "@/lib/query-client";
 import { ShareIdentityWithClinicModal } from "@/features/clinic-sharing/ShareIdentityWithClinicModal";
 import { getSchoolOrganizationId } from "@/features/clinic-sharing/queries";
+import { useStudentsList, useStudentsClasses } from "@/lib/hooks";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -294,6 +297,17 @@ async function upsertStudentLrn(
 export default function StudentsPage() {
   const { schoolId, activeYear, userId, userRole, isReadOnly, allSchoolYears: schoolYearList } = useSchoolContext();
   const supabase = createClient();
+  const queryClient = useQueryClient();
+
+  // Use cached query hooks for students and classes
+  const studentsQuery = useStudentsList(schoolId);
+  const classesQuery = useStudentsClasses(schoolId, activeYear?.id || null);
+
+  // Helper to invalidate both students and classes queries
+  const invalidateAll = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.students.list(schoolId || "") });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.classes.list(schoolId || "") });
+  }, [queryClient, schoolId]);
 
   // Phase 6D — Share-with-Clinic shortcut state.
   const [shareClinicTarget, setShareClinicTarget] = useState<{
@@ -320,7 +334,6 @@ export default function StudentsPage() {
   const [students, setStudents] = useState<Student[]>([]);
   const [classOptions, setClassOptions] = useState<ClassOption[]>([]);
   const [academicPeriods, setAcademicPeriods] = useState<AcademicPeriod[]>([]);
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
@@ -387,12 +400,117 @@ export default function StudentsPage() {
 
   // ─── Effects ───────────────────────────────────────────────────────────────
 
+  // On mount / school change: load code config and academic periods (still direct queries)
+  // Students and classes now come from hooks
   useEffect(() => {
-    if (!schoolId) { setLoading(false); return; }
-    setViewingYearId(activeYear?.id ?? "");
-    loadAll();
+    if (!schoolId || !activeYear?.id) return;
+    setViewingYearId(activeYear.id);
+    Promise.all([loadCodeConfig(), loadAcademicPeriods()]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [schoolId, activeYear?.id]);
+
+  // Transform hook data into students state
+  useEffect(() => {
+    if (studentsQuery.data) {
+      const { students: rawStudents, lrnByProfile } = studentsQuery.data;
+      const yearId = activeYear?.id ?? null;
+
+      setStudents(
+        (rawStudents ?? []).map((s) => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const guardians: any[] = (s as any).guardians ?? [];
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const enrollments: any[] = (s as any).enrollments ?? [];
+
+          const primaryGuardian = guardians.find((g) => g.is_primary) ?? guardians[0] ?? null;
+          const activeEnrollment = yearId
+            ? (enrollments.find((e) => e.school_year_id === yearId && e.status === "enrolled") ??
+               enrollments.find((e) => e.school_year_id === yearId) ??
+               enrollments.find((e) => e.status === "enrolled") ??
+               enrollments[0] ?? null)
+            : enrollments[0] ?? null;
+
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const allEnrollments: EnrollmentEntry[] = enrollments.map((e: any) => ({
+            id: e.id,
+            classId: e.class_id,
+            className: e.classes?.name ?? "—",
+            classLevel: e.classes?.class_levels?.name ?? "",
+            periodId: e.academic_period_id ?? null,
+            periodName: e.academic_periods?.name ?? null,
+            schoolYearId: e.school_year_id,
+            schoolYearName: e.school_years?.name ?? "",
+            status: e.status as EnrollmentStatus,
+            startDate: e.start_date ?? null,
+            endDate: e.end_date ?? null,
+          })).sort((a: EnrollmentEntry, b: EnrollmentEntry) =>
+            b.schoolYearName.localeCompare(a.schoolYearName)
+          );
+
+          // Most recent enrollment with a classification
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const classifiedEnroll = [...enrollments].filter((e: any) => e.progression_status !== null)
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            .sort((a: any, b: any) => (b.school_years?.name ?? "").localeCompare(a.school_years?.name ?? ""))[0] ?? null;
+
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const sx = s as any;
+          return {
+            id: s.id,
+            firstName: s.first_name,
+            lastName: s.last_name,
+            dateOfBirth: s.date_of_birth ?? null,
+            gender: s.gender ?? null,
+            studentCode: sx.student_code ?? null,
+            preferredName: sx.preferred_name ?? null,
+            classId: activeEnrollment?.class_id ?? null,
+            className: activeEnrollment?.classes?.name ?? "—",
+            classLevel: activeEnrollment?.classes?.class_levels?.name ?? "",
+            enrollmentId: activeEnrollment?.id ?? null,
+            enrollmentStatus: activeEnrollment?.status ?? null,
+            enrollmentYearId: activeEnrollment?.school_year_id ?? null,
+            allEnrollments,
+            guardianId: primaryGuardian?.id ?? null,
+            guardianName: primaryGuardian?.full_name ?? "—",
+            guardianPhone: primaryGuardian?.phone ?? "—",
+            guardianEmail: primaryGuardian?.email ?? "",
+            guardianRelationship: primaryGuardian?.relationship ?? "",
+            guardianCommPref: primaryGuardian?.communication_preference ?? null,
+            allergies: sx.allergies ?? null,
+            medicalConditions: sx.medical_conditions ?? null,
+            emergencyContactName: sx.emergency_contact_name ?? null,
+            emergencyContactPhone: sx.emergency_contact_phone ?? null,
+            authorizedPickups: sx.authorized_pickups ?? null,
+            primaryLanguage: sx.primary_language ?? null,
+            specialNeeds: sx.special_needs ?? null,
+            teacherNotes: sx.teacher_notes ?? null,
+            adminNotes: sx.admin_notes ?? null,
+            progressionStatus: (activeEnrollment as any)?.progression_status ??
+              (classifiedEnroll && classifiedEnroll.id === activeEnrollment?.id ? classifiedEnroll.progression_status : null),
+            progressionNotes: (activeEnrollment as any)?.progression_notes ??
+              (classifiedEnroll && classifiedEnroll.id === activeEnrollment?.id ? classifiedEnroll.progression_notes : null),
+            recommendedNextLevel: (activeEnrollment as any)?.classes?.next_level ??
+              (classifiedEnroll && classifiedEnroll.id === activeEnrollment?.id ? classifiedEnroll?.classes?.next_level : null),
+            photoUrl: sx.photo_url ?? null,
+            childProfileId: sx.child_profile_id ?? null,
+            lrn: sx.child_profile_id ? (lrnByProfile.get(sx.child_profile_id)?.value ?? null) : null,
+            lrnIdentifierId: sx.child_profile_id ? (lrnByProfile.get(sx.child_profile_id)?.id ?? null) : null,
+          };
+        })
+      );
+      setError(null);
+    }
+    if (studentsQuery.error) {
+      setError((studentsQuery.error as Error).message || "Failed to load students");
+    }
+  }, [studentsQuery.data, studentsQuery.error, activeYear?.id]);
+
+  // Update classes state from hook
+  useEffect(() => {
+    if (classesQuery.data) {
+      setClassOptions(classesQuery.data);
+    }
+  }, [classesQuery.data]);
 
   useEffect(() => {
     if (!schoolId) return;
@@ -400,23 +518,14 @@ export default function StudentsPage() {
       loadPromoteSetup();
       return;
     }
-    // Once the Promote tab has been visited, switching back to Students refetches
-    // so just-saved classifications are reflected without a manual reload.
-    if (activeTab === "students" && promoteInitialized) {
-      loadStudents();
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, promoteInitialized, schoolId]);
 
 
   // ─── Students tab functions ────────────────────────────────────────────────
 
-  async function loadAll() {
-    setLoading(true);
-    setError(null);
-    await Promise.all([loadStudents(), loadClasses(), loadCodeConfig(), loadAcademicPeriods()]);
-    setLoading(false);
-  }
+  // Note: loadAll() is no longer used. Hook data automatically populates students + classes.
+  // This function is kept for compatibility with internal reload paths (e.g., after student creation).
 
   async function loadAcademicPeriods() {
     if (!schoolId || !activeYear?.id) return;
@@ -481,169 +590,6 @@ export default function StudentsPage() {
     await (supabase as any).from("students").update({ student_code: code }).eq("id", studentId);
   }
 
-  async function loadStudents() {
-    const yearId = activeYear?.id ?? null;
-    const { data, error: err } = await supabase
-      .from("students")
-      .select(`
-        id, first_name, last_name, date_of_birth, gender,
-        student_code, preferred_name, photo_url, child_profile_id,
-        allergies, medical_conditions, emergency_contact_name, emergency_contact_phone,
-        authorized_pickups, primary_language, special_needs, teacher_notes, admin_notes,
-        guardians(id, full_name, relationship, phone, email, is_primary, communication_preference),
-        enrollments(id, status, class_id, school_year_id, academic_period_id, start_date, end_date, created_at, progression_status, progression_notes, classes(name, next_level, class_levels(name)), academic_periods(name), school_years(name))
-      `)
-      .eq("school_id", schoolId!)
-      .eq("is_active", true)
-      .order("last_name");
-
-    if (err) { setError(err.message); return; }
-
-    // Phase 1.5 — fetch LRN identifiers in a separate query and map by
-    // child_profile_id. Kept out of the main SELECT so a stale schema cache
-    // or relationship resolution on `child_identifiers` can't break the
-    // students list.
-    const profileIds = (data ?? [])
-      .map((s) => (s as { child_profile_id: string | null }).child_profile_id)
-      .filter((id): id is string => !!id);
-    const lrnByProfile = new Map<string, { id: string; value: string }>();
-    if (profileIds.length > 0) {
-      const { data: idRows } = await supabase
-        .from("child_identifiers")
-        .select("id, child_profile_id, identifier_value")
-        .eq("identifier_type", "lrn")
-        .in("child_profile_id", profileIds);
-      ((idRows ?? []) as Array<{ id: string; child_profile_id: string; identifier_value: string }>).forEach((r) => {
-        if (!lrnByProfile.has(r.child_profile_id)) {
-          lrnByProfile.set(r.child_profile_id, { id: r.id, value: r.identifier_value });
-        }
-      });
-    }
-
-    setStudents(
-      (data ?? []).map((s) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const guardians: any[] = (s as any).guardians ?? [];
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const enrollments: any[] = (s as any).enrollments ?? [];
-
-        const primaryGuardian = guardians.find((g) => g.is_primary) ?? guardians[0] ?? null;
-        const activeEnrollment = yearId
-          ? (enrollments.find((e) => e.school_year_id === yearId && e.status === "enrolled") ??
-             enrollments.find((e) => e.school_year_id === yearId) ??
-             enrollments.find((e) => e.status === "enrolled") ??
-             enrollments[0] ?? null)
-          : enrollments[0] ?? null;
-
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const allEnrollments: EnrollmentEntry[] = enrollments.map((e: any) => ({
-          id: e.id,
-          classId: e.class_id,
-          className: e.classes?.name ?? "—",
-          classLevel: e.classes?.class_levels?.name ?? "",
-          periodId: e.academic_period_id ?? null,
-          periodName: e.academic_periods?.name ?? null,
-          schoolYearId: e.school_year_id,
-          schoolYearName: e.school_years?.name ?? "",
-          status: e.status as EnrollmentStatus,
-          startDate: e.start_date ?? null,
-          endDate: e.end_date ?? null,
-        })).sort((a: EnrollmentEntry, b: EnrollmentEntry) =>
-          b.schoolYearName.localeCompare(a.schoolYearName)
-        );
-
-        // Most recent enrollment with a classification (prefer active year, then any prior)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const classifiedEnroll = [...enrollments].filter((e: any) => e.progression_status !== null)
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          .sort((a: any, b: any) => (b.school_years?.name ?? "").localeCompare(a.school_years?.name ?? ""))[0] ?? null;
-
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const sx = s as any;
-        return {
-          id: s.id,
-          firstName: s.first_name,
-          lastName: s.last_name,
-          dateOfBirth: s.date_of_birth ?? null,
-          gender: s.gender ?? null,
-          studentCode: sx.student_code ?? null,
-          preferredName: sx.preferred_name ?? null,
-          classId: activeEnrollment?.class_id ?? null,
-          className: activeEnrollment?.classes?.name ?? "—",
-          classLevel: activeEnrollment?.classes?.class_levels?.name ?? "",
-          enrollmentId: activeEnrollment?.id ?? null,
-          enrollmentStatus: activeEnrollment?.status ?? null,
-          enrollmentYearId: activeEnrollment?.school_year_id ?? null,
-          allEnrollments,
-          guardianId: primaryGuardian?.id ?? null,
-          guardianName: primaryGuardian?.full_name ?? "—",
-          guardianPhone: primaryGuardian?.phone ?? "—",
-          guardianEmail: primaryGuardian?.email ?? "",
-          guardianRelationship: primaryGuardian?.relationship ?? "",
-          guardianCommPref: primaryGuardian?.communication_preference ?? null,
-          allergies: sx.allergies ?? null,
-          medicalConditions: sx.medical_conditions ?? null,
-          emergencyContactName: sx.emergency_contact_name ?? null,
-          emergencyContactPhone: sx.emergency_contact_phone ?? null,
-          authorizedPickups: sx.authorized_pickups ?? null,
-          primaryLanguage: sx.primary_language ?? null,
-          specialNeeds: sx.special_needs ?? null,
-          teacherNotes: sx.teacher_notes ?? null,
-          adminNotes: sx.admin_notes ?? null,
-          // Only fall back to classifiedEnroll's progression if it's the same enrollment as the active one.
-          // If the student already moved to a newer class, the old "Eligible" classification is stale.
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          progressionStatus: (activeEnrollment as any)?.progression_status ??
-            (classifiedEnroll && classifiedEnroll.id === activeEnrollment?.id ? classifiedEnroll.progression_status : null),
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          progressionNotes: (activeEnrollment as any)?.progression_notes ??
-            (classifiedEnroll && classifiedEnroll.id === activeEnrollment?.id ? classifiedEnroll.progression_notes : null),
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          recommendedNextLevel: (activeEnrollment as any)?.classes?.next_level ??
-            (classifiedEnroll && classifiedEnroll.id === activeEnrollment?.id ? classifiedEnroll?.classes?.next_level : null),
-          photoUrl: sx.photo_url ?? null,
-          childProfileId: sx.child_profile_id ?? null,
-          lrn: sx.child_profile_id ? (lrnByProfile.get(sx.child_profile_id)?.value ?? null) : null,
-          lrnIdentifierId: sx.child_profile_id ? (lrnByProfile.get(sx.child_profile_id)?.id ?? null) : null,
-        };
-      })
-    );
-
-  }
-
-  async function loadClasses() {
-    if (!activeYear?.id) { setClassOptions([]); return; }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data } = await (supabase as any)
-      .from("classes")
-      .select("id, name, capacity, class_levels(name)")
-      .eq("school_id", schoolId!)
-      .eq("school_year_id", activeYear.id)
-      .eq("is_active", true)
-      .eq("is_system", false)
-      .order("start_time");
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const classIds = (data ?? []).map((c: any) => c.id);
-    let enrolledByClass: Record<string, number> = {};
-    if (classIds.length > 0) {
-      const { data: enrollRows } = await supabase
-        .from("enrollments")
-        .select("class_id")
-        .in("class_id", classIds)
-        .eq("status", "enrolled");
-      (enrollRows ?? []).forEach((e) => {
-        enrolledByClass[e.class_id] = (enrolledByClass[e.class_id] ?? 0) + 1;
-      });
-    }
-
-    setClassOptions(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (data ?? []).map((c: any) => ({
-        id: c.id, name: c.name, level: c.class_levels?.name ?? "", capacity: c.capacity ?? 0, enrolled: enrolledByClass[c.id] ?? 0,
-      }))
-    );
-  }
 
   async function handleAdd() {
     if (!form.firstName.trim() || !form.lastName.trim()) { setFormError("First and last name are required."); return; }
@@ -703,7 +649,7 @@ export default function StudentsPage() {
       if (!lrnRes.ok) {
         setFormError(lrnRes.error ?? "Failed to save LRN.");
         setSaving(false);
-        await loadAll();
+        invalidateAll();
         return;
       }
     }
@@ -743,7 +689,7 @@ export default function StudentsPage() {
         const j = await enrollRes.json();
         setFormError(j.error ?? "Student created but enrollment failed.");
         setSaving(false);
-        await loadAll();
+        invalidateAll();
         return;
       }
     }
@@ -751,7 +697,7 @@ export default function StudentsPage() {
     setSaving(false);
     setAddModalOpen(false);
     setForm(EMPTY_FORM);
-    await loadAll();
+    invalidateAll();
   }
 
   function openEdit(student: Student) {
@@ -876,7 +822,7 @@ export default function StudentsPage() {
     setSaving(false);
     setEditModalOpen(false);
     setEditingStudent(null);
-    await loadAll();
+    invalidateAll();
   }
 
   async function handleAddEnrollment() {
@@ -908,7 +854,7 @@ export default function StudentsPage() {
     }
     setEnrollmentSaving(false);
     setEnrollmentModal(null);
-    await loadAll();
+    invalidateAll();
   }
 
   async function handleUpdateEnrollmentStatus(enrollmentId: string, newStatus: string) {
@@ -916,7 +862,7 @@ export default function StudentsPage() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (supabase as any).from("enrollments").update({ status: newStatus }).eq("id", enrollmentId);
     setEnrollmentStatusUpdating(null);
-    await loadStudents();
+    invalidateAll();
   }
 
   async function handleGenerateInvite(student: Student) {
@@ -1318,7 +1264,7 @@ export default function StudentsPage() {
   const unsetCount      = classPromoteRows.filter((r) => r.classification === "unset").length;
   const classifiedCount = classPromoteRows.length - unsetCount;
 
-  if (loading) return <PageSpinner />;
+  if (studentsQuery.isLoading || classesQuery.isLoading) return <PageSpinner />;
 
   // ─── Render ───────────────────────────────────────────────────────────────
 
@@ -1382,7 +1328,12 @@ export default function StudentsPage() {
       {/* ── Students tab ─────────────────────────────────────────────────── */}
       {activeTab === "students" && (
         <>
-          {error && <ErrorAlert message={error} />}
+          {error && (
+            <ErrorAlert
+              message={error}
+              onRetry={() => studentsQuery.refetch()}
+            />
+          )}
 
           {/* Summary metrics */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -1625,7 +1576,12 @@ export default function StudentsPage() {
       {activeTab === "promote" && (
         <div className="space-y-6">
           {promoteLoading && <PageSpinner />}
-          {promoteError && <ErrorAlert message={promoteError} />}
+          {promoteError && (
+            <ErrorAlert
+              message={promoteError}
+              onRetry={() => loadPromoteSetup()}
+            />
+          )}
 
           {!promoteLoading && (
             <>
@@ -1666,7 +1622,12 @@ export default function StudentsPage() {
                 </CardContent>
               </Card>
 
-              {promoteRowsError && <ErrorAlert message={promoteRowsError} />}
+              {promoteRowsError && (
+                <ErrorAlert
+                  message={promoteRowsError}
+                  onRetry={() => loadStudentsForPromote()}
+                />
+              )}
 
               {promoteRowsLoading && (
                 <div className="flex items-center justify-center py-10 text-sm text-muted-foreground gap-2">

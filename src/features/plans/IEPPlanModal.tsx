@@ -454,7 +454,7 @@ export function IEPPlanModal({
       {loading && <div className="py-8 text-center text-sm text-muted-foreground">Loading plan…</div>}
 
       {!loading && (
-        <div className="py-4 space-y-4">
+        <div className="py-4 space-y-4 min-h-[360px]">
           {/* Always-on header fields (also editable in Profile) */}
           {section === "profile" && (
             <>

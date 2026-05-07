@@ -136,11 +136,38 @@ Complete before handing access to the pilot school:
 
 ---
 
-## 12. Known Remaining Risks
+## 12. Pre-Launch Safety Verification
 
-See `docs/PRIVACY_REVIEW_NOTES.md` for the full list. Summary:
+Complete these checks before handing access to the pilot school:
 
-- Profile photos bucket is public (acceptable for pilot)
+- [ ] Run `supabase/tests/084_production_safety_smoke.sql` in SQL Editor — expect "✓ All 084 smoke tests passed"
+- [ ] Query `SELECT COUNT(*) FROM audit_logs WHERE created_at > NOW() - INTERVAL '1 hour'` — should be > 0 after migrations
+- [ ] Query `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public'` — confirm all expected tables exist
+- [ ] Spot-check audit trigger coverage:
+  ```sql
+  SELECT COUNT(*) FROM pg_trigger WHERE tgname LIKE 'audit_%';
+  -- Should be 30+ (036 had 9, 054 had 6, 070 had 5, 071 had 2, 072 had 2, 073 had 1, 074 had 1, 076 had 1, 081 had 2, 082 had 1, 083 had 1, 084 has 11 = 42 total)
+  ```
+- [ ] Verify RLS policies on 5 tables: `students`, `child_documents`, `parents`, `payments`, `school_years`
+  ```sql
+  SELECT tablename, COUNT(*) FROM pg_policies GROUP BY tablename ORDER BY tablename;
+  -- Should have policies on all critical tables
+  ```
+- [ ] Confirm impersonation logging works:
+  ```sql
+  SELECT COUNT(*) FROM impersonation_audit_log;
+  -- Should have rows if super admin has impersonated schools
+  ```
+- [ ] Count migrations: `SELECT COUNT(*) FROM pg_class WHERE relkind = 'r'` — compare against expected table count
+
+---
+
+## 13. Known Remaining Risks
+
+See `docs/PRIVACY_REVIEW_NOTES.md` and `docs/PRODUCTION_READINESS_AUDIT_BATCH_A.md` for the full list. Summary:
+
+- Profile photos bucket is public (acceptable for pilot; fix planned in Phase 2)
 - No automated media deletion job (orphaned files accumulate — manual cleanup only)
-- Impersonation writes are allowed and audited, not blocked
+- No formal data retention policy (document before full production)
 - TypeScript `any` casts in 15+ places (not a security risk, code quality only)
+- Soft-delete not implemented for enrollments (acceptable for pilot; Phase 2 redesign)

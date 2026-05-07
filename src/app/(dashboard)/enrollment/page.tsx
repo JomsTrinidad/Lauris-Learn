@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Modal, ModalCancelButton } from "@/components/ui/modal";
 import { Card, CardContent } from "@/components/ui/card";
 import { PageSpinner, ErrorAlert } from "@/components/ui/spinner";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { createClient } from "@/lib/supabase/client";
 import { useSchoolContext } from "@/contexts/SchoolContext";
 
@@ -1187,6 +1188,7 @@ export default function EnrollmentPage() {
   if (loading) return <PageSpinner />;
 
   return (
+    <ErrorBoundary section="enrollment" fallback="minimal">
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
@@ -3291,5 +3293,6 @@ export default function EnrollmentPage() {
         </div>
       )}
     </div>
+    </ErrorBoundary>
   );
 }

@@ -7,22 +7,17 @@ import {
 import Link from "next/link";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { PageSpinner } from "@/components/ui/spinner";
+import { PageSpinner, ErrorAlert } from "@/components/ui/spinner";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { createClient } from "@/lib/supabase/client";
 import { useSchoolContext } from "@/contexts/SchoolContext";
 import { formatCurrency } from "@/lib/utils";
+import { useDashboardStats, useBillingSummary } from "@/lib/hooks";
 
 interface DashboardStats {
-  totalEnrolled: number;
   presentToday: number;
   absentToday: number;
-  unpaidCount: number;
-  overdueCount: number;
   outstandingBalance: number;
-  upcomingEvents: number;
-  inquiryCount: number;
-  waitlistedCount: number;
-  enrolledCount: number;
 }
 
 interface TodayClass {
@@ -97,6 +92,12 @@ export default function DashboardPage() {
   const supabase = createClient();
   const { day, date } = useTodayLabel();
 
+  // Use the cached dashboard stats hook
+  const statsQuery = useDashboardStats(schoolId, activeYear?.id || null);
+
+  // Use the cached billing summary hook (Batch B1.6.1)
+  const billingSummaryQuery = useBillingSummary(schoolId, activeYear?.id || null);
+
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [todayClasses, setTodayClasses] = useState<TodayClass[]>([]);
   const [recentUpdates, setRecentUpdates] = useState<RecentUpdate[]>([]);
@@ -107,288 +108,243 @@ export default function DashboardPage() {
   const [newEnrollmentsThisWeek, setNewEnrollmentsThisWeek] = useState(0);
   const [studentsAbsent2Plus, setStudentsAbsent2Plus] = useState(0);
   const [lastUpdateAt, setLastUpdateAt] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [complexDataError, setComplexDataError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!schoolId) { setLoading(false); return; }
-    fetchDashboard();
+    if (statsQuery.data) {
+      // Merge cached stats with local computed values
+      setStats({
+        presentToday: 0, // Will be computed from class attendance below
+        absentToday: 0,  // Will be computed from class attendance below
+        outstandingBalance: 0, // Will be computed from billing below
+      });
+      setShowEnrollmentSnapshot(
+        (statsQuery.data.inquiryCount ?? 0) > 0 ||
+        (statsQuery.data.waitlistedCount ?? 0) > 0
+      );
+    }
+  }, [statsQuery.data]);
+
+  useEffect(() => {
+    if (!schoolId) return;
+    fetchComplexDashboardData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [schoolId, activeYear?.id]);
 
-  async function fetchDashboard() {
-    setLoading(true);
-    const today = new Date().toISOString().split("T")[0];
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayStr = yesterday.toISOString().split("T")[0];
-    const yearId = activeYear?.id ?? null;
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  async function fetchComplexDashboardData() {
+    try {
+      setComplexDataError(null);
+      const today = new Date().toISOString().split("T")[0];
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const yesterdayStr = yesterday.toISOString().split("T")[0];
+      const yearId = activeYear?.id ?? null;
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-    const [
-      { count: totalEnrolled },
-      { count: presentToday },
-      { count: absentToday },
-      { count: yesterdayPresentCount },
-    ] = await Promise.all([
-      supabase.from("enrollments").select("id", { count: "exact", head: true })
-        .eq("status", "enrolled").eq("school_year_id", yearId ?? ""),
-      supabase.from("attendance_records").select("id", { count: "exact", head: true })
-        .eq("status", "present").eq("date", today),
-      supabase.from("attendance_records").select("id", { count: "exact", head: true })
-        .eq("status", "absent").eq("date", today),
-      supabase.from("attendance_records").select("id", { count: "exact", head: true })
-        .eq("status", "present").eq("date", yesterdayStr),
-    ]);
+      // Fetch attendance data (billing data now comes from useBillingSummary hook)
+      const [
+        { count: presentToday },
+        { count: absentToday },
+        { count: yesterdayPresentCount },
+      ] = await Promise.all([
+        supabase.from("attendance_records").select("id", { count: "exact", head: true })
+          .eq("status", "present").eq("date", today),
+        supabase.from("attendance_records").select("id", { count: "exact", head: true })
+          .eq("status", "absent").eq("date", today),
+        supabase.from("attendance_records").select("id", { count: "exact", head: true })
+          .eq("status", "present").eq("date", yesterdayStr),
+      ]);
 
-    setYesterdayPresent(yesterdayPresentCount ?? 0);
+      setYesterdayPresent(yesterdayPresentCount ?? 0);
 
-    const { data: billingRows } = await supabase
-      .from("billing_records")
-      .select("id, amount_due, status")
-      .eq("school_id", schoolId!)
-      .in("status", ["unpaid", "overdue", "partial"]);
-
-    const { data: paymentRows } = await supabase
-      .from("payments")
-      .select("billing_record_id, amount")
-      .eq("status", "confirmed")
-      .in("billing_record_id", (billingRows ?? []).map((b) => b.id));
-
-    const paidByBilling = (paymentRows ?? []).reduce(
-      (acc, p) => {
-        acc[p.billing_record_id] = (acc[p.billing_record_id] ?? 0) + Number(p.amount);
-        return acc;
-      },
-      {} as Record<string, number>
-    );
-
-    const outstandingBalance = (billingRows ?? []).reduce((sum, b) => {
-      const paid = paidByBilling[b.id] ?? 0;
-      return sum + Math.max(0, Number(b.amount_due) - paid);
-    }, 0);
-
-    const unpaidCount = (billingRows ?? []).filter((b) => {
-      const paid = paidByBilling[b.id] ?? 0;
-      return Number(b.amount_due) - paid > 0;
-    }).length;
-
-    const overdueCount = (billingRows ?? []).filter((b) => b.status === "overdue").length;
-
-    const future = new Date();
-    future.setDate(future.getDate() + 30);
-    const { count: upcomingEvents } = await supabase
-      .from("events")
-      .select("id", { count: "exact", head: true })
-      .eq("school_id", schoolId!)
-      .gte("event_date", today)
-      .lte("event_date", future.toISOString().split("T")[0]);
-
-    const { data: inquiryRows } = await supabase
-      .from("enrollment_inquiries")
-      .select("status, created_at")
-      .eq("school_id", schoolId!);
-
-    const inquiryCount = (inquiryRows ?? []).filter((r) => r.status === "inquiry").length;
-    const waitlistedCount = (inquiryRows ?? []).filter((r) => r.status === "waitlisted").length;
-    const enrolledCount = totalEnrolled ?? 0;
-    const recentActivity = (inquiryRows ?? []).filter(
-      (r) => new Date(r.created_at) >= sevenDaysAgo
-    ).length;
-
-    const shouldShowSnapshot = inquiryCount > 0 || waitlistedCount > 0 || recentActivity > 0;
-    setShowEnrollmentSnapshot(shouldShowSnapshot);
-
-    setStats({
-      totalEnrolled: totalEnrolled ?? 0,
-      presentToday: presentToday ?? 0,
-      absentToday: absentToday ?? 0,
-      unpaidCount,
-      overdueCount,
-      outstandingBalance,
-      upcomingEvents: upcomingEvents ?? 0,
-      inquiryCount,
-      waitlistedCount,
-      enrolledCount,
-    });
-
-    if (yearId) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: classRows } = await (supabase as any)
-        .from("classes")
-        .select(`
-          id, name, start_time, end_time,
-          class_teachers(teacher:teacher_profiles(full_name)),
-          enrollments(count)
-        `)
-        .eq("school_id", schoolId!)
-        .eq("school_year_id", yearId)
-        .eq("is_active", true)
-        .eq("is_system", false)
-        .order("start_time");
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const classIds = (classRows ?? []).map((c: any) => c.id);
-
-      const { data: attRows } = await supabase
-        .from("attendance_records")
-        .select("class_id, status")
-        .in("class_id", classIds)
-        .eq("date", today)
-        .eq("status", "present");
-
-      const presentByClass: Record<string, number> = {};
-      (attRows ?? []).forEach((a) => {
-        presentByClass[a.class_id] = (presentByClass[a.class_id] ?? 0) + 1;
+      // Attendance stats (outstanding balance comes from billingSummaryQuery below)
+      setStats({
+        presentToday: presentToday ?? 0,
+        absentToday: absentToday ?? 0,
+        outstandingBalance: 0, // Will use billingSummaryQuery.data instead
       });
 
-      const { data: totalAttRows } = await supabase
-        .from("attendance_records")
-        .select("class_id")
-        .in("class_id", classIds)
-        .eq("date", today);
-
-      const totalAttMap: Record<string, number> = {};
-      (totalAttRows ?? []).forEach((a) => {
-        totalAttMap[a.class_id] = (totalAttMap[a.class_id] ?? 0) + 1;
-      });
-      setTotalAttByClass(totalAttMap);
-
-      const { data: enrollRows } = await supabase
-        .from("enrollments")
-        .select("class_id")
-        .in("class_id", classIds)
-        .eq("status", "enrolled");
-
-      const enrolledByClass: Record<string, number> = {};
-      (enrollRows ?? []).forEach((e) => {
-        enrolledByClass[e.class_id] = (enrolledByClass[e.class_id] ?? 0) + 1;
-      });
-
-      setTodayClasses(
+      if (yearId) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (classRows ?? []).map((c: any) => {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const teachers: string[] = ((c as any).class_teachers ?? []).map(
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (t: any) => t.teacher?.full_name ?? ""
-          ).filter(Boolean);
-          return {
-            id: c.id,
-            name: c.name,
-            startTime: c.start_time,
-            endTime: c.end_time,
-            teacherName: teachers.join(", ") || "—",
-            presentCount: presentByClass[c.id] ?? 0,
-            totalEnrolled: enrolledByClass[c.id] ?? 0,
-          };
-        })
-      );
-
-      const { count: newEnrollCount } = await supabase
-        .from("enrollments")
-        .select("id", { count: "exact", head: true })
-        .eq("school_year_id", yearId)
-        .eq("status", "enrolled")
-        .gte("created_at", sevenDaysAgo.toISOString());
-
-      setNewEnrollmentsThisWeek(newEnrollCount ?? 0);
-
-      if (classIds.length > 0) {
-        const { data: recentAbsences } = await supabase
-          .from("attendance_records")
-          .select("student_id")
-          .in("class_id", classIds)
-          .eq("status", "absent")
-          .gte("date", sevenDaysAgo.toISOString().split("T")[0]);
-
-        const absencesByStudent: Record<string, number> = {};
-        (recentAbsences ?? []).forEach((r) => {
-          absencesByStudent[r.student_id] = (absencesByStudent[r.student_id] ?? 0) + 1;
-        });
-        setStudentsAbsent2Plus(
-          Object.values(absencesByStudent).filter((c) => c >= 2).length
-        );
-      }
-
-      if (!shouldShowSnapshot) {
-        const { data: enrolledForAlerts } = await supabase
-          .from("enrollments")
-          .select("student_id")
+        const { data: classRows } = await (supabase as any)
+          .from("classes")
+          .select(`
+            id, name, start_time, end_time,
+            class_teachers(teacher:teacher_profiles(full_name)),
+            enrollments(count)
+          `)
+          .eq("school_id", schoolId!)
           .eq("school_year_id", yearId)
+          .eq("is_active", true)
+          .eq("is_system", false)
+          .order("start_time");
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const classIds = (classRows ?? []).map((c: any) => c.id);
+
+        const { data: attRows } = await supabase
+          .from("attendance_records")
+          .select("class_id, status")
+          .in("class_id", classIds)
+          .eq("date", today)
+          .eq("status", "present");
+
+        const presentByClass: Record<string, number> = {};
+        (attRows ?? []).forEach((a) => {
+          presentByClass[a.class_id] = (presentByClass[a.class_id] ?? 0) + 1;
+        });
+
+        const { data: totalAttRows } = await supabase
+          .from("attendance_records")
+          .select("class_id")
+          .in("class_id", classIds)
+          .eq("date", today);
+
+        const totalAttMap: Record<string, number> = {};
+        (totalAttRows ?? []).forEach((a) => {
+          totalAttMap[a.class_id] = (totalAttMap[a.class_id] ?? 0) + 1;
+        });
+        setTotalAttByClass(totalAttMap);
+
+        const { data: enrollRows } = await supabase
+          .from("enrollments")
+          .select("class_id")
+          .in("class_id", classIds)
           .eq("status", "enrolled");
 
-        const allEnrolledIds = [
-          ...new Set((enrolledForAlerts ?? []).map((e) => e.student_id)),
-        ];
+        const enrolledByClass: Record<string, number> = {};
+        (enrollRows ?? []).forEach((e) => {
+          enrolledByClass[e.class_id] = (enrolledByClass[e.class_id] ?? 0) + 1;
+        });
 
-        const alerts: StudentAlert[] = [];
+        setTodayClasses(
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (classRows ?? []).map((c: any) => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const teachers: string[] = ((c as any).class_teachers ?? []).map(
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              (t: any) => t.teacher?.full_name ?? ""
+            ).filter(Boolean);
+            return {
+              id: c.id,
+              name: c.name,
+              startTime: c.start_time,
+              endTime: c.end_time,
+              teacherName: teachers.join(", ") || "—",
+              presentCount: presentByClass[c.id] ?? 0,
+              totalEnrolled: enrolledByClass[c.id] ?? 0,
+            };
+          })
+        );
 
-        if (allEnrolledIds.length > 0) {
-          const { data: billedStudents } = await supabase
-            .from("billing_records")
+        const { count: newEnrollCount } = await supabase
+          .from("enrollments")
+          .select("id", { count: "exact", head: true })
+          .eq("school_year_id", yearId)
+          .eq("status", "enrolled")
+          .gte("created_at", sevenDaysAgo.toISOString());
+
+        setNewEnrollmentsThisWeek(newEnrollCount ?? 0);
+
+        if (classIds.length > 0) {
+          const { data: recentAbsences } = await supabase
+            .from("attendance_records")
             .select("student_id")
-            .eq("school_id", schoolId!);
+            .in("class_id", classIds)
+            .eq("status", "absent")
+            .gte("date", sevenDaysAgo.toISOString().split("T")[0]);
 
-          const billedSet = new Set((billedStudents ?? []).map((b) => b.student_id));
-          const noBillingCount = allEnrolledIds.filter((id) => !billedSet.has(id)).length;
-
-          if (noBillingCount > 0) {
-            alerts.push({
-              type: "no_billing",
-              label: `${noBillingCount} student${noBillingCount > 1 ? "s" : ""} without billing records`,
-              description: "No billing records generated for this school year.",
-              href: "/billing",
-              count: noBillingCount,
-            });
-          }
-
-          const { data: guardiansData } = await supabase
-            .from("guardians")
-            .select("student_id")
-            .in("student_id", allEnrolledIds);
-
-          const guardianSet = new Set((guardiansData ?? []).map((g) => g.student_id));
-          const noGuardianCount = allEnrolledIds.filter((id) => !guardianSet.has(id)).length;
-
-          if (noGuardianCount > 0) {
-            alerts.push({
-              type: "no_guardian",
-              label: `${noGuardianCount} student${noGuardianCount > 1 ? "s" : ""} missing contact info`,
-              description: "No guardian linked to these students.",
-              href: "/students",
-              count: noGuardianCount,
-            });
-          }
+          const absencesByStudent: Record<string, number> = {};
+          (recentAbsences ?? []).forEach((r) => {
+            absencesByStudent[r.student_id] = (absencesByStudent[r.student_id] ?? 0) + 1;
+          });
+          setStudentsAbsent2Plus(
+            Object.values(absencesByStudent).filter((c) => c >= 2).length
+          );
         }
 
-        setStudentAlerts(alerts);
+        // Only show student alerts if enrollment snapshot is not shown (no pending inquiries/waitlist)
+        if (!showEnrollmentSnapshot) {
+          const { data: enrolledForAlerts } = await supabase
+            .from("enrollments")
+            .select("student_id")
+            .eq("school_year_id", yearId)
+            .eq("status", "enrolled");
+
+          const allEnrolledIds = [
+            ...new Set((enrolledForAlerts ?? []).map((e) => e.student_id)),
+          ];
+
+          const alerts: StudentAlert[] = [];
+
+          if (allEnrolledIds.length > 0) {
+            const { data: billedStudents } = await supabase
+              .from("billing_records")
+              .select("student_id")
+              .eq("school_id", schoolId!);
+
+            const billedSet = new Set((billedStudents ?? []).map((b) => b.student_id));
+            const noBillingCount = allEnrolledIds.filter((id) => !billedSet.has(id)).length;
+
+            if (noBillingCount > 0) {
+              alerts.push({
+                type: "no_billing",
+                label: `${noBillingCount} student${noBillingCount > 1 ? "s" : ""} without billing records`,
+                description: "No billing records generated for this school year.",
+                href: "/billing",
+                count: noBillingCount,
+              });
+            }
+
+            const { data: guardiansData } = await supabase
+              .from("guardians")
+              .select("student_id")
+              .in("student_id", allEnrolledIds);
+
+            const guardianSet = new Set((guardiansData ?? []).map((g) => g.student_id));
+            const noGuardianCount = allEnrolledIds.filter((id) => !guardianSet.has(id)).length;
+
+            if (noGuardianCount > 0) {
+              alerts.push({
+                type: "no_guardian",
+                label: `${noGuardianCount} student${noGuardianCount > 1 ? "s" : ""} missing contact info`,
+                description: "No guardian linked to these students.",
+                href: "/students",
+                count: noGuardianCount,
+              });
+            }
+          }
+
+          setStudentAlerts(alerts);
+        }
       }
+
+      const { data: updateRows } = await supabase
+        .from("parent_updates")
+        .select("id, content, created_at, class:classes(name), author:profiles(full_name)")
+        .eq("school_id", schoolId!)
+        .order("created_at", { ascending: false })
+        .limit(3);
+
+      const updates = (updateRows ?? []).map((u) => ({
+        id: u.id,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        authorName: (u as any).author?.full_name ?? "Teacher",
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        className: (u as any).class?.name ?? null,
+        content: u.content,
+        createdAt: u.created_at,
+      }));
+      setRecentUpdates(updates);
+      setLastUpdateAt(updates[0]?.createdAt ?? null);
+    } catch (err) {
+      console.error("[Dashboard] Failed to fetch complex data:", err);
+      setComplexDataError("Failed to load dashboard data. Check your connection and try again.");
     }
-
-    const { data: updateRows } = await supabase
-      .from("parent_updates")
-      .select("id, content, created_at, class:classes(name), author:profiles(full_name)")
-      .eq("school_id", schoolId!)
-      .order("created_at", { ascending: false })
-      .limit(3);
-
-    const updates = (updateRows ?? []).map((u) => ({
-      id: u.id,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      authorName: (u as any).author?.full_name ?? "Teacher",
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      className: (u as any).class?.name ?? null,
-      content: u.content,
-      createdAt: u.created_at,
-    }));
-    setRecentUpdates(updates);
-    setLastUpdateAt(updates[0]?.createdAt ?? null);
-
-    setLoading(false);
   }
 
-  if (loading) return <PageSpinner />;
+  if (statsQuery.isLoading) return <PageSpinner />;
 
   // ── Derived ────────────────────────────────────────────────────────────────
 
@@ -404,11 +360,12 @@ export default function DashboardPage() {
     0
   );
 
-  const presentPercent = stats?.totalEnrolled
-    ? Math.round((stats.presentToday / stats.totalEnrolled) * 100)
+  const totalEnrolled = statsQuery.data?.totalEnrolled ?? 0;
+  const presentPercent = totalEnrolled
+    ? Math.round(((stats?.presentToday ?? 0) / totalEnrolled) * 100)
     : 0;
-  const yesterdayPercent = stats?.totalEnrolled
-    ? Math.round((yesterdayPresent / stats.totalEnrolled) * 100)
+  const yesterdayPercent = totalEnrolled
+    ? Math.round((yesterdayPresent / totalEnrolled) * 100)
     : 0;
   const attendanceTrend =
     presentPercent > yesterdayPercent ? "up" : presentPercent < yesterdayPercent ? "down" : "same";
@@ -435,19 +392,19 @@ export default function DashboardPage() {
     });
   }
 
-  if ((stats?.overdueCount ?? 0) > 0) {
+  if ((statsQuery.data?.overdueCount ?? 0) > 0) {
     attention.push({
       id: "overdue_billing",
-      label: `${stats!.overdueCount} overdue billing record${stats!.overdueCount > 1 ? "s" : ""} need follow-up`,
+      label: `${statsQuery.data!.overdueCount} overdue billing record${statsQuery.data!.overdueCount > 1 ? "s" : ""} need follow-up`,
       href: "/billing",
       severity: "critical",
     });
   }
 
-  if ((stats?.inquiryCount ?? 0) > 0) {
+  if ((statsQuery.data?.inquiryCount ?? 0) > 0) {
     attention.push({
       id: "pending_inquiries",
-      label: `${stats!.inquiryCount} new enrolment inquir${stats!.inquiryCount > 1 ? "ies" : "y"} pending review`,
+      label: `${statsQuery.data!.inquiryCount} new enrolment inquir${statsQuery.data!.inquiryCount > 1 ? "ies" : "y"} pending review`,
       href: "/enrollment",
       severity: "info",
     });
@@ -480,25 +437,26 @@ export default function DashboardPage() {
     {
       label: "New Inquiries",
       sublabel: "Following up",
-      count: stats?.inquiryCount ?? 0,
+      count: statsQuery.data?.inquiryCount ?? 0,
       variant: "inquiry" as const,
     },
     {
       label: "Pending Slots",
       sublabel: "Waitlisted",
-      count: stats?.waitlistedCount ?? 0,
+      count: statsQuery.data?.waitlistedCount ?? 0,
       variant: "waitlisted" as const,
     },
     {
       label: "Active Students",
       sublabel: "Enrolled",
-      count: stats?.enrolledCount ?? 0,
+      count: statsQuery.data?.totalEnrolled ?? 0,
       variant: "enrolled" as const,
     },
   ];
 
   return (
-    <div className="space-y-6">
+    <ErrorBoundary section="dashboard" fallback="minimal">
+      <div className="space-y-6">
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>
@@ -518,6 +476,14 @@ export default function DashboardPage() {
           <p className="text-sm text-muted-foreground">{date}</p>
         </div>
       </div>
+
+      {/* Error state with retry */}
+      {complexDataError && (
+        <ErrorAlert
+          message={complexDataError}
+          onRetry={fetchComplexDashboardData}
+        />
+      )}
 
       {/* Needs Attention */}
       {attention.length > 0 ? (
@@ -577,7 +543,7 @@ export default function DashboardPage() {
               <div className="flex items-start justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground">Total Students</p>
-                  <p className="text-3xl font-semibold mt-1">{stats?.totalEnrolled ?? 0}</p>
+                  <p className="text-3xl font-semibold mt-1">{totalEnrolled}</p>
                 </div>
                 <div className="bg-blue-500 p-3 rounded-xl text-white">
                   <Users className="w-5 h-5" />
@@ -596,7 +562,7 @@ export default function DashboardPage() {
                   <p className="text-3xl font-semibold mt-1">
                     {stats?.presentToday ?? 0}{" "}
                     <span className="text-lg text-muted-foreground font-normal">
-                      / {stats?.totalEnrolled ?? 0}
+                      / {totalEnrolled}
                     </span>
                   </p>
                   <p
@@ -631,18 +597,18 @@ export default function DashboardPage() {
               <div className="flex items-start justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground">Unpaid Tuition</p>
-                  <p className="text-3xl font-semibold mt-1">{stats?.unpaidCount ?? 0}</p>
-                  {(stats?.overdueCount ?? 0) > 0 ? (
+                  <p className="text-3xl font-semibold mt-1">{statsQuery.data?.unpaidCount ?? 0}</p>
+                  {(statsQuery.data?.overdueCount ?? 0) > 0 ? (
                     <p className="text-xs mt-0.5 font-medium text-red-600">
-                      {stats!.overdueCount} overdue
+                      {statsQuery.data!.overdueCount} overdue
                     </p>
-                  ) : (stats?.unpaidCount ?? 0) === 0 ? (
+                  ) : (statsQuery.data?.unpaidCount ?? 0) === 0 ? (
                     <p className="text-xs mt-0.5 font-medium text-green-600">All clear</p>
                   ) : null}
                 </div>
                 <div
                   className={`${
-                    (stats?.overdueCount ?? 0) > 0 ? "bg-red-500" : "bg-orange-500"
+                    (statsQuery.data?.overdueCount ?? 0) > 0 ? "bg-red-500" : "bg-orange-500"
                   } p-3 rounded-xl text-white`}
                 >
                   <AlertCircle className="w-5 h-5" />
@@ -658,8 +624,8 @@ export default function DashboardPage() {
               <div className="flex items-start justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground">Upcoming Events</p>
-                  <p className="text-3xl font-semibold mt-1">{stats?.upcomingEvents ?? 0}</p>
-                  {(stats?.upcomingEvents ?? 0) === 0 && (
+                  <p className="text-3xl font-semibold mt-1">{statsQuery.data?.upcomingEvents ?? 0}</p>
+                  {(statsQuery.data?.upcomingEvents ?? 0) === 0 && (
                     <p className="text-xs mt-0.5 text-muted-foreground">None in next 30 days</p>
                   )}
                 </div>
@@ -939,14 +905,14 @@ export default function DashboardPage() {
             </Link>
           </CardHeader>
           <CardContent className="space-y-3">
-            {(stats?.unpaidCount ?? 0) === 0 ? (
+            {(statsQuery.data?.unpaidCount ?? 0) === 0 ? (
               <div className="flex items-center gap-3 p-4 bg-green-50 border border-green-200 rounded-lg">
                 <CheckCircle2 className="w-5 h-5 text-green-600 shrink-0" />
                 <p className="text-sm text-green-700">All payments are up to date.</p>
               </div>
             ) : (
               <>
-                {(stats?.overdueCount ?? 0) > 0 && (
+                {(statsQuery.data?.overdueCount ?? 0) > 0 && (
                   <div className="flex items-center justify-between p-3 bg-red-50 border border-red-200 rounded-lg">
                     <div className="flex items-center gap-2">
                       <AlertTriangle className="w-4 h-4 text-red-500 shrink-0" />
@@ -956,20 +922,20 @@ export default function DashboardPage() {
                       </div>
                     </div>
                     <span className="text-sm font-semibold text-red-700">
-                      {stats!.overdueCount} records
+                      {statsQuery.data!.overdueCount} records
                     </span>
                   </div>
                 )}
                 <div className="flex items-center justify-between p-3 bg-orange-50 border border-orange-200 rounded-lg">
                   <span className="text-sm">Unpaid / Partial</span>
                   <span className="text-sm font-medium text-orange-700">
-                    {stats?.unpaidCount ?? 0} records
+                    {statsQuery.data?.unpaidCount ?? 0} records
                   </span>
                 </div>
                 <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
                   <span className="text-sm text-muted-foreground">Outstanding Balance</span>
                   <span className="text-sm font-semibold">
-                    {formatCurrency(stats?.outstandingBalance ?? 0)}
+                    {formatCurrency(billingSummaryQuery.data?.outstandingBalance ?? 0)}
                   </span>
                 </div>
               </>
@@ -1074,5 +1040,6 @@ export default function DashboardPage() {
         )}
       </div>
     </div>
+    </ErrorBoundary>
   );
 }

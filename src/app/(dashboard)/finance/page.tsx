@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Pencil, Trash2, Receipt, BookOpen, Tag, CreditCard,
 } from "lucide-react";
@@ -13,7 +14,9 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { PageSpinner, ErrorAlert } from "@/components/ui/spinner";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
+import { queryKeys } from "@/lib/query-client";
 import { useSchoolContext } from "@/contexts/SchoolContext";
+import { useAcademicPeriods, useFeeTypes, useTuitionConfigs, useDiscounts } from "@/lib/hooks";
 
 // ─────────────────────────────────────
 // Types
@@ -120,46 +123,37 @@ function TabButton({ active, onClick, icon: Icon, label }: {
 // ─────────────────────────────────────
 export default function FinancePage() {
   const { schoolId } = useSchoolContext();
+  const queryClient = useQueryClient();
   const supabase = createClient();
   const [activeTab, setActiveTab] = useState<Tab>("fee-types");
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  // Data
-  const [academicPeriods, setAcademicPeriods] = useState<AcademicPeriod[]>([]);
-  const [feeTypes, setFeeTypes] = useState<FeeType[]>([]);
-  const [tuitionConfigs, setTuitionConfigs] = useState<TuitionConfig[]>([]);
-  const [discounts, setDiscounts] = useState<Discount[]>([]);
+  // Hooks for setup/config data (B1.6.1)
+  const periodsQuery = useAcademicPeriods(schoolId);
+  const feeTypesQuery = useFeeTypes(schoolId);
+  const tuitionConfigsQuery = useTuitionConfigs(schoolId);
+  const discountsQuery = useDiscounts(schoolId);
+
+  // Data for credits and students (still manual for now — B1.6.2 scope)
   const [credits, setCredits] = useState<StudentCredit[]>([]);
   const [students, setStudents] = useState<StudentOption[]>([]);
   const [classes, setClasses] = useState<ClassOption[]>([]);
 
-  const fetchAll = useCallback(async () => {
+  // Derived data from hooks
+  const academicPeriods = periodsQuery.data ?? [];
+  const feeTypes = feeTypesQuery.data ?? [];
+  const tuitionConfigs = tuitionConfigsQuery.data ?? [];
+  const discounts = discountsQuery.data ?? [];
+
+  // Loading state: true if any hook is loading
+  const loading = periodsQuery.isLoading || feeTypesQuery.isLoading || tuitionConfigsQuery.isLoading || discountsQuery.isLoading;
+
+  // Fetch credits and students (non-cached data — transactional, deferred to B1.6.2)
+  const fetchNonCachedData = useCallback(async () => {
     if (!schoolId) return;
-    setLoading(true);
     setError("");
 
-    const [periodsRes, feeRes, tuitionRes, discountRes, creditsRes, studentsRes, classesRes] = await Promise.all([
-      supabase
-        .from("academic_periods")
-        .select("id, name, school_year_id, start_date, end_date, school_years(name)")
-        .eq("school_id", schoolId)
-        .order("start_date"),
-      supabase
-        .from("fee_types")
-        .select("id, name, description, is_active")
-        .eq("school_id", schoolId)
-        .order("name"),
-      supabase
-        .from("tuition_configs")
-        .select("id, academic_period_id, level, total_amount, months, monthly_amount, class_id, academic_periods(name), classes(name)")
-        .eq("school_id", schoolId)
-        .order("level"),
-      supabase
-        .from("discounts")
-        .select("id, name, type, scope, value, is_active")
-        .eq("school_id", schoolId)
-        .order("name"),
+    const [creditsRes, studentsRes, classesRes] = await Promise.all([
       supabase
         .from("student_credits")
         .select("id, student_id, amount, reason, applied_to, created_at, students(first_name, last_name)")
@@ -179,55 +173,12 @@ export default function FinancePage() {
         .order("name"),
     ]);
 
-    if (periodsRes.error) { setError(periodsRes.error.message); setLoading(false); return; }
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    setAcademicPeriods((periodsRes.data ?? []).map((p: any) => ({
-      id: p.id,
-      name: p.name,
-      schoolYearId: p.school_year_id,
-      schoolYearName: p.school_years?.name ?? "",
-      startDate: p.start_date,
-      endDate: p.end_date,
-    })));
-
-    setFeeTypes((feeRes.data ?? []).map((f) => ({
-      id: f.id,
-      name: f.name,
-      description: f.description ?? "",
-      isActive: f.is_active,
-    })));
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    setTuitionConfigs((tuitionRes.data ?? []).map((t: any) => ({
-      id: t.id,
-      academicPeriodId: t.academic_period_id,
-      periodName: t.academic_periods?.name ?? "",
-      level: t.level ?? "",
-      totalAmount: Number(t.total_amount),
-      months: t.months,
-      classId: t.class_id ?? null,
-      className: t.classes?.name ?? null,
-      monthlyAmount: t.monthly_amount != null
-        ? Number(t.monthly_amount)
-        : t.months > 0 ? Number(t.total_amount) / t.months : Number(t.total_amount),
-    })));
-
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     setClasses(((classesRes.data ?? []) as any[]).map((c: any) => ({
       id: c.id,
       name: c.name,
       level: c.class_levels?.name ?? "",
       schoolYearId: c.school_year_id,
-    })));
-
-    setDiscounts((discountRes.data ?? []).map((d) => ({
-      id: d.id,
-      name: d.name,
-      type: d.type as DiscountType,
-      scope: d.scope as DiscountScope,
-      value: Number(d.value),
-      isActive: d.is_active,
     })));
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -245,11 +196,11 @@ export default function FinancePage() {
       id: s.id,
       name: `${s.last_name}, ${s.first_name}`,
     })));
-
-    setLoading(false);
   }, [schoolId, supabase]);
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
+  useEffect(() => {
+    fetchNonCachedData();
+  }, [fetchNonCachedData]);
 
   if (loading) return <PageSpinner />;
 
@@ -274,7 +225,7 @@ export default function FinancePage() {
         <FeeTypesTab
           feeTypes={feeTypes}
           schoolId={schoolId!}
-          onRefresh={fetchAll}
+          queryClient={queryClient}
         />
       )}
       {activeTab === "tuition" && (
@@ -283,14 +234,14 @@ export default function FinancePage() {
           academicPeriods={academicPeriods}
           classes={classes}
           schoolId={schoolId!}
-          onRefresh={fetchAll}
+          queryClient={queryClient}
         />
       )}
       {activeTab === "discounts" && (
         <DiscountsTab
           discounts={discounts}
           schoolId={schoolId!}
-          onRefresh={fetchAll}
+          queryClient={queryClient}
         />
       )}
       {activeTab === "credits" && (
@@ -298,7 +249,7 @@ export default function FinancePage() {
           credits={credits}
           students={students}
           schoolId={schoolId!}
-          onRefresh={fetchAll}
+          onRefresh={fetchNonCachedData}
         />
       )}
     </div>
@@ -308,8 +259,8 @@ export default function FinancePage() {
 // ─────────────────────────────────────
 // Fee Types Tab
 // ─────────────────────────────────────
-function FeeTypesTab({ feeTypes, schoolId, onRefresh }: {
-  feeTypes: FeeType[]; schoolId: string; onRefresh: () => void;
+function FeeTypesTab({ feeTypes, schoolId, queryClient }: {
+  feeTypes: FeeType[]; schoolId: string; queryClient: ReturnType<typeof useQueryClient>;
 }) {
   const supabase = createClient();
   const [showModal, setShowModal] = useState(false);
@@ -350,18 +301,18 @@ function FeeTypesTab({ feeTypes, schoolId, onRefresh }: {
     }
     setSaving(false);
     setShowModal(false);
-    onRefresh();
+    queryClient.invalidateQueries({ queryKey: queryKeys.feeTypes.list(schoolId) });
   }
 
   async function toggleActive(f: FeeType) {
     await supabase.from("fee_types").update({ is_active: !f.isActive }).eq("id", f.id);
-    onRefresh();
+    queryClient.invalidateQueries({ queryKey: queryKeys.feeTypes.list(schoolId) });
   }
 
   async function handleDelete(id: string) {
     if (!confirm("Delete this fee type?")) return;
     await supabase.from("fee_types").delete().eq("id", id);
-    onRefresh();
+    queryClient.invalidateQueries({ queryKey: queryKeys.feeTypes.list(schoolId) });
   }
 
   return (
@@ -424,12 +375,12 @@ function FeeTypesTab({ feeTypes, schoolId, onRefresh }: {
 // ─────────────────────────────────────
 // Tuition Setup Tab
 // ─────────────────────────────────────
-function TuitionTab({ tuitionConfigs, academicPeriods, classes, schoolId, onRefresh }: {
+function TuitionTab({ tuitionConfigs, academicPeriods, classes, schoolId, queryClient }: {
   tuitionConfigs: TuitionConfig[];
   academicPeriods: AcademicPeriod[];
   classes: ClassOption[];
   schoolId: string;
-  onRefresh: () => void;
+  queryClient: ReturnType<typeof useQueryClient>;
 }) {
   const supabase = createClient();
   const [selectedPeriodId, setSelectedPeriodId] = useState<string>(academicPeriods[0]?.id ?? "");
@@ -503,13 +454,13 @@ function TuitionTab({ tuitionConfigs, academicPeriods, classes, schoolId, onRefr
     }
     setSaving(false);
     setShowModal(false);
-    onRefresh();
+    queryClient.invalidateQueries({ queryKey: queryKeys.tuitionConfigs.list(schoolId) });
   }
 
   async function handleDelete(id: string) {
     if (!confirm("Delete this tuition config?")) return;
     await supabase.from("tuition_configs").delete().eq("id", id);
-    onRefresh();
+    queryClient.invalidateQueries({ queryKey: queryKeys.tuitionConfigs.list(schoolId) });
   }
 
   return (
@@ -636,8 +587,8 @@ function TuitionTab({ tuitionConfigs, academicPeriods, classes, schoolId, onRefr
 // ─────────────────────────────────────
 // Discounts Tab
 // ─────────────────────────────────────
-function DiscountsTab({ discounts, schoolId, onRefresh }: {
-  discounts: Discount[]; schoolId: string; onRefresh: () => void;
+function DiscountsTab({ discounts, schoolId, queryClient }: {
+  discounts: Discount[]; schoolId: string; queryClient: ReturnType<typeof useQueryClient>;
 }) {
   const supabase = createClient();
   const [showModal, setShowModal] = useState(false);
@@ -679,18 +630,18 @@ function DiscountsTab({ discounts, schoolId, onRefresh }: {
     }
     setSaving(false);
     setShowModal(false);
-    onRefresh();
+    queryClient.invalidateQueries({ queryKey: queryKeys.discounts.list(schoolId) });
   }
 
   async function toggleActive(d: Discount) {
     await supabase.from("discounts").update({ is_active: !d.isActive }).eq("id", d.id);
-    onRefresh();
+    queryClient.invalidateQueries({ queryKey: queryKeys.discounts.list(schoolId) });
   }
 
   async function handleDelete(id: string) {
     if (!confirm("Delete this discount?")) return;
     await supabase.from("discounts").delete().eq("id", id);
-    onRefresh();
+    queryClient.invalidateQueries({ queryKey: queryKeys.discounts.list(schoolId) });
   }
 
   return (

@@ -1,4 +1,6 @@
 import { cn } from "@/lib/utils";
+import { Button } from "./button";
+import { RotateCw } from "lucide-react";
 
 interface SpinnerProps { className?: string; size?: "sm" | "md" | "lg" }
 
@@ -26,11 +28,22 @@ export function PageSpinner() {
   );
 }
 
-interface ErrorAlertProps { message: string }
-export function ErrorAlert({ message }: ErrorAlertProps) {
+interface ErrorAlertProps { message: string; onRetry?: () => void }
+export function ErrorAlert({ message, onRetry }: ErrorAlertProps) {
   return (
-    <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
-      {message}
+    <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700 flex items-center justify-between">
+      <span>{message}</span>
+      {onRetry && (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onRetry}
+          className="text-red-700 border-red-200 hover:bg-red-100 ml-4 flex-shrink-0"
+        >
+          <RotateCw className="w-4 h-4 mr-1" />
+          Retry
+        </Button>
+      )}
     </div>
   );
 }

@@ -112,13 +112,117 @@ ORDER BY deleted_at DESC;
 
 ---
 
+## Full Restore Procedure
+
+### Supabase Pro Backup Recovery (Recommended)
+
+1. **Identify the backup date** → Dashboard → Database → Backups
+2. **Restore to new project** (Supabase creates a temporary project with the backup)
+3. **Verify data integrity** before switching your app:
+   ```sql
+   SELECT COUNT(*) FROM students;
+   SELECT COUNT(*) FROM audit_logs;
+   SELECT COUNT(*) FROM pg_trigger WHERE tgname LIKE 'audit_%'; -- should be 42+
+   ```
+4. **Update app configuration:**
+   - Copy new project URL from Dashboard
+   - Update `.env.local`: `NEXT_PUBLIC_SUPABASE_URL=<new-project-url>`
+   - Redeploy to Vercel: `git push`
+5. **Test the app:** confirm login works, create a test student, verify data is present
+6. **Clean up:** delete the temporary project or keep it as standby (costs $25/mo)
+
+### Manual Restore from pg_dump
+
+If using a manual `pg_dump` backup:
+
+1. **Create a staging Supabase project** (or use local postgres)
+2. **Restore the dump:**
+   ```bash
+   pg_restore -h <host> -U <user> -d postgres -Fc backup_YYYY-MM-DD.dump
+   ```
+3. **Run sanity checks** (above)
+4. **Point app to the staging project** temporarily
+5. **Test thoroughly** before making permanent
+
+---
+
+## Restore Testing
+
+**BEFORE the pilot, test a full restore:**
+
+1. Take a manual backup: `pg_dump ... > test_backup.dump`
+2. Create a staging project in Supabase (separate from production)
+3. Restore the backup to staging
+4. Run the sanity checks (above)
+5. Confirm the app can log in with staging credentials
+6. Create a test student on staging and verify it appears
+7. Document the time it takes (for future planning)
+8. Delete staging (or keep as a cold standby for X months)
+
+---
+
+## Partial Table Restore
+
+If only one table is corrupted:
+
+1. **Identify the corruption:**
+   ```sql
+   SELECT COUNT(*) FROM students;
+   SELECT * FROM students WHERE id = '<suspected-id>' \gx
+   ```
+
+2. **Restore that table only:**
+   ```bash
+   pg_restore -h <host> -U <user> -d postgres -t students -Fc backup.dump
+   ```
+
+3. **Verify row count matches:**
+   ```sql
+   SELECT COUNT(*) FROM students;
+   ```
+
+4. **Check audit trail for the table:**
+   ```sql
+   SELECT action, actor_user_id, created_at 
+   FROM audit_logs 
+   WHERE table_name = 'students' 
+   ORDER BY created_at DESC 
+   LIMIT 20;
+   ```
+
+---
+
+## Rollback a Migration
+
+Migrations 001–084 are additive and reversible via counter-migration only. **Do NOT manually DROP migrations.**
+
+If a migration must be reverted:
+
+1. **Create a counter-migration** (e.g., `085_revert_084_audit_triggers.sql`):
+   ```sql
+   -- Drop all triggers added in 084
+   DROP TRIGGER IF EXISTS audit_classes ON classes;
+   DROP TRIGGER IF EXISTS audit_class_teachers ON class_teachers;
+   -- ... (for all 11 tables in 084)
+   ```
+
+2. **Test on staging first**
+
+3. **Deploy to production** via your normal CI/CD
+
+4. **Document the reason** in the migration file header
+
+---
+
 ## Before the Pilot Starts — Recommended Actions
 
-1. Upgrade Supabase to Pro (daily backups)
-2. Take a manual database export immediately before handing access to the pilot school
-3. Store the backup file somewhere outside Supabase (local drive, Google Drive)
-4. Document the date of the export and what state the data was in
-5. Repeat the manual export at the end of each week during the pilot
+1. ✅ Upgrade Supabase to Pro (daily backups)
+2. ✅ Take a manual database export immediately before handing access to the pilot school
+3. ✅ **Test a restore** on staging to estimate recovery time (critical!)
+4. ✅ Store the backup file somewhere outside Supabase (Google Drive, encrypted USB, etc.)
+5. ✅ Document the date, size, and state of the export
+6. ✅ Repeat the manual export at the end of each week during the pilot
+7. ✅ For storage media: maintain a manual export of `uploads-media` and `profile-photos` buckets weekly
 
 ---
 
@@ -126,6 +230,7 @@ ORDER BY deleted_at DESC;
 
 If a Supabase project is in a broken state (RLS locked out, accidental migration, table drop):
 
-- Supabase Support: https://supabase.com/support
-- For service role bypass, you can always query via the Supabase SQL Editor as project owner
-- If locked out of auth, use the Supabase service role key directly from the API tab
+- **Supabase Support:** https://supabase.com/support
+- **For service role bypass:** You can always query via the Supabase SQL Editor as project owner
+- **If locked out of auth:** Use the Supabase service role key directly from the API tab
+- **For data recovery:** Restore from backup (Pro plan) or use `audit_logs.old_values` to manually reconstruct deleted rows

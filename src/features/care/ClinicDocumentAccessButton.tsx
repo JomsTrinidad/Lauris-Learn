@@ -13,15 +13,15 @@ interface Props {
   action: "preview_opened" | "download";
   /** Hide entirely (used when permissions.download=false for non-admin). */
   hidden?: boolean;
-  size?: "sm" | "default";
-  variant?: "default" | "outline" | "ghost";
+  size?: "sm" | "md" | "lg";
+  variant?: "primary" | "secondary" | "outline" | "ghost" | "destructive";
 }
 
 export function ClinicDocumentAccessButton({
   documentId,
   action,
   hidden,
-  size = "sm",
+  size = "md",
   variant = "outline",
 }: Props) {
   const [busy, setBusy] = useState(false);
