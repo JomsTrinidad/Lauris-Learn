@@ -20,7 +20,7 @@ import { formatCurrency } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { useSchoolContext } from "@/contexts/SchoolContext";
 import { queryKeys } from "@/lib/query-client";
-import { auditBillingMutation, generateRequestId } from "@/lib/monitoring";
+import { auditBillingMutation, generateRequestId, reportError } from "@/lib/monitoring";
 import { validateUpload, contentTypeFromExt, RECEIPT_MAX_BYTES } from "@/lib/upload-validate";
 import { trackUpload } from "@/lib/track-upload";
 import {
@@ -474,7 +474,12 @@ export default function BillingPage() {
         });
       if (uploadErr) {
         // Receipt upload failed — payment is already saved, so we log the error but don't block the success flow
-        console.error("[Billing] Receipt upload failed:", uploadErr.message);
+        reportError(new Error(uploadErr.message), {
+          module: "billing",
+          action: "receipt_photo_upload",
+          schoolId: schoolId || undefined,
+          metadata: { paymentId: pResult.data.id },
+        });
         setFormError(`Payment recorded, but receipt photo upload failed: ${uploadErr.message}`);
         setSaving(false); setPaymentModal(null); setPayment(EMPTY_PAYMENT); setPaymentType("installment");
         setPaymentSequenceWarning(null); setPaymentOverrideReason("");

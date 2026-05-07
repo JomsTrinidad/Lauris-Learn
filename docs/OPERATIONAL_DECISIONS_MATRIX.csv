@@ -1,0 +1,40 @@
+Decision,Recommended Default,Reasoning,Requires Future Implementation?,Document Reference
+Trial duration,30 days,"Standard SaaS trial window, aligns with school cycles",No (config in place),TENANT_LIFECYCLE_POLICY.md § 3
+No-activity auto-suspend,NOT IMPLEMENTED,"Pilot risk of false positives during holidays, manually handled by support",Yes (future feature),TENANT_LIFECYCLE_POLICY.md § 3
+Payment overdue threshold,14 days,"B2B net-14 standard, allows processing delays",No (manual process),TENANT_LIFECYCLE_POLICY.md § 4
+Suspension duration,30 days,"School accounting cycle, supports multiple contact attempts",No (manual process),TENANT_LIFECYCLE_POLICY.md § 5
+Suspension → Cancel grace,30 days,"Matches export window, aligned timeline",No (manual process),TENANT_LIFECYCLE_POLICY.md § 5
+Data archive retention,7 years,"Tax/legal hold standard (IRS requirement)",No (infrastructure),TENANT_LIFECYCLE_POLICY.md § 7
+Admin access after cancel,30 days,"Data recovery safety, matches re-activation window",No (schema enforces),TENANT_LIFECYCLE_POLICY.md § 6
+Parent access in suspension,Read-only,"Information access preserved, prevents data loss anxiety",No (RLS enforces),TENANT_LIFECYCLE_POLICY.md § 5
+Teacher access in suspension,Locked out,"Prevents accidental edits during suspension",No (RLS enforces),TENANT_LIFECYCLE_POLICY.md § 5
+Student demographic retention,Enrollment + 3 years,"Transcript/alumni window, appeals period",Yes (cleanup job),DATA_RETENTION_DELETION_POLICY_DRAFT.md § 3.B
+Parent contact retention,Enrollment + 2 years,"Billing disputes, sibling continuation",Yes (manual policy),DATA_RETENTION_DELETION_POLICY_DRAFT.md § 3.F
+Backup retention,90 days,"Point-in-time recovery window standard",No (infrastructure),DATA_RETENTION_DELETION_POLICY_DRAFT.md § 3.G
+Audit log retention,3 years (auto-purge),"FERPA compliance, preserved in archive",Yes (cleanup job),DATA_RETENTION_DELETION_POLICY_DRAFT.md § 3.E
+Deleted school retention,30 days,"Grace period for restore, matches cancel window",No (infrastructure),DATA_RETENTION_DELETION_POLICY_DRAFT.md § 3.G
+Export turnaround,5 business days,"Manual process, pilot-scale support",No (support SLA),DATA_RETENTION_DELETION_POLICY_DRAFT.md § 5
+Export formats,CSV, JSON, PDF,"Standard formats, PDF future-enhanced",Partial (PDF future),DATA_RETENTION_DELETION_POLICY_DRAFT.md § 5
+Session timeout,30 minutes,"Standard security practice, balances security/usability",No (code in place),SCHOOL_DATA_HANDLING_AGREEMENT_DRAFT.md § 5
+RPO (Recovery Point Objective),24 hours,"Daily backup cycle, adequate for school data",No (infrastructure),SCHOOL_DATA_HANDLING_AGREEMENT_DRAFT.md § 5
+RTO (Recovery Time Objective),4 hours,"Manual restore process, infrastructure-dependent",Yes (may automate post-pilot),SCHOOL_DATA_HANDLING_AGREEMENT_DRAFT.md § 5
+Breach remediation timeline,5 business days,"Reasonable for patch/fix development",Yes (CI/CD integration),SCHOOL_DATA_HANDLING_AGREEMENT_DRAFT.md § 5
+Subprocessor notification,30 days notice,"Standard B2B practice, school has objection window",Yes (process),SCHOOL_DATA_HANDLING_AGREEMENT_DRAFT.md § 2.D
+Support channel primary,Email support@laurislearn.ph,"Documented, auditable, tracked",No (process),SUPPORT_EXPECTATIONS_DRAFT.md § 2
+Support channel secondary,Slack #support-bk,"Real-time team coordination, internal only",No (process),SUPPORT_EXPECTATIONS_DRAFT.md § 2
+Critical response time,2 hours (business hours),"Quick triage for system down incidents",Yes (monitoring infra),SUPPORT_EXPECTATIONS_DRAFT.md § 3
+Critical resolution time,Next business day,"Realistic for complex system issues",Yes (monitoring infra),SUPPORT_EXPECTATIONS_DRAFT.md § 3
+High response time,8 hours (business hours only),"Major feature broken, business-hours coverage",Yes (monitoring infra),SUPPORT_EXPECTATIONS_DRAFT.md § 3
+High resolution time,48 hours,"Code changes may be needed",Yes (monitoring infra),SUPPORT_EXPECTATIONS_DRAFT.md § 3
+Medium response time,24 hours,"Next business day, non-critical",No (process),SUPPORT_EXPECTATIONS_DRAFT.md § 3
+Low response time,Best effort,"Feature requests, no commitment",No (process),SUPPORT_EXPECTATIONS_DRAFT.md § 3
+Business hours,Mon-Fri 9AM-5PM Manila time,"School operating hours, Philippines timezone",No (process),SUPPORT_EXPECTATIONS_DRAFT.md § 3
+Uptime target,99% monthly,"Realistic pilot-stage target, ~7 hours downtime allowed",Yes (monitoring dashboards),SUPPORT_EXPECTATIONS_DRAFT.md § 4
+Maintenance window frequency,1-2 times/month,"Active development, manageable disruption",No (process),SUPPORT_EXPECTATIONS_DRAFT.md § 6
+Maintenance window time,Sunday 6-9PM Manila time,"Non-business hours, outside school operations",No (process),SUPPORT_EXPECTATIONS_DRAFT.md § 6
+Maintenance notice,48 hours advance,"Email + dashboard banner",No (process),SUPPORT_EXPECTATIONS_DRAFT.md § 6
+Demo tenant isolation,Hardcoded UUID 00000000-0000-0000-0000-000000000099,"Simple, deterministic, easy to reset",No (already done),DEMO_OPERATIONS_POLICY.md § 2
+Demo data masking,Synthetic only (@example.com domain),"Prevents privacy leaks, avoids accidental communication",No (process),DEMO_OPERATIONS_POLICY.md § 3
+Demo reset frequency,Monthly,"Keep demo clean, fresh for testing",Yes (automation),DEMO_OPERATIONS_POLICY.md § 4
+Support impersonation,ALLOWED in demo, FORBIDDEN in production,"Testing vs. security, code enforces distinction",No (code enforces),DEMO_OPERATIONS_POLICY.md § 5
+Real-data contamination monitoring,Weekly email audit + monthly full audit,"Catch leaks early, prevent FERPA violations",Yes (automation),DEMO_OPERATIONS_POLICY.md § 6

@@ -31,6 +31,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { ErrorAlert } from "@/components/ui/spinner";
 import { createClient } from "@/lib/supabase/client";
+import { reportError, generateRequestId } from "@/lib/monitoring";
 import type { DocumentStatus } from "./types";
 
 export type StatusTransition = "mark_active" | "archive";
@@ -81,6 +82,7 @@ export function ConfirmStatusModal({
     setSubmitting(true);
     setError(null);
 
+    const statusRequestId = generateRequestId();
     const supabase = createClient();
 
     const update: Record<string, unknown> =
@@ -98,6 +100,17 @@ export function ConfirmStatusModal({
       .eq("id", doc.id);
 
     if (updateErr) {
+      reportError(new Error(updateErr.message), {
+        module: "documents",
+        action: `document_status_${transition}`,
+        metadata: {
+          documentId: doc.id,
+          documentTitle: doc.title,
+          currentStatus: doc.status,
+          newStatus: isMarkActive ? "active" : "archived",
+          requestId: statusRequestId,
+        },
+      });
       setError(humanStatusError(updateErr.message, transition));
       setSubmitting(false);
       return;

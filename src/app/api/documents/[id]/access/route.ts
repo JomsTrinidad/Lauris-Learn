@@ -35,6 +35,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient as createServerClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { reportError, generateRequestId } from "@/lib/monitoring";
 import type { Database } from "@/lib/types/database";
 import type {
   DocumentAccessAllowed,
@@ -177,7 +178,14 @@ export async function POST(
   );
 
   if (rpcErr) {
-    console.error("[documents/access] RPC failed:", rpcErr);
+    reportError(new Error(rpcErr.message), {
+      module: "documents-api",
+      action: "signed_url_rpc_call",
+      metadata: {
+        documentId: docId,
+        clientAction: action,
+      },
+    });
     return deniedJson({ error: "server_error" }, 500);
   }
 
@@ -190,15 +198,16 @@ export async function POST(
 
   // ── 7. Defensive: allowed but missing metadata is a server bug ─────────────
   if (!rpc.storage_path || !rpc.current_version_id || rpc.version_number === null) {
-    console.error(
-      "[documents/access] RPC allowed but returned incomplete metadata",
-      {
-        docId,
-        hasPath: !!rpc.storage_path,
-        hasVersion: !!rpc.current_version_id,
-        versionNumber: rpc.version_number,
+    reportError(new Error("RPC allowed but returned incomplete metadata"), {
+      module: "documents-api",
+      action: "signed_url_incomplete_metadata",
+      metadata: {
+        documentId: docId,
+        hasStoragePath: !!rpc.storage_path,
+        hasCurrentVersionId: !!rpc.current_version_id,
+        versionNumber: rpc.version_number ?? null,
       },
-    );
+    });
     return deniedJson({ error: "server_error" }, 500);
   }
 
@@ -228,7 +237,15 @@ export async function POST(
     // The RPC already wrote a 'signed_url_issued' event. The URL just couldn't
     // be minted — surface as 500 and rely on server logs for diagnosis. The
     // phantom audit row is acceptable in v1 (no rollback path on the RPC).
-    console.error("[documents/access] Signed URL mint failed:", urlErr);
+    reportError(new Error(urlErr?.message ?? "Signed URL mint failed"), {
+      module: "documents-api",
+      action: "signed_url_mint",
+      metadata: {
+        documentId: docId,
+        versionId: rpc.current_version_id,
+        storagePath: rpc.storage_path?.split("/").slice(0, 2).join("/") ?? "",
+      },
+    });
     return deniedJson({ error: "server_error" }, 500);
   }
 

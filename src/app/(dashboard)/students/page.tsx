@@ -27,6 +27,7 @@ import { queryKeys } from "@/lib/query-client";
 import { ShareIdentityWithClinicModal } from "@/features/clinic-sharing/ShareIdentityWithClinicModal";
 import { getSchoolOrganizationId } from "@/features/clinic-sharing/queries";
 import { useStudentsList, useStudentsClasses } from "@/lib/hooks";
+import { reportError, generateRequestId } from "@/lib/monitoring";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -607,6 +608,7 @@ export default function StudentsPage() {
     setSaving(true);
     setFormError(null);
 
+    const createStudentRequestId = generateRequestId();
     const { data: student, error: sErr } = await supabase
       .from("students")
       .insert({
@@ -630,7 +632,20 @@ export default function StudentsPage() {
       .select("id")
       .single();
 
-    if (sErr || !student) { setFormError(sErr?.message ?? "Failed to create student."); setSaving(false); return; }
+    if (sErr || !student) {
+      reportError(new Error(sErr?.message ?? "Failed to create student."), {
+        module: "students",
+        action: "student_creation",
+        schoolId: schoolId || undefined,
+        metadata: {
+          childName: `${form.firstName} ${form.lastName}`,
+          requestId: createStudentRequestId,
+        },
+      });
+      setFormError(sErr?.message ?? "Failed to create student.");
+      setSaving(false);
+      return;
+    }
 
     await generateStudentCode(student.id);
 
@@ -663,7 +678,7 @@ export default function StudentsPage() {
       setAddPhotoFile(null);
     }
 
-    await supabase.from("guardians").insert({
+    const { error: gErr } = await supabase.from("guardians").insert({
       student_id: student.id,
       full_name: form.parentName.trim(),
       relationship: form.relationship,
@@ -672,6 +687,18 @@ export default function StudentsPage() {
       is_primary: true,
       communication_preference: form.commPref,
     } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
+
+    if (gErr) {
+      reportError(new Error(gErr.message), {
+        module: "students",
+        action: "guardian_creation",
+        schoolId: schoolId || undefined,
+        metadata: {
+          studentId: student.id,
+          requestId: createStudentRequestId,
+        },
+      });
+    }
 
     if (form.classId) {
       const enrollRes = await fetch("/api/students/enroll", {
@@ -687,6 +714,16 @@ export default function StudentsPage() {
       });
       if (!enrollRes.ok) {
         const j = await enrollRes.json();
+        reportError(new Error(j.error ?? "Enrollment failed."), {
+          module: "students",
+          action: "student_enrollment_creation",
+          schoolId: schoolId || undefined,
+          metadata: {
+            studentId: student.id,
+            classId: form.classId,
+            requestId: createStudentRequestId,
+          },
+        });
         setFormError(j.error ?? "Student created but enrollment failed.");
         setSaving(false);
         invalidateAll();
@@ -1096,6 +1133,8 @@ export default function StudentsPage() {
     setPromoteSaving(true);
     setPromoteRowsError(null);
 
+    const promoteRequestId = generateRequestId();
+
     // Auto-populate notes from classification + level context
     function autoNotes(r: PromoteRow): string {
       switch (r.classification) {
@@ -1126,14 +1165,36 @@ export default function StudentsPage() {
 
       const j = await res.json();
       if (!res.ok) {
+        reportError(new Error(j.error ?? "Classification failed."), {
+          module: "students",
+          action: "bulk_classification",
+          schoolId: schoolId || undefined,
+          metadata: {
+            studentCount: toClassify.length,
+            requestId: promoteRequestId,
+          },
+        });
         setPromoteRowsError(j.error ?? "Classification failed.");
         setPromoteSaving(false);
         return;
       }
 
       setPromoteResult(j.result);
-    } catch {
-      setPromoteRowsError("Network error. Please try again.");
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : "Network error. Please try again.";
+      reportError(
+        err instanceof Error ? err : new Error(errorMsg),
+        {
+          module: "students",
+          action: "bulk_classification",
+          schoolId: schoolId || undefined,
+          metadata: {
+            studentCount: toClassify.length,
+            requestId: promoteRequestId,
+          },
+        }
+      );
+      setPromoteRowsError(errorMsg);
     }
 
     setPromoteSaving(false);

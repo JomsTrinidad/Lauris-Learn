@@ -41,6 +41,7 @@ import { Button } from "@/components/ui/button";
 import { ErrorAlert } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
+import { reportError, generateRequestId } from "@/lib/monitoring";
 import { DOCUMENT_TYPE_OPTIONS } from "./constants";
 import { ExternalContactPicker } from "./ExternalContactPicker";
 import {
@@ -196,6 +197,8 @@ export function RequestDocumentModal({
     setSubmitting(true);
     setError(null);
 
+    const requestRequestId = generateRequestId();
+
     try {
       const recipient =
         recipientMode === "parent" && guardianId
@@ -217,6 +220,21 @@ export function RequestDocumentModal({
       setSubmitting(false);
       onRequested(id);
     } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      reportError(
+        err instanceof Error ? err : new Error(errorMsg),
+        {
+          module: "documents",
+          action: "document_request_create",
+          schoolId: schoolId || undefined,
+          metadata: {
+            studentId,
+            documentType,
+            recipientMode,
+            requestId: requestRequestId,
+          },
+        }
+      );
       setSubmitting(false);
       setError(humanRequestError(errorMessage(err)));
     }

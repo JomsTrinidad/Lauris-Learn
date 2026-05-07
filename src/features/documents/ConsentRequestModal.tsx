@@ -34,6 +34,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { ErrorAlert } from "@/components/ui/spinner";
 import { createClient } from "@/lib/supabase/client";
+import { reportError, generateRequestId } from "@/lib/monitoring";
 import { EXPIRY_PRESETS } from "./constants";
 import { createConsentDraft } from "./consent-api";
 import type { ExternalContactRow } from "./types";
@@ -120,6 +121,8 @@ export function ConsentRequestModal({
     setSubmitting(true);
     setError(null);
 
+    const consentRequestId = generateRequestId();
+
     try {
       const { id } = await createConsentDraft(supabase, {
         schoolId:          doc.school_id,
@@ -135,6 +138,21 @@ export function ConsentRequestModal({
       setSubmitting(false);
       setCreatedId(id);
     } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      reportError(
+        err instanceof Error ? err : new Error(errorMsg),
+        {
+          module: "documents",
+          action: "consent_request_create",
+          metadata: {
+            documentId: doc.id,
+            documentTitle: doc.title,
+            externalContactId: contact.id,
+            externalContactName: contact.full_name,
+            requestId: consentRequestId,
+          },
+        }
+      );
       setSubmitting(false);
       setError(humanConsentError(errorMessage(err)));
     }

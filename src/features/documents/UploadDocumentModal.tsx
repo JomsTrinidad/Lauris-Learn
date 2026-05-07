@@ -45,6 +45,7 @@ import {
 } from "./constants";
 import { formatBytes } from "./utils";
 import type { DocumentType } from "./types";
+import { reportError, generateRequestId } from "@/lib/monitoring";
 
 const ALLOWED_EXTENSIONS = ["pdf", "jpg", "jpeg", "png", "webp"] as const;
 
@@ -174,6 +175,7 @@ export function UploadDocumentModal({
     setSubmitting(true);
     setError(null);
 
+    const uploadRequestId = generateRequestId();
     const ext = (file.name.split(".").pop() ?? "pdf").toLowerCase();
 
     // Generate the document id client-side. This avoids INSERT ... RETURNING,
@@ -203,6 +205,18 @@ export function UploadDocumentModal({
       });
 
     if (headInsert.error) {
+      reportError(new Error(headInsert.error.message), {
+        module: "documents",
+        action: "upload_head_insert",
+        schoolId: schoolId || undefined,
+        metadata: {
+          studentId,
+          documentType,
+          fileSizeBytes: file.size,
+          mimeType: file.type,
+          requestId: uploadRequestId,
+        },
+      });
       setError(humanInsertError(headInsert.error.message));
       setSubmitting(false);
       return;
@@ -219,6 +233,17 @@ export function UploadDocumentModal({
     if (upload.error) {
       // Roll back step 1.
       await supabase.from("child_documents").delete().eq("id", docId);
+      reportError(new Error(upload.error.message), {
+        module: "documents",
+        action: "upload_blob_write",
+        schoolId: schoolId || undefined,
+        metadata: {
+          studentId,
+          fileSizeBytes: file.size,
+          mimeType: file.type,
+          requestId: uploadRequestId,
+        },
+      });
       setError(humanStorageError(upload.error.message));
       setSubmitting(false);
       return;
@@ -245,6 +270,16 @@ export function UploadDocumentModal({
     if (versionInsert.error) {
       await rollbackBlob(supabase, storagePath);
       await supabase.from("child_documents").delete().eq("id", docId);
+      reportError(new Error(versionInsert.error.message), {
+        module: "documents",
+        action: "upload_version_insert",
+        schoolId: schoolId || undefined,
+        metadata: {
+          studentId,
+          documentType,
+          requestId: uploadRequestId,
+        },
+      });
       setError(humanInsertError(versionInsert.error.message));
       setSubmitting(false);
       return;
@@ -261,6 +296,17 @@ export function UploadDocumentModal({
       await supabase.from("child_document_versions").delete().eq("id", versionId);
       await supabase.from("child_documents").delete().eq("id", docId);
       await rollbackBlob(supabase, storagePath);
+      reportError(new Error(repoint.error.message), {
+        module: "documents",
+        action: "upload_head_repoint",
+        schoolId: schoolId || undefined,
+        metadata: {
+          studentId,
+          documentId: docId,
+          versionId,
+          requestId: uploadRequestId,
+        },
+      });
       setError(humanInsertError(repoint.error.message));
       setSubmitting(false);
       return;

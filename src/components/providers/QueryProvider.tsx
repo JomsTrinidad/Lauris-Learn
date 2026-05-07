@@ -14,7 +14,10 @@ import { OfflineBanner } from "./OfflineBanner";
  */
 export function QueryProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
-    validateEnvironment();
+    // Only validate in production to avoid false positives in dev
+    if (process.env.NODE_ENV === "production") {
+      validateEnvironment();
+    }
   }, []);
 
   return (

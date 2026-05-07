@@ -18,6 +18,7 @@ import { PageSpinner, ErrorAlert } from "@/components/ui/spinner";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { createClient } from "@/lib/supabase/client";
 import { useSchoolContext } from "@/contexts/SchoolContext";
+import { reportError, generateRequestId } from "@/lib/monitoring";
 
 type InquiryStatus =
   | "inquiry"
@@ -430,6 +431,7 @@ export default function EnrollmentPage() {
     setSaving(true);
     setFormError(null);
 
+    const inquiryRequestId = generateRequestId();
     const { error: iErr } = await supabase.from("enrollment_inquiries").insert({
       school_id: schoolId!,
       school_year_id: activeYear.id,
@@ -444,7 +446,17 @@ export default function EnrollmentPage() {
       status: "inquiry",
     });
 
-    if (iErr) { setFormError(iErr.message); setSaving(false); return; }
+    if (iErr) {
+      reportError(new Error(iErr.message), {
+        module: "enrollment",
+        action: "inquiry_creation",
+        schoolId: schoolId || undefined,
+        metadata: { requestId: inquiryRequestId },
+      });
+      setFormError(iErr.message);
+      setSaving(false);
+      return;
+    }
     setSaving(false);
     setModalOpen(false);
     setForm(EMPTY_FORM);
@@ -464,7 +476,22 @@ export default function EnrollmentPage() {
       return;
     }
 
-    await supabase.from("enrollment_inquiries").update({ status: next }).eq("id", inquiry.id);
+    const statusChangeRequestId = generateRequestId();
+    const { error: sErr } = await supabase.from("enrollment_inquiries").update({ status: next }).eq("id", inquiry.id);
+    if (sErr) {
+      reportError(new Error(sErr.message), {
+        module: "enrollment",
+        action: "inquiry_status_change",
+        schoolId: schoolId || undefined,
+        metadata: {
+          childName: inquiry.childName,
+          oldStatus: inquiry.status,
+          newStatus: next,
+          requestId: statusChangeRequestId,
+        },
+      });
+      return;
+    }
     await loadInquiries();
   }
 
@@ -474,6 +501,8 @@ export default function EnrollmentPage() {
 
     setSaving(true);
     setFormError(null);
+
+    const conversionRequestId = generateRequestId();
 
     // Create student record
     const nameParts = convertInquiry.childName.trim().split(" ");
@@ -493,10 +522,23 @@ export default function EnrollmentPage() {
       .select("id")
       .single();
 
-    if (sErr || !student) { setFormError(sErr?.message ?? "Failed to create student."); setSaving(false); return; }
+    if (sErr || !student) {
+      reportError(new Error(sErr?.message ?? "Failed to create student."), {
+        module: "enrollment",
+        action: "inquiry_conversion_student_create",
+        schoolId: schoolId || undefined,
+        metadata: {
+          childName: convertInquiry.childName,
+          requestId: conversionRequestId,
+        },
+      });
+      setFormError(sErr?.message ?? "Failed to create student.");
+      setSaving(false);
+      return;
+    }
 
     // Create guardian
-    await supabase.from("guardians").insert({
+    const { error: gErr } = await supabase.from("guardians").insert({
       student_id: student.id,
       full_name: convertInquiry.parentName,
       relationship: "Guardian",
@@ -504,6 +546,17 @@ export default function EnrollmentPage() {
       email: convertInquiry.email || null,
       is_primary: true,
     });
+    if (gErr) {
+      reportError(new Error(gErr.message), {
+        module: "enrollment",
+        action: "inquiry_conversion_guardian_create",
+        schoolId: schoolId || undefined,
+        metadata: {
+          studentId: student.id,
+          requestId: conversionRequestId,
+        },
+      });
+    }
 
     // Create enrollment via level-based API (auto-creates Unassigned class if needed)
     if (convertLevel) {
@@ -519,6 +572,16 @@ export default function EnrollmentPage() {
       });
       if (!enrollRes.ok) {
         const j = await enrollRes.json();
+        reportError(new Error(j.error ?? "Enrollment failed."), {
+          module: "enrollment",
+          action: "inquiry_conversion_enrollment_create",
+          schoolId: schoolId || undefined,
+          metadata: {
+            studentId: student.id,
+            level: convertLevel,
+            requestId: conversionRequestId,
+          },
+        });
         setFormError(j.error ?? "Enrollment failed.");
         setSaving(false);
         return;
@@ -526,7 +589,19 @@ export default function EnrollmentPage() {
     }
 
     // Mark inquiry as enrolled
-    await supabase.from("enrollment_inquiries").update({ status: "enrolled" }).eq("id", convertInquiry.id);
+    const { error: uErr } = await supabase.from("enrollment_inquiries").update({ status: "enrolled" }).eq("id", convertInquiry.id);
+    if (uErr) {
+      reportError(new Error(uErr.message), {
+        module: "enrollment",
+        action: "inquiry_conversion_mark_enrolled",
+        schoolId: schoolId || undefined,
+        metadata: {
+          inquiryId: convertInquiry.id,
+          studentId: student.id,
+          requestId: conversionRequestId,
+        },
+      });
+    }
 
     setSaving(false);
     setConvertInquiry(null);

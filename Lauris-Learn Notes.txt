@@ -1,0 +1,25 @@
+Logins: 
+jtrinidad7@gmail.com - L4uryn3F41th!
+
+
+admin@sunshine.test
+t1@sunshine.test … t8@sunshine.test
+p1@sunshine.test … p15@sunshine.test
+Password: SunshineDemo2026!
+parent.north.01@lauris.demo
+
+Password for all accounts: Demo2026!
+=======================================
+
+Notes:
+
+Demo School - fake data, allows user to play around the tool with data to work with
+Trial Login - https://chatgpt.com/g/g-p-69eaeb4985bc8191ad05c82bba467d6e-lauris-learn/c/69fcc071-e3b0-839f-a990-a9e272b0e194
+
+Concerns/Questions:
+1. How can we split features that are core vs premium?
+
+
+Demo School
+> Dashboard:
+- Add Student button sends user to Students page (to Add a Student Profile?) - it doesn't make sense to add this here
