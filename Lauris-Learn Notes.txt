@@ -18,8 +18,14 @@ Trial Login - https://chatgpt.com/g/g-p-69eaeb4985bc8191ad05c82bba467d6e-lauris-
 
 Concerns/Questions:
 1. How can we split features that are core vs premium?
+2. Does reset password work? How about I forgot my password? Resetting password without an admin. 
+3. Sample proud moments suggestions that pull from a database table
 
 
 Demo School
 > Dashboard:
-- Add Student button sends user to Students page (to Add a Student Profile?) - it doesn't make sense to add this here
+  - Add Student, Record Payment, Mark Attendance, Parent Update buttons don't really add much value being in the main page.
+  - Today's Progress works if there are students already enrolled to the active school year, so in order to get the dashboard to show up data then students must be enrolled.
+  - 
+> Students:
+  - 

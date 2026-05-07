@@ -1148,8 +1148,8 @@ export default function SettingsPage() {
           <p className="text-muted-foreground text-sm mt-1">Configure your school, school years, and holidays</p>
         </div>
         <button onClick={() => { setHelpOpen(true); setHelpSearch(""); }}
-          className="flex items-center gap-1.5 px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors border border-border">
-          <HelpCircle className="w-4 h-4" /> Help
+          className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-primary/20 bg-primary/5 hover:bg-primary/10 text-primary text-sm font-medium transition-colors">
+          <HelpCircle className="w-4 h-4" /> Setup Guide
         </button>
       </div>
       {error && <ErrorAlert message={error} />}
@@ -1992,7 +1992,7 @@ export default function SettingsPage() {
             <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
               <div className="flex items-center gap-2.5">
                 <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center"><BookOpen className="w-4 h-4 text-primary" /></div>
-                <h2 className="font-semibold text-base">Settings Help</h2>
+                <h2 className="font-semibold text-base">Setup Guide</h2>
               </div>
               <button onClick={() => { setHelpOpen(false); setHelpSearch(""); }} className="p-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
             </div>
@@ -2023,6 +2023,57 @@ export default function SettingsPage() {
                 );
                 type HelpTopic = { id: string; icon: React.ElementType; title: string; searchText: string; body: React.ReactNode };
                 const topics: HelpTopic[] = [
+                  {
+                    id: "getting-started",
+                    icon: BookOpen,
+                    title: "Getting Started — Initial School Setup",
+                    searchText: "getting started setup guide initial school year configure fees classes students teachers comprehensive",
+                    body: (
+                      <div className="space-y-3">
+                        <p className="text-sm font-medium text-foreground">Complete operational setup requires these 13 steps. Follow them in order:</p>
+                        <div className="space-y-2 mt-3">
+                          <Step n={1} text={<><strong>Confirm School Profile</strong> — Go to Settings → School Information. Verify school name, branch, address, phone, and upload your logo. These details appear on billing statements and parent portal.</>} />
+                          <Step n={2} text={<><strong>Set Up School Year</strong> — Go to Settings → School Year & Terms. Click Add School Year, enter the name (e.g., SY 2025–2026), set start and end dates, then check Mark as Active. Only one year can be active at a time.</>} />
+                          <Step n={3} text={<><strong>Add Academic Terms / Periods</strong> — Still in School Year & Terms, click Add Term under your school year. Create terms like Regular Term, Summer, or Semester with their date ranges. Terms organize billing cycles and tuition rates.</>} />
+                          <Step n={4} text={<><strong>Set Up Class Levels</strong> — Go to Settings → Class Levels. Click Add Level and create your levels like Toddler, Nursery, Pre-Kinder, Kinder, Grade 1, etc. Levels are backend groupings used for billing and reporting.</>} />
+                          <Step n={5} text={<><strong>Add Teachers</strong> — Go to Settings → Teachers. Click Add Teacher and enter their full name, email, phone, and optionally upload a photo. Teachers will appear in the class teacher dropdown later.</>} />
+                          <Step n={6} text={<><strong>Create Classes</strong> — Go to Classes (main sidebar). Click Add Class, enter class name (e.g., Kinder A), select level, set start/end times, set capacity, and assign a teacher. Create one class for each section.</>} />
+                          <Step n={7} text={<><strong>Configure Fee Types</strong> — Go to Billing (under Finance in the sidebar) → Setup tab → Fee Types sub-tab. Click Add Fee Type and create types like Tuition, Enrollment Fee, Books, Miscellaneous. These define what you can bill for.</>} />
+                          <Step n={8} text={<><strong>Set Up Tuition Rates</strong> — Go to Billing (under Finance in the sidebar) → Setup tab → Tuition Rates sub-tab. For each academic term and class level, enter the tuition amount. This drives automatic billing when you generate invoices.</>} />
+                          <Step n={9} text={<><strong>Configure Student ID Format</strong> — Go to Settings → Student IDs. Set the prefix (e.g., LL, BK), number of digits (padding), and whether to include the school year. This format auto-generates codes when you add students (e.g., LL-0001 or LL-26-0001).</>} />
+                          <Step n={10} text={<><strong>Enroll Students</strong> — Go to Students and click <strong>+ Add Student Profile</strong> to create the student record (profile only). Then go to <strong>Enrollment</strong> page and click <strong>+ Enroll Student</strong> to add them to the active school year. Students must be explicitly enrolled for each school year.</>} />
+                          <Step n={11} text={<><strong>Place Students Into Classes</strong> — Go to Classes, click a class card, then click Add Student to assign enrolled students to specific sections. Enrollment (year-level) and class placement (specific section) are separate steps.</>} />
+                          <Step n={12} text={<><strong>Invite Parents</strong> — Go to Students, click a student row, and under Guardians click Add Guardian. Enter parent name and email, check Send invite. Parents will receive a portal link to access their child's dashboard.</>} />
+                          <Step n={13} text={<><strong>Daily Operations</strong> — Your school is now ready for operations. Record daily attendance on the Attendance page, post class announcements in Updates, generate billing on the first of each month (Billing → Generate Billing), track payments, and manage events and student progress as needed.</>} />
+                        </div>
+                        <Tip>The school year is the operational container for everything — enrollments, classes, attendance, and billing all happen within the active year. Don't skip steps or reorder them — each builds on the previous ones.</Tip>
+                        <Note><strong>You're ready!</strong> Your school is now fully configured. Parents can start accessing the portal, teachers can record attendance and post updates, and you can track billing. Most settings can be updated anytime — changes take effect immediately. If you make mistakes, just edit the record or delete and recreate it.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "year-transition",
+                    icon: BookOpen,
+                    title: "School Year Transition — Preparing for the Next Year",
+                    searchText: "school year transition new year setup next year classes promote students renewal",
+                    body: (
+                      <div className="space-y-3">
+                        <p className="text-sm font-medium text-foreground">When your current school year ends and you need to set up for the next school year:</p>
+                        <div className="space-y-2">
+                          <Step n={1} text={<>At year-end, go to <strong>Students → Year-End Classification</strong> to classify all enrolled students (promoted, repeated, withdrawn, etc.). Then click <strong>Close School Year</strong>.</>} />
+                          <Step n={2} text={<><strong>Create next year's School Year</strong> as Planned in Settings → School Year & Terms. It must exist before you can promote students or create new classes.</>} />
+                          <Step n={3} text={<>Go to <strong>Students → Promote Students</strong> to bulk-assign students to their next-year classes. Select the target school year and new level for each current class.</>} />
+                          <Step n={4} text={<>Go to <strong>Classes</strong> and create fresh classes for the new school year. Assign teachers to each class. (Don't reuse old classes — keep them for historical records.)</>} />
+                          <Step n={5} text={<>Return to Settings and activate the new school year by clicking <strong>Activate</strong> on it. The previous active year auto-closes.</>} />
+                          <Step n={6} text={<>Verify <strong>Academic Terms / Periods</strong> exist for the new year. If you added new terms, go to <strong>Billing → Setup tab → Tuition Rates</strong> to configure rates for the new terms.</>} />
+                          <Step n={7} text={<>Go to <strong>Billing → Generate Billing</strong> to create the first month's invoices for the new school year.</>} />
+                          <Step n={8} text={<>Update <strong>Holidays</strong> for the new year in Settings → Holidays if your calendar changed.</>} />
+                        </div>
+                        <Tip>Create the next year as Planned several weeks before transition so you have time to set up classes and promote students without rush.</Tip>
+                        <Note><strong>Key difference:</strong> A new school year starts empty — students must be explicitly promoted or re-enrolled. Billing from the prior year remains collectible as prior-year balance.</Note>
+                      </div>
+                    ),
+                  },
                   {
                     id: "school-info",
                     icon: Plus,
@@ -2072,7 +2123,7 @@ export default function SettingsPage() {
                           <Step n={2} text={<span>Enter the <strong>name</strong> (e.g. "Regular Term"), <strong>start date</strong>, and <strong>end date</strong>.</span>} />
                           <Step n={3} text={<span>Click <strong>Save</strong>.</span>} />
                         </div>
-                        <Note>Terms are used in Finance Setup to configure tuition rates per period and level. If you add a term after setting up tuition, go to Finance → Tuition Setup to add rates for the new term.</Note>
+                        <Note>Terms are used in Finance Setup to configure tuition rates per period and level. If you add a term after setting up tuition, go to Billing → Setup tab → Tuition Rates to add rates for the new term.</Note>
                       </div>
                     ),
                   },

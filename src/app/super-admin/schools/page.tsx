@@ -430,10 +430,11 @@ export default function SuperAdminSchoolsPage() {
         <div className="flex items-center gap-2">
           <button
             onClick={() => setHelpOpen(true)}
-            className="p-2 rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
-            title="Platform docs"
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-primary/20 bg-primary/5 hover:bg-primary/10 text-primary text-sm font-medium transition-colors"
+            title="Platform documentation & setup guide"
           >
-            <HelpCircle className="w-5 h-5" />
+            <HelpCircle className="w-4 h-4" />
+            Help
           </button>
           <Button onClick={openCreate}>
             <Plus className="w-4 h-4 mr-2" /> New School

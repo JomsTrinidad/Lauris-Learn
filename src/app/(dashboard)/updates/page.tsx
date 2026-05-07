@@ -700,29 +700,32 @@ export default function ParentUpdatesPage() {
       </div>
 
       {/* ── Filters ─────────────────────────────────────────────────────── */}
-      <div className="flex flex-wrap gap-x-6 gap-y-2 items-center text-sm">
-        <div className="flex items-center gap-2">
-          <span className="text-muted-foreground">Show:</span>
-          <div className="flex gap-1.5">
+      <div className="bg-muted/40 rounded-lg border border-border p-4 space-y-3">
+        {/* Status Filter */}
+        <div className="flex items-center gap-3 flex-wrap">
+          <span className="text-sm font-semibold text-foreground min-w-fit">Status:</span>
+          <div className="flex gap-2 flex-wrap">
             {(["posted", "draft", "hidden", "all"] as StatusFilter[]).map((f) => (
               <button key={f} onClick={() => setStatusFilter(f)}
-                className={`px-3 py-1 rounded-full text-sm transition-colors ${statusFilter === f ? "bg-primary text-primary-foreground" : "bg-muted hover:bg-accent"}`}>
+                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${statusFilter === f ? "bg-primary text-primary-foreground" : "bg-white dark:bg-slate-800 border border-border hover:bg-accent"}`}>
                 {STATUS_LABELS[f]}
               </button>
             ))}
           </div>
         </div>
+
+        {/* Class Filter */}
         {classOptions.length > 1 && (
-          <div className="flex items-center gap-2">
-            <span className="text-muted-foreground">Class:</span>
-            <div className="flex gap-1.5">
+          <div className="flex items-center gap-3 flex-wrap pt-2 border-t border-border">
+            <span className="text-sm font-semibold text-foreground min-w-fit">Class:</span>
+            <div className="flex gap-2 flex-wrap">
               <button onClick={() => setClassFilter("all")}
-                className={`px-3 py-1 rounded-full text-sm transition-colors ${classFilter === "all" ? "bg-primary text-primary-foreground" : "bg-muted hover:bg-accent"}`}>
+                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${classFilter === "all" ? "bg-primary text-primary-foreground" : "bg-white dark:bg-slate-800 border border-border hover:bg-accent"}`}>
                 All
               </button>
               {classOptions.map((c) => (
                 <button key={c.id} onClick={() => setClassFilter(c.id)}
-                  className={`px-3 py-1 rounded-full text-sm transition-colors ${classFilter === c.id ? "bg-primary text-primary-foreground" : "bg-muted hover:bg-accent"}`}>
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${classFilter === c.id ? "bg-primary text-primary-foreground" : "bg-white dark:bg-slate-800 border border-border hover:bg-accent"}`}>
                   {c.name}
                 </button>
               ))}

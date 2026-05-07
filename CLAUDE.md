@@ -536,6 +536,22 @@ Help drawer implementation pattern (consistent across all pages):
 
 ---
 
+## Setup Guide and Getting Started Rule
+
+**Setup Walkthrough** (super admin, Dashboard page) and **Getting Started** (school admin, Settings page) are mandatory onboarding guides that must stay in sync with actual application workflows. **Whenever a feature is added, changed, or removed — whether it affects a direct workflow or navigation paths — both guides MUST be updated immediately.**
+
+- **Exact navigation paths must match reality.** If a feature is accessed via "Billing → Setup tab → Fee Types sub-tab", the guides must say exactly that. If navigation changes, update the guides first before code ships.
+- **New workflow steps require guide updates.** If a school setup process gains a new required step (e.g., "Set Up Tuition Rates" as Step 8), both super admin and school admin guides must be updated with full context and navigation.
+- **Changed instructions require both guides updated.** A single instruction fix (e.g., "Finance →" becomes "Billing →") must be applied to both Getting Started and Setup Walkthrough to avoid role-based inconsistency.
+- **Help drawers should reference the guides.** When help drawer topics mention a multi-step workflow that overlaps with Getting Started / Setup Walkthrough, keep phrasing consistent ("see Getting Started for the full flow").
+- **Daily operations section belongs in both.** Super admin Setup Walkthrough includes Step 12 (Daily Operations) — school admin Getting Started should include the same to show operational expectations post-setup.
+
+Check locations:
+- Super admin: `src/app/(dashboard)/dashboard/page.tsx` — "Setup Walkthrough" help drawer (search `id: "overview"`)
+- School admin: `src/app/(dashboard)/settings/page.tsx` — "Getting Started — Initial School Setup" help topic (search `id: "getting-started"`)
+
+---
+
 ## Session Log
 
 ### 2026-05-04 — Basic Therapy Sessions (Phase 6E)
