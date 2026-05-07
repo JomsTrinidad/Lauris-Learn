@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import {
   Users, UserCheck, AlertCircle, Calendar, CheckSquare, ArrowRight,
-  CheckCircle2, Clock, AlertTriangle, TrendingUp, MessageSquare, Bell, Zap,
+  CheckCircle2, Clock, AlertTriangle, TrendingUp, Bell,
 } from "lucide-react";
 import Link from "next/link";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -458,7 +458,7 @@ export default function DashboardPage() {
     <ErrorBoundary section="dashboard" fallback="minimal">
       <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex items-start justify-between gap-4 pb-2">
         <div>
           <h1>Dashboard</h1>
           {!activeYear && (
@@ -467,8 +467,8 @@ export default function DashboardPage() {
               <Link href="/settings" className="underline">Settings → School Years</Link> to set one.
             </div>
           )}
-          <p className="text-muted-foreground mt-1 text-sm">
-            Welcome back! Here&apos;s what&apos;s happening today.
+          <p className="text-muted-foreground mt-2 text-sm font-medium">
+            What needs your attention today?
           </p>
         </div>
         <div className="text-right flex-shrink-0 hidden sm:block">
@@ -535,18 +535,18 @@ export default function DashboardPage() {
         </Card>
       ) : null}
 
-      {/* Summary cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* Core Health Metrics */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <Link href="/students">
           <Card className="hover:shadow-md transition-shadow cursor-pointer">
-            <CardContent className="p-5">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">Total Students</p>
-                  <p className="text-3xl font-semibold mt-1">{totalEnrolled}</p>
+            <CardContent className="p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Total Students</p>
+                  <p className="text-2xl font-bold mt-1">{totalEnrolled}</p>
                 </div>
-                <div className="bg-blue-500 p-3 rounded-xl text-white">
-                  <Users className="w-5 h-5" />
+                <div className="bg-blue-500 p-2 rounded-lg text-white shrink-0">
+                  <Users className="w-4 h-4" />
                 </div>
               </div>
             </CardContent>
@@ -555,36 +555,29 @@ export default function DashboardPage() {
 
         <Link href="/attendance">
           <Card className="hover:shadow-md transition-shadow cursor-pointer">
-            <CardContent className="p-5">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">Present Today</p>
-                  <p className="text-3xl font-semibold mt-1">
-                    {stats?.presentToday ?? 0}{" "}
-                    <span className="text-lg text-muted-foreground font-normal">
-                      / {totalEnrolled}
-                    </span>
-                  </p>
+            <CardContent className="p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Attendance Today</p>
+                  <div className="flex items-baseline gap-1 mt-1">
+                    <p className="text-2xl font-bold">{stats?.presentToday ?? 0}</p>
+                    <p className="text-sm text-muted-foreground">/ {totalEnrolled}</p>
+                  </div>
                   <p
-                    className={`text-xs mt-0.5 font-medium ${
+                    className={`text-xs mt-1 font-medium ${
                       attendanceTrend === "up"
                         ? "text-green-600"
                         : attendanceTrend === "down"
-                        ? "text-red-500"
+                        ? "text-red-600"
                         : "text-muted-foreground"
                     }`}
                   >
-                    {presentPercent}%
-                    {attendanceTrend === "up" ? " ↑" : attendanceTrend === "down" ? " ↓" : ""}
-                    {attendanceTrend !== "same" && (
-                      <span className="text-muted-foreground font-normal">
-                        {" "}vs yesterday
-                      </span>
-                    )}
+                    {presentPercent}%{" "}
+                    {attendanceTrend === "up" ? "↑" : attendanceTrend === "down" ? "↓" : ""}
                   </p>
                 </div>
-                <div className="bg-green-500 p-3 rounded-xl text-white">
-                  <UserCheck className="w-5 h-5" />
+                <div className="bg-green-500 p-2 rounded-lg text-white shrink-0">
+                  <UserCheck className="w-4 h-4" />
                 </div>
               </div>
             </CardContent>
@@ -593,25 +586,23 @@ export default function DashboardPage() {
 
         <Link href="/billing">
           <Card className="hover:shadow-md transition-shadow cursor-pointer">
-            <CardContent className="p-5">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">Unpaid Tuition</p>
-                  <p className="text-3xl font-semibold mt-1">{statsQuery.data?.unpaidCount ?? 0}</p>
-                  {(statsQuery.data?.overdueCount ?? 0) > 0 ? (
-                    <p className="text-xs mt-0.5 font-medium text-red-600">
+            <CardContent className="p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Outstanding Balance</p>
+                  <p className="text-2xl font-bold mt-1">{formatCurrency(billingSummaryQuery.data?.outstandingBalance ?? 0)}</p>
+                  {(statsQuery.data?.overdueCount ?? 0) > 0 && (
+                    <p className="text-xs mt-1 font-medium text-red-600">
                       {statsQuery.data!.overdueCount} overdue
                     </p>
-                  ) : (statsQuery.data?.unpaidCount ?? 0) === 0 ? (
-                    <p className="text-xs mt-0.5 font-medium text-green-600">All clear</p>
-                  ) : null}
+                  )}
                 </div>
                 <div
                   className={`${
                     (statsQuery.data?.overdueCount ?? 0) > 0 ? "bg-red-500" : "bg-orange-500"
-                  } p-3 rounded-xl text-white`}
+                  } p-2 rounded-lg text-white shrink-0`}
                 >
-                  <AlertCircle className="w-5 h-5" />
+                  <AlertCircle className="w-4 h-4" />
                 </div>
               </div>
             </CardContent>
@@ -620,17 +611,15 @@ export default function DashboardPage() {
 
         <Link href="/events">
           <Card className="hover:shadow-md transition-shadow cursor-pointer">
-            <CardContent className="p-5">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">Upcoming Events</p>
-                  <p className="text-3xl font-semibold mt-1">{statsQuery.data?.upcomingEvents ?? 0}</p>
-                  {(statsQuery.data?.upcomingEvents ?? 0) === 0 && (
-                    <p className="text-xs mt-0.5 text-muted-foreground">None in next 30 days</p>
-                  )}
+            <CardContent className="p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Upcoming Events</p>
+                  <p className="text-2xl font-bold mt-1">{statsQuery.data?.upcomingEvents ?? 0}</p>
+                  <p className="text-xs text-muted-foreground mt-1">Next 30 days</p>
                 </div>
-                <div className="bg-purple-500 p-3 rounded-xl text-white">
-                  <Calendar className="w-5 h-5" />
+                <div className="bg-purple-500 p-2 rounded-lg text-white shrink-0">
+                  <Calendar className="w-4 h-4" />
                 </div>
               </div>
             </CardContent>
@@ -638,48 +627,19 @@ export default function DashboardPage() {
         </Link>
       </div>
 
-      {/* Quick Actions */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <Link
-          href="/students"
-          className="flex items-center justify-center gap-2 px-4 py-2.5 border border-border rounded-lg text-sm font-medium hover:bg-muted transition-colors"
-        >
-          <Users className="w-4 h-4" />
-          Add Student
-        </Link>
-        <Link
-          href="/updates"
-          className="flex items-center justify-center gap-2 px-4 py-2.5 border border-border rounded-lg text-sm font-medium hover:bg-muted transition-colors"
-        >
-          <MessageSquare className="w-4 h-4" />
-          Parent Update
-        </Link>
-        <Link
-          href="/billing"
-          className="flex items-center justify-center gap-2 px-4 py-2.5 border border-border rounded-lg text-sm font-medium hover:bg-muted transition-colors"
-        >
-          <Zap className="w-4 h-4" />
-          Record Payment
-        </Link>
-        <Link
-          href="/attendance"
-          className="flex items-center justify-center gap-2 px-4 py-2.5 border border-border rounded-lg text-sm font-medium hover:bg-muted transition-colors"
-        >
-          <CheckSquare className="w-4 h-4" />
-          Mark Attendance
-        </Link>
-      </div>
-
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Today's Progress */}
+        {/* Today's Operations: Classes Requiring Action */}
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between py-4">
-            <h2>Today&apos;s Progress</h2>
+          <CardHeader className="flex flex-row items-center justify-between py-4 border-b border-border">
+            <div>
+              <h2 className="text-base font-semibold">Classes Requiring Action</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">Mark attendance as classes meet</p>
+            </div>
             <Link
               href="/attendance"
-              className="text-sm text-primary hover:underline flex items-center gap-1"
+              className="text-xs text-primary hover:underline flex items-center gap-1 shrink-0"
             >
-              View Attendance <ArrowRight className="w-3.5 h-3.5" />
+              Full View <ArrowRight className="w-3 h-3" />
             </Link>
           </CardHeader>
           <CardContent className="p-0">
@@ -837,54 +797,46 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
 
-        {/* Communication Health */}
+        {/* Today's Operations: Recent Parent Communication */}
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between py-4">
+          <CardHeader className="flex flex-row items-center justify-between py-4 border-b border-border">
             <div>
-              <h2>Parent Updates</h2>
+              <h2 className="text-base font-semibold">Parent Communication</h2>
               {lastUpdateAt && (
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  Last update: {timeAgo(lastUpdateAt)}
+                  Last update {timeAgo(lastUpdateAt)}
                 </p>
               )}
             </div>
             <Link
               href="/updates"
-              className="text-sm text-primary hover:underline flex items-center gap-1"
+              className="text-xs text-primary hover:underline flex items-center gap-1 shrink-0"
             >
-              View all <ArrowRight className="w-3.5 h-3.5" />
+              Send Update <ArrowRight className="w-3 h-3" />
             </Link>
           </CardHeader>
-          <CardContent className="p-4 space-y-3">
-            {noUpdatesRecently && (
-              <div
-                className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm border ${
-                  noUpdatesToday
-                    ? "bg-amber-50 border-amber-200 text-amber-700"
-                    : "bg-orange-50 border-orange-200 text-orange-700"
-                }`}
-              >
+          <CardContent className="p-4 space-y-2">
+            {noUpdatesRecently && !recentUpdates.length && (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs border bg-amber-50 border-amber-200 text-amber-700">
                 <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                <span>
-                  {noUpdatesToday
-                    ? "No updates sent to parents today"
-                    : "No parent updates in the last 2 days"}
-                </span>
+                {noUpdatesToday ? "No updates sent today" : "No updates in 2 days"}
               </div>
             )}
             {recentUpdates.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-4">No updates yet.</p>
+              <div className="text-center py-6">
+                <p className="text-xs text-muted-foreground">No updates yet</p>
+              </div>
             ) : (
               recentUpdates.map((u) => (
-                <div key={u.id} className="p-4 bg-muted rounded-lg border-l-4 border-primary">
-                  <div className="flex items-start justify-between mb-1.5">
-                    <div>
-                      <p className="font-medium text-sm">{u.authorName}</p>
-                      <p className="text-xs text-muted-foreground">{u.className ?? "General"}</p>
+                <div key={u.id} className="px-4 py-3 bg-muted/40 rounded-lg border-l-2 border-primary hover:bg-muted/60 transition-colors">
+                  <div className="flex items-start justify-between gap-2 mb-1">
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-xs">{u.authorName}</p>
+                      <p className="text-xs text-muted-foreground">{u.className ?? "School-wide"}</p>
                     </div>
-                    <span className="text-xs text-muted-foreground">{timeAgo(u.createdAt)}</span>
+                    <span className="text-xs text-muted-foreground shrink-0">{timeAgo(u.createdAt)}</span>
                   </div>
-                  <p className="text-sm line-clamp-2">{u.content}</p>
+                  <p className="text-xs line-clamp-2 text-foreground/80">{u.content}</p>
                 </div>
               ))
             )}
@@ -893,76 +845,94 @@ export default function DashboardPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Payment Overview */}
+        {/* Financial Watchlist */}
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between py-4">
-            <h2>Payment Overview</h2>
+          <CardHeader className="flex flex-row items-center justify-between py-4 border-b border-border">
+            <div>
+              <h2 className="text-base font-semibold">Financial Watchlist</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">Accounts requiring follow-up</p>
+            </div>
             <Link
               href="/billing"
-              className="text-sm text-primary hover:underline flex items-center gap-1"
+              className="text-xs text-primary hover:underline flex items-center gap-1 shrink-0"
             >
-              View all <ArrowRight className="w-3.5 h-3.5" />
+              Manage <ArrowRight className="w-3 h-3" />
             </Link>
           </CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent className="p-4 space-y-2">
             {(statsQuery.data?.unpaidCount ?? 0) === 0 ? (
-              <div className="flex items-center gap-3 p-4 bg-green-50 border border-green-200 rounded-lg">
-                <CheckCircle2 className="w-5 h-5 text-green-600 shrink-0" />
-                <p className="text-sm text-green-700">All payments are up to date.</p>
+              <div className="flex items-center gap-3 p-3 bg-green-50 border border-green-200 rounded-lg">
+                <CheckCircle2 className="w-4 h-4 text-green-600 shrink-0" />
+                <p className="text-xs text-green-700 font-medium">All accounts settled</p>
               </div>
             ) : (
               <>
                 {(statsQuery.data?.overdueCount ?? 0) > 0 && (
-                  <div className="flex items-center justify-between p-3 bg-red-50 border border-red-200 rounded-lg">
-                    <div className="flex items-center gap-2">
-                      <AlertTriangle className="w-4 h-4 text-red-500 shrink-0" />
-                      <div>
-                        <p className="text-sm font-medium text-red-800">Overdue</p>
-                        <p className="text-xs text-red-600">Past billing date — follow up needed</p>
+                  <Link href="/billing" className="block">
+                    <div className="flex items-center justify-between p-3 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition-colors cursor-pointer">
+                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                        <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-semibold text-red-800">Overdue Accounts</p>
+                          <p className="text-xs text-red-600">Past due — immediate follow-up</p>
+                        </div>
                       </div>
+                      <span className="text-sm font-bold text-red-700 ml-2 shrink-0">
+                        {statsQuery.data!.overdueCount}
+                      </span>
                     </div>
-                    <span className="text-sm font-semibold text-red-700">
-                      {statsQuery.data!.overdueCount} records
-                    </span>
-                  </div>
+                  </Link>
                 )}
-                <div className="flex items-center justify-between p-3 bg-orange-50 border border-orange-200 rounded-lg">
-                  <span className="text-sm">Unpaid / Partial</span>
-                  <span className="text-sm font-medium text-orange-700">
-                    {statsQuery.data?.unpaidCount ?? 0} records
-                  </span>
-                </div>
-                <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
-                  <span className="text-sm text-muted-foreground">Outstanding Balance</span>
-                  <span className="text-sm font-semibold">
+                {((statsQuery.data?.unpaidCount ?? 0) - (statsQuery.data?.overdueCount ?? 0)) > 0 && (
+                  <Link href="/billing" className="block">
+                    <div className="flex items-center justify-between p-3 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors cursor-pointer">
+                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                        <Clock className="w-4 h-4 text-amber-600 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-semibold text-amber-800">Outstanding Accounts</p>
+                          <p className="text-xs text-amber-600">Not yet overdue</p>
+                        </div>
+                      </div>
+                      <span className="text-sm font-bold text-amber-700 ml-2 shrink-0">
+                        {(statsQuery.data?.unpaidCount ?? 0) - (statsQuery.data?.overdueCount ?? 0)}
+                      </span>
+                    </div>
+                  </Link>
+                )}
+                <div className="p-3 bg-muted/50 rounded-lg border border-border">
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Total Outstanding</p>
+                  <p className="text-xl font-bold mt-1">
                     {formatCurrency(billingSummaryQuery.data?.outstandingBalance ?? 0)}
-                  </span>
+                  </p>
                 </div>
               </>
             )}
           </CardContent>
         </Card>
 
-        {/* Enrollment Snapshot or Student Highlights */}
+        {/* Student & Enrollment Section */}
         {showEnrollmentSnapshot ? (
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between py-4">
-              <h2>Enrollment Snapshot</h2>
+            <CardHeader className="flex flex-row items-center justify-between py-4 border-b border-border">
+              <div>
+                <h2 className="text-base font-semibold">Enrollment Status</h2>
+                <p className="text-xs text-muted-foreground mt-0.5">Pipeline overview</p>
+              </div>
               <Link
                 href="/enrollment"
-                className="text-sm text-primary hover:underline flex items-center gap-1"
+                className="text-xs text-primary hover:underline flex items-center gap-1 shrink-0"
               >
-                Manage <ArrowRight className="w-3.5 h-3.5" />
+                Review <ArrowRight className="w-3 h-3" />
               </Link>
             </CardHeader>
-            <CardContent className="space-y-3">
+            <CardContent className="p-4 space-y-2">
               {enrollmentSnapshot.map((item) => (
                 <div
                   key={item.label}
-                  className="flex items-center justify-between p-3 bg-muted rounded-lg"
+                  className="flex items-center justify-between p-3 bg-muted/50 rounded-lg border border-border"
                 >
-                  <div>
-                    <Badge variant={item.variant}>
+                  <div className="flex-1 min-w-0">
+                    <Badge variant={item.variant} className="text-xs">
                       {item.variant === "inquiry"
                         ? "Inquiry"
                         : item.variant === "waitlisted"
@@ -971,66 +941,76 @@ export default function DashboardPage() {
                     </Badge>
                     <p className="text-xs text-muted-foreground mt-1">{item.label}</p>
                   </div>
-                  <span className="text-primary font-semibold text-lg">{item.count}</span>
+                  <span className="text-lg font-bold text-primary ml-2 shrink-0">{item.count}</span>
                 </div>
               ))}
             </CardContent>
           </Card>
         ) : (
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between py-4">
-              <h2>Student Highlights</h2>
+            <CardHeader className="flex flex-row items-center justify-between py-4 border-b border-border">
+              <div>
+                <h2 className="text-base font-semibold">Student Support</h2>
+                <p className="text-xs text-muted-foreground mt-0.5">Risk & growth</p>
+              </div>
               <Link
                 href="/students"
-                className="text-sm text-primary hover:underline flex items-center gap-1"
+                className="text-xs text-primary hover:underline flex items-center gap-1 shrink-0"
               >
-                View Students <ArrowRight className="w-3.5 h-3.5" />
+                View All <ArrowRight className="w-3 h-3" />
               </Link>
             </CardHeader>
-            <CardContent className="space-y-3">
+            <CardContent className="p-4 space-y-2">
               {newEnrollmentsThisWeek > 0 && (
                 <div className="flex items-center justify-between p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
                     <TrendingUp className="w-4 h-4 text-blue-600 shrink-0" />
-                    <p className="text-sm text-blue-800">New enrollments this week</p>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-blue-800">New This Week</p>
+                      <p className="text-xs text-blue-600">Newly enrolled students</p>
+                    </div>
                   </div>
-                  <span className="text-sm font-semibold text-blue-700">
+                  <span className="text-sm font-bold text-blue-700 ml-2 shrink-0">
                     {newEnrollmentsThisWeek}
                   </span>
                 </div>
               )}
               {studentsAbsent2Plus > 0 && (
-                <Link href="/attendance">
-                  <div className="flex items-start gap-3 p-3 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors">
-                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-amber-900">
-                        {studentsAbsent2Plus} student{studentsAbsent2Plus > 1 ? "s" : ""} absent
-                        2+ days this week
-                      </p>
-                      <p className="text-xs text-amber-700 mt-0.5">Check attendance records</p>
+                <Link href="/attendance" className="block">
+                  <div className="flex items-center justify-between p-3 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors cursor-pointer">
+                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-semibold text-amber-800">High Absences</p>
+                        <p className="text-xs text-amber-600">2+ days this week</p>
+                      </div>
                     </div>
-                    <ArrowRight className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    <span className="text-sm font-bold text-amber-700 ml-2 shrink-0">
+                      {studentsAbsent2Plus}
+                    </span>
                   </div>
                 </Link>
               )}
               {studentAlerts.length === 0 &&
               newEnrollmentsThisWeek === 0 &&
               studentsAbsent2Plus === 0 ? (
-                <div className="flex items-center gap-3 p-4 bg-green-50 border border-green-200 rounded-lg">
-                  <CheckCircle2 className="w-5 h-5 text-green-600 shrink-0" />
-                  <p className="text-sm text-green-700">All clear — no action items.</p>
+                <div className="flex items-center gap-3 p-3 bg-green-50 border border-green-200 rounded-lg">
+                  <CheckCircle2 className="w-4 h-4 text-green-600 shrink-0" />
+                  <p className="text-xs text-green-700 font-medium">No concerns</p>
                 </div>
               ) : (
                 studentAlerts.map((alert) => (
-                  <Link key={alert.type} href={alert.href}>
-                    <div className="flex items-start gap-3 p-3 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors">
-                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-amber-900">{alert.label}</p>
-                        <p className="text-xs text-amber-700 mt-0.5">{alert.description}</p>
+                  <Link key={alert.type} href={alert.href} className="block">
+                    <div className="flex items-center justify-between p-3 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors cursor-pointer">
+                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                        <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-semibold text-amber-800">{alert.label}</p>
+                        </div>
                       </div>
-                      <ArrowRight className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                      <span className="text-sm font-bold text-amber-700 ml-2 shrink-0">
+                        {alert.count}
+                      </span>
                     </div>
                   </Link>
                 ))
