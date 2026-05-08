@@ -87,7 +87,7 @@ export default function AttendancePage() {
       .eq("school_id", schoolId!)
       .eq("school_year_id", activeYear.id)
       .eq("is_active", true)
-      .eq("is_system", false)
+      .not("name", "ilike", "[Unassigned]%")
       .order("start_time");
 
     if (err) { setError(err.message); setLoading(false); return; }

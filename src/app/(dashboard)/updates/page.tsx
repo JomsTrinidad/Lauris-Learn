@@ -112,7 +112,7 @@ export default function ParentUpdatesPage() {
   const [posting, setPosting] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showDraftSuggestions, setShowDraftSuggestions] = useState(false);
+  const [showDraftSuggestions, setShowDraftSuggestions] = useState(true);
   const [photoItems, setPhotoItems] = useState<PhotoItem[]>([]);
   const [addingPhoto, setAddingPhoto] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
@@ -240,7 +240,9 @@ export default function ParentUpdatesPage() {
     if (!activeYear?.id) { setClassOptions([]); return; }
     const { data } = await supabase
       .from("classes").select("id, name")
-      .eq("school_id", schoolId!).eq("school_year_id", activeYear.id).eq("is_active", true).order("start_time");
+      .eq("school_id", schoolId!).eq("school_year_id", activeYear.id).eq("is_active", true)
+      .not("name", "ilike", "[Unassigned]%")
+      .order("start_time");
     const opts = (data ?? []) as ClassOption[];
     setClassOptions(opts);
     if (opts.length > 0 && !postClass) setPostClass(opts[0].id);
@@ -296,7 +298,7 @@ export default function ParentUpdatesPage() {
       const paths = rawPathsMap.get(u.id) ?? [];
       return {
         id: u.id,
-        author: u.author?.full_name ?? "Unknown",
+        author: u.author?.full_name ?? "School Admin",
         classId: u.class_id,
         className: u.class?.name ?? "All Classes",
         content: u.content,

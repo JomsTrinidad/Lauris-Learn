@@ -248,7 +248,8 @@ export default function BillingPage() {
     if (!activeYear?.id || !schoolId) return;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data } = await (supabase as any).from("classes").select("id, name, class_levels(name)")
-      .eq("school_id", schoolId).eq("school_year_id", activeYear.id).eq("is_active", true).eq("is_system", false).order("name");
+      .eq("school_id", schoolId).eq("school_year_id", activeYear.id).eq("is_active", true)
+      .not("name", "ilike", "[Unassigned]%").order("name");
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rows = (data ?? []) as Array<{ id: string; name: string; class_levels: { name: string } | null }>;
     if (rows.length > 0) {

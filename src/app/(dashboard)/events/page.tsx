@@ -206,6 +206,7 @@ export default function EventsPage() {
       .eq("school_id", schoolId!)
       .eq("school_year_id", activeYear.id)
       .eq("is_active", true)
+      .not("name", "ilike", "[Unassigned]%")
       .order("name");
     setClassOptions(data ?? []);
   }

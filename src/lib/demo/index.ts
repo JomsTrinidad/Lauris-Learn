@@ -273,7 +273,7 @@ const SCENARIOS: Record<DemoScenario, ScenarioDef> = {
     ],
     studentsPerClass: [9, 10, 10, 9],
     parentCount: 10,
-    billingMonths: ["2025-08-01","2025-09-01","2025-10-01","2025-11-01"],
+    billingMonths: ["2025-11-01","2025-12-01","2026-01-01","2026-02-01"],
     attendStart: "2025-09-01",
     attendEnd:   "2025-10-17",
     updateCount:     8,
@@ -297,7 +297,7 @@ const SCENARIOS: Record<DemoScenario, ScenarioDef> = {
     ],
     studentsPerClass: [10, 9, 10, 10, 10, 10, 11, 10],
     parentCount: 15,
-    billingMonths: ["2025-07-01","2025-08-01","2025-09-01","2025-10-01","2025-11-01","2025-12-01"],
+    billingMonths: ["2025-09-01","2025-10-01","2025-11-01","2025-12-01","2026-01-01","2026-02-01"],
     attendStart: "2025-09-01",
     attendEnd:   "2025-09-30",
     updateCount:     20,
@@ -315,7 +315,7 @@ const SCENARIOS: Record<DemoScenario, ScenarioDef> = {
     ],
     studentsPerClass: [8, 7],
     parentCount: 5,
-    billingMonths: ["2025-09-01","2025-10-01"],
+    billingMonths: ["2026-01-01","2026-02-01"],
     attendStart: "2025-09-01",
     attendEnd:   "2025-09-19",
     updateCount:     3,
@@ -545,8 +545,8 @@ export async function generateDemoData(
         school_id: schoolId,
         academic_period_id: archivedRegularPeriodId,
         level: lvl,
-        total_amount: levelTuition[lvl] * archivedBillingMonths,
-        months: archivedBillingMonths,
+        total_amount: levelTuition[lvl] * 10 - 2000,
+        months: 10,
       });
     });
   }
@@ -859,6 +859,8 @@ export async function generateDemoData(
   const billingRows: Record<string, unknown>[] = [];
   shiftedBillingMonths.forEach((month, monthIdx) => {
     studentIds.forEach((sid, studentIdx) => {
+      // Only generate archived billing for ~40% of students to keep the list concise
+      if (studentIdx % 5 >= 2) return;
       const classIdxFinal = cfg.studentsPerClass.reduce<number>((cls, cnt, ci) => {
         let running = 0;
         for (let k = 0; k < ci; k++) running += cfg.studentsPerClass[k];
