@@ -138,10 +138,10 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
   const selectedChild = children_.find((c) => c.id === selectedChildId) ?? children_[0] ?? null;
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="h-screen bg-background flex flex-col overflow-hidden">
       <BrandingApplier branding={branding} />
       {/* Top header */}
-      <header className="border-b border-border bg-card px-4 py-3 flex items-center justify-between">
+      <header className="border-b border-border bg-card px-4 py-3 flex items-center justify-between flex-shrink-0">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center">
             <GraduationCap className="w-4 h-4 text-primary-foreground" />
@@ -183,7 +183,7 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
       </header>
 
       {/* Main content */}
-      <main ref={mainRef} className="flex-1 px-4 py-6 max-w-2xl mx-auto w-full">
+      <main ref={mainRef} className="flex-1 overflow-y-auto px-4 py-6 max-w-2xl mx-auto w-full [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full">
         {/* Pass selectedChildId via URL param convention — child components read it */}
         {children_.length === 0 ? (
           <div className="text-center py-16 text-muted-foreground space-y-3">
@@ -200,7 +200,7 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
       </main>
 
       {/* Bottom nav */}
-      <nav className="border-t border-border bg-card safe-bottom">
+      <nav className="border-t border-border bg-card safe-bottom flex-shrink-0">
         <div className="flex max-w-2xl mx-auto">
           {NAV.map(({ href, icon: Icon, label }) => {
             const active = pathname.startsWith(href);

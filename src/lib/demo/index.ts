@@ -451,6 +451,7 @@ export async function generateDemoData(
     ...(scenario !== "trial_new" ? [{ school_id: schoolId, school_year_id: archivedYearId, name: "Summer Term", start_date: "2026-04-01", end_date: "2026-05-31", is_active: false }] : []),
   ]).select("id, name");
   const archivedRegularPeriodId: string | null = (archivedApData ?? []).find((a: any) => a.name === "Regular Term")?.id ?? null;
+  const archivedSummerPeriodId: string | null  = (archivedApData ?? []).find((a: any) => a.name === "Summer Term")?.id  ?? null;
 
   // Active year — SY 2026–2027 (classes set up, no enrollments yet)
   const { data: syData, error: syErr } = await (admin as any)
@@ -467,7 +468,8 @@ export async function generateDemoData(
       ...(scenario !== "trial_new" ? [{ school_id: schoolId, school_year_id: schoolYearId, name: "Summer Term", start_date: "2027-04-01", end_date: "2027-05-31", is_active: false }] : []),
     ])
     .select("id, name");
-  const regularPeriodId: string | null = (apData ?? []).find((a: any) => a.name === "Regular Term")?.id ?? null;
+  const regularPeriodId: string | null  = (apData ?? []).find((a: any) => a.name === "Regular Term")?.id ?? null;
+  const summerPeriodId: string | null   = (apData ?? []).find((a: any) => a.name === "Summer Term")?.id  ?? null;
 
   // mo = 0: BASE_START matches archived year start, no date shifting needed
   const mo = 0;
@@ -558,6 +560,29 @@ export async function generateDemoData(
         level: lvl,
         total_amount: levelTuition[lvl] * 10,
         months: 10,
+      });
+    });
+  }
+  // Summer Term tuition: flat ₱5,000 per level for both years
+  if (archivedSummerPeriodId) {
+    uniqueLevels.forEach((lvl) => {
+      tuitionConfigRows.push({
+        school_id: schoolId,
+        academic_period_id: archivedSummerPeriodId,
+        level: lvl,
+        total_amount: 5000,
+        months: 2,
+      });
+    });
+  }
+  if (summerPeriodId) {
+    uniqueLevels.forEach((lvl) => {
+      tuitionConfigRows.push({
+        school_id: schoolId,
+        academic_period_id: summerPeriodId,
+        level: lvl,
+        total_amount: 5000,
+        months: 2,
       });
     });
   }
@@ -935,11 +960,33 @@ export async function generateDemoData(
 
   // ── 15. Events ──────────────────────────────────────────────────────────────
   const eventRows: Record<string, unknown>[] = [
+    // School events (past, SY 2025-2026 arc)
     { school_id: schoolId, title: "Opening Day Ceremony", event_date: shiftDate("2025-06-02", mo), applies_to: "all", requires_rsvp: false, all_day: true },
-    { school_id: schoolId, title: "National Heroes Day Celebration", event_date: shiftDate("2025-08-25", mo), applies_to: "all", requires_rsvp: false, all_day: true },
     { school_id: schoolId, title: "Family Fun Day", event_date: shiftDate("2025-10-18", mo), applies_to: "all", requires_rsvp: true, all_day: true, description: "Join us for a day of games, food, and family bonding!" },
     { school_id: schoolId, title: "Christmas Program", event_date: shiftDate("2025-12-12", mo), applies_to: "all", requires_rsvp: true, all_day: false, start_time: "09:00", end_time: "12:00", description: "Our annual Christmas celebration with performances from each class." },
     { school_id: schoolId, title: "Graduation Day", event_date: shiftDate("2026-03-27", mo), applies_to: "all", requires_rsvp: true, all_day: false, start_time: "09:00", end_time: "12:00" },
+    // Philippine public holidays — SY 2025-2026 (past)
+    { school_id: schoolId, title: "Independence Day (Araw ng Kalayaan)", event_date: shiftDate("2025-06-12", mo), applies_to: "all", requires_rsvp: false, all_day: true, description: "Regular Holiday — No classes." },
+    { school_id: schoolId, title: "Ninoy Aquino Day", event_date: shiftDate("2025-08-21", mo), applies_to: "all", requires_rsvp: false, all_day: true, description: "Special Non-Working Holiday — No classes." },
+    { school_id: schoolId, title: "National Heroes Day", event_date: shiftDate("2025-08-25", mo), applies_to: "all", requires_rsvp: false, all_day: true, description: "Regular Holiday — No classes." },
+    { school_id: schoolId, title: "All Saints' Day", event_date: shiftDate("2025-11-01", mo), applies_to: "all", requires_rsvp: false, all_day: true, description: "Regular Holiday — No classes." },
+    { school_id: schoolId, title: "All Souls' Day", event_date: shiftDate("2025-11-02", mo), applies_to: "all", requires_rsvp: false, all_day: true, description: "Special Non-Working Holiday — No classes." },
+    { school_id: schoolId, title: "Bonifacio Day", event_date: shiftDate("2025-11-30", mo), applies_to: "all", requires_rsvp: false, all_day: true, description: "Regular Holiday — No classes." },
+    { school_id: schoolId, title: "Feast of the Immaculate Conception", event_date: shiftDate("2025-12-08", mo), applies_to: "all", requires_rsvp: false, all_day: true, description: "Special Non-Working Holiday — No classes." },
+    { school_id: schoolId, title: "Christmas Day", event_date: shiftDate("2025-12-25", mo), applies_to: "all", requires_rsvp: false, all_day: true, description: "Regular Holiday — No classes." },
+    { school_id: schoolId, title: "Rizal Day", event_date: shiftDate("2025-12-30", mo), applies_to: "all", requires_rsvp: false, all_day: true, description: "Regular Holiday — No classes." },
+    { school_id: schoolId, title: "New Year's Day", event_date: shiftDate("2026-01-01", mo), applies_to: "all", requires_rsvp: false, all_day: true, description: "Regular Holiday — No classes." },
+    // Philippine public holidays — SY 2026-2027 (upcoming)
+    { school_id: schoolId, title: "Independence Day (Araw ng Kalayaan)", event_date: "2026-06-12", applies_to: "all", requires_rsvp: false, all_day: true, description: "Regular Holiday — No classes." },
+    { school_id: schoolId, title: "Ninoy Aquino Day", event_date: "2026-08-21", applies_to: "all", requires_rsvp: false, all_day: true, description: "Special Non-Working Holiday — No classes." },
+    { school_id: schoolId, title: "National Heroes Day", event_date: "2026-08-31", applies_to: "all", requires_rsvp: false, all_day: true, description: "Regular Holiday — No classes." },
+    { school_id: schoolId, title: "All Saints' Day", event_date: "2026-11-01", applies_to: "all", requires_rsvp: false, all_day: true, description: "Regular Holiday — No classes." },
+    { school_id: schoolId, title: "All Souls' Day", event_date: "2026-11-02", applies_to: "all", requires_rsvp: false, all_day: true, description: "Special Non-Working Holiday — No classes." },
+    { school_id: schoolId, title: "Bonifacio Day", event_date: "2026-11-30", applies_to: "all", requires_rsvp: false, all_day: true, description: "Regular Holiday — No classes." },
+    { school_id: schoolId, title: "Feast of the Immaculate Conception", event_date: "2026-12-08", applies_to: "all", requires_rsvp: false, all_day: true, description: "Special Non-Working Holiday — No classes." },
+    { school_id: schoolId, title: "Christmas Day", event_date: "2026-12-25", applies_to: "all", requires_rsvp: false, all_day: true, description: "Regular Holiday — No classes." },
+    { school_id: schoolId, title: "Rizal Day", event_date: "2026-12-30", applies_to: "all", requires_rsvp: false, all_day: true, description: "Regular Holiday — No classes." },
+    { school_id: schoolId, title: "New Year's Day", event_date: "2027-01-01", applies_to: "all", requires_rsvp: false, all_day: true, description: "Regular Holiday — No classes." },
   ];
   if (scenario !== "trial_new") {
     eventRows.push(
@@ -966,26 +1013,106 @@ export async function generateDemoData(
   await batchInsert(admin, "proud_moments", pmRows);
 
   // ── 17. Progress observations ───────────────────────────────────────────────
+  // Notes per domain × rating level (0=emerging … 3=advanced).
+  // Order matches PROGRESS_CATEGORIES: Participation, Social Skills, Communication,
+  // Fine Motor, Gross Motor, Cognitive Development, Self-Care.
+  const OBS_NOTES_BY_DOMAIN: string[][] = [
+    [ // Participation
+      "Joins activities when directly invited; hesitant to volunteer independently.",
+      "Raised hand during group time; more comfortable with familiar routines.",
+      "Participates actively in most activities; occasionally needs a gentle prompt.",
+      "Consistently engaged; initiates participation and encourages quieter classmates.",
+    ],
+    [ // Social Skills
+      "Plays near peers but interaction is mostly parallel; limited verbal exchange.",
+      "Shares materials when reminded; beginning to take turns with familiar friends.",
+      "Initiates interaction with classmates; handles turn-taking with minor support.",
+      "Builds friendships naturally; navigates simple conflicts with care and maturity.",
+    ],
+    [ // Communication
+      "Uses single words or gestures to make requests; responds to yes/no questions.",
+      "Forms short two-to-three word phrases; answers 'what' questions with support.",
+      "Speaks in full sentences; describes events and retells short stories well.",
+      "Communicates clearly with peers and adults; uses varied and descriptive vocabulary.",
+    ],
+    [ // Fine Motor Skills
+      "Holds pencil in fist grip; tracing requires significant hand-over-hand support.",
+      "Tripod grip emerging with reminders; cuts along straight lines with effort.",
+      "Consistent tripod grip; traces shapes accurately and writes name legibly.",
+      "Writes name and simple words neatly; uses scissors precisely on curved lines.",
+    ],
+    [ // Gross Motor Skills
+      "Running is unsteady; frequently loses balance during active movement activities.",
+      "Balances briefly on one foot; throws ball without consistent direction control.",
+      "Hops and skips with coordination; catches a large ball consistently.",
+      "Strong balance and fluid coordination; confident movement in all activities.",
+    ],
+    [ // Cognitive Development
+      "Matches colors and shapes by direct example; difficulty applying independently.",
+      "Sorts by one attribute; identifies simple patterns with direct guidance.",
+      "Counts objects to ten with one-to-one correspondence; extends simple patterns.",
+      "Works through concrete problems independently; explains reasoning in simple terms.",
+    ],
+    [ // Self-Care
+      "Requires adult support for most self-care tasks; aware of routines but not yet independent.",
+      "Manages snack time alone; needs verbal reminders for the handwashing sequence.",
+      "Follows multi-step routines with one prompt; manages personal belongings reliably.",
+      "Fully independent in hygiene, belongings, and personal space throughout the day.",
+    ],
+  ];
+  const OBS_RATING_LEVEL: Record<string, number> = { emerging: 0, developing: 1, consistent: 2, advanced: 3 };
+
+  // Growth profiles — realistic longitudinal scenarios.
+  // dayOffsets = days from Sep 1 of the school year so observations span Sep 2025 → Mar 2026.
+  type ObsGrowthProfile = { ratings: string[]; dayOffsets: number[] };
+  function pickObsProfile(si: number): ObsGrowthProfile {
+    const bucket = si % 11;
+    if (bucket === 0)  return { ratings: ["emerging","developing","consistent"],             dayOffsets: [8,  85, 165] }; // steady improver
+    if (bucket === 1)  return { ratings: ["developing","developing","consistent"],            dayOffsets: [15, 90, 170] }; // plateau then breakthrough
+    if (bucket === 2)  return { ratings: ["consistent","consistent","advanced"],              dayOffsets: [10,100, 180] }; // near mastery
+    if (bucket === 3)  return { ratings: ["emerging","emerging","developing","consistent"],   dayOffsets: [6,  40, 105, 175] }; // slow start, strong finish
+    if (bucket === 4)  return { ratings: ["emerging","developing"],                           dayOffsets: [12,  52] }; // stale: last obs Oct 2025
+    if (bucket === 5)  return { ratings: ["consistent","developing"],                         dayOffsets: [14,  82] }; // regression/concern
+    if (bucket === 6)  return { ratings: ["developing","consistent","advanced"],              dayOffsets: [9,  60, 115] }; // high achiever
+    if (bucket === 7)  return { ratings: ["developing","consistent","consistent"],            dayOffsets: [20,  72, 155] }; // solid mid-range
+    if (bucket === 8)  return { ratings: ["emerging","developing","developing","consistent"], dayOffsets: [5,  38,  80, 158] }; // gradual builder
+    if (bucket === 9)  return { ratings: ["emerging"],                                        dayOffsets: [18] }; // needs attention: single obs
+    return                    { ratings: ["consistent","advanced"],                           dayOffsets: [8,  75] }; // early advanced
+  }
+
   const obsRows: Record<string, unknown>[] = [];
-  const RATINGS = ["emerging","developing","consistent","advanced"] as const;
   const observeCount = Math.floor(studentIds.length * cfg.observeFraction);
+  const obsYearStart = shiftDate("2025-09-01", mo);
+
   for (let si = 0; si < observeCount; si++) {
     const sid = studentIds[si];
-    // 2–3 observations per observed student (different categories)
-    const catSample = categoryIds.slice(0, Math.min(3, categoryIds.length));
-    catSample.forEach((catId, ci) => {
-      const date = new Date(shiftDate("2025-10-01", mo) + "T00:00:00Z");
-      date.setUTCDate(date.getUTCDate() + (si + ci * 5) % 14);
-      obsRows.push({
-        student_id: sid, category_id: catId,
-        rating: RATINGS[(si * 3 + ci) % RATINGS.length],
-        note: `Observed during class activities. Showing ${RATINGS[(si * 3 + ci) % RATINGS.length]} progress.`,
-        observed_at: date.toISOString().slice(0, 10),
-        visibility: ci % 3 === 0 ? "internal_only" : "parent_visible",
-        observed_by: teacherIds[si % teacherIds.length] ?? null,
+    const profile = pickObsProfile(si);
+    // 2–4 domains per student, spread by student index to avoid uniformity
+    const domainCount = 2 + (si % 3);
+    const domainIndices = [...new Set(
+      Array.from({ length: Math.min(domainCount, categoryIds.length) }, (_, k) => (si * 3 + k * 2) % categoryIds.length)
+    )];
+
+    domainIndices.forEach((domIdx) => {
+      const catId = categoryIds[domIdx];
+      profile.ratings.forEach((rating, obsIdx) => {
+        const d = new Date(obsYearStart + "T00:00:00Z");
+        d.setUTCDate(d.getUTCDate() + profile.dayOffsets[obsIdx] + domIdx); // 1-day stagger per domain
+        const ratingLevel = OBS_RATING_LEVEL[rating] ?? 0;
+        const notePool    = OBS_NOTES_BY_DOMAIN[domIdx] ?? OBS_NOTES_BY_DOMAIN[0];
+        obsRows.push({
+          student_id:  sid,
+          category_id: catId,
+          rating,
+          note:        notePool[Math.min(ratingLevel, notePool.length - 1)],
+          observed_at: d.toISOString().slice(0, 10),
+          visibility:  (ratingLevel === 0 && si % 4 === 0) ? "internal_only" : "parent_visible",
+          observed_by: teacherIds[(si + domIdx) % teacherIds.length] ?? null,
+        });
       });
     });
   }
+
   if (obsRows.length) await batchInsert(admin, "progress_observations", obsRows);
 
   // ── 18. Enrollment inquiries ────────────────────────────────────────────────

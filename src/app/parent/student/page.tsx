@@ -5,8 +5,16 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PageSpinner } from "@/components/ui/spinner";
 import { getInitials } from "@/lib/utils";
+import { createClient } from "@/lib/supabase/client";
 import { useParentContext } from "../layout";
-import { useParentStudentDetail, useStudentAttendance } from "@/lib/hooks";
+import { useParentStudentDetail } from "@/lib/hooks";
+
+interface AttendanceRecord {
+  id: string;
+  date: string;
+  status: "present" | "late" | "absent" | "excused";
+  note: string | null;
+}
 
 const ATTENDANCE_CONFIG = {
   present: { icon: CheckCircle, color: "text-green-600", label: "Present" },
@@ -31,9 +39,11 @@ function calcAge(dob: string | null): string {
 
 export default function ParentStudentPage() {
   const { childId } = useParentContext();
+  const supabase = createClient();
   const detailQuery = useParentStudentDetail(childId);
-  const attendanceQuery = useStudentAttendance(childId);
   const [displayStudent, setDisplayStudent] = useState(detailQuery.data);
+  const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
+  const [attendanceLoading, setAttendanceLoading] = useState(true);
 
   // Enrich student detail with calculated age
   useEffect(() => {
@@ -45,7 +55,28 @@ export default function ParentStudentPage() {
     }
   }, [detailQuery.data]);
 
-  if (detailQuery.isLoading || attendanceQuery.isLoading) return <PageSpinner />;
+  // Fetch attendance directly on every mount so it's always fresh
+  useEffect(() => {
+    if (!childId) { setAttendanceLoading(false); return; }
+    setAttendanceLoading(true);
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const since = thirtyDaysAgo.toISOString().split("T")[0];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (supabase as any)
+      .from("attendance_records")
+      .select("id, date, status, note")
+      .eq("student_id", childId)
+      .gte("date", since)
+      .order("date", { ascending: false })
+      .then(({ data }: { data: AttendanceRecord[] | null }) => {
+        setAttendance(data ?? []);
+        setAttendanceLoading(false);
+      });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [childId]);
+
+  if (detailQuery.isLoading || attendanceLoading) return <PageSpinner />;
   if (!displayStudent) {
     return (
       <div className="text-center py-16 text-muted-foreground">
@@ -146,11 +177,11 @@ export default function ParentStudentPage() {
       <Card>
         <CardContent className="p-5">
           <h3 className="font-semibold text-muted-foreground text-xs uppercase tracking-wide mb-4">Attendance — Last 30 Days</h3>
-          {!attendanceQuery.data || attendanceQuery.data.length === 0 ? (
+          {attendance.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-4">No attendance records yet.</p>
           ) : (
             <div className="space-y-2">
-              {attendanceQuery.data.map((rec) => {
+              {attendance.map((rec) => {
                 const cfg = ATTENDANCE_CONFIG[rec.status];
                 const Icon = cfg.icon;
                 const dateLabel = new Date(rec.date + "T00:00:00").toLocaleDateString("en-PH", {
@@ -161,8 +192,8 @@ export default function ParentStudentPage() {
                     <Icon className={`w-4 h-4 flex-shrink-0 ${cfg.color}`} />
                     <span className="flex-1 text-muted-foreground">{dateLabel}</span>
                     <span className={`font-medium ${cfg.color}`}>{cfg.label}</span>
-                    {rec.notes && (
-                      <span className="text-xs text-muted-foreground truncate max-w-24">{rec.notes}</span>
+                    {rec.note && (
+                      <span className="text-xs text-muted-foreground truncate max-w-24">{rec.note}</span>
                     )}
                   </div>
                 );

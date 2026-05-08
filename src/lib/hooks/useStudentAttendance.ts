@@ -6,7 +6,7 @@ export interface AttendanceRecord {
   id: string;
   date: string;
   status: "present" | "late" | "absent" | "excused";
-  notes: string | null;
+  note: string | null;
 }
 
 /**
@@ -27,7 +27,7 @@ export function useStudentAttendance(studentId: string | null, limit: number = 3
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data } = await (supabase as any)
         .from("attendance_records")
-        .select("id, date, status, notes")
+        .select("id, date, status, note")
         .eq("student_id", studentId)
         .order("date", { ascending: false })
         .limit(limit);
@@ -35,7 +35,8 @@ export function useStudentAttendance(studentId: string | null, limit: number = 3
       return (data ?? []) as AttendanceRecord[];
     },
     enabled: !!studentId,
-    staleTime: 30 * 1000,      // 30 seconds
-    gcTime: 5 * 60 * 1000,     // 5 minutes
+    staleTime: 30 * 1000,
+    gcTime: 5 * 60 * 1000,
+    refetchOnMount: true,
   });
 }

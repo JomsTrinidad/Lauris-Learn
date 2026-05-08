@@ -245,7 +245,7 @@ export default function ParentUpdatesPage() {
       .order("start_time");
     const opts = (data ?? []) as ClassOption[];
     setClassOptions(opts);
-    if (opts.length > 0 && !postClass) setPostClass(opts[0].id);
+    // Default to "All Classes" (empty string = class_id null) so admins post broadly unless they pick a specific class
   }
 
   const loadUpdates = useCallback(async () => {
@@ -555,7 +555,7 @@ export default function ParentUpdatesPage() {
 
   function applyDraft(type: DraftType) {
     const cls = classOptions.find((c) => c.id === postClass);
-    setPostContent(buildDraft(type, cls?.name ?? "your class"));
+    setPostContent(buildDraft(type, cls?.name ?? "all classes"));
     setShowDraftSuggestions(false);
   }
 
@@ -622,7 +622,10 @@ export default function ParentUpdatesPage() {
                 <Select value={postClass} onChange={(e) => setPostClass(e.target.value)} className="w-52" disabled={classOptions.length === 0}>
                   {classOptions.length === 0
                     ? <option value="">No classes</option>
-                    : classOptions.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    : <>
+                        <option value="">All Classes</option>
+                        {classOptions.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                      </>}
                 </Select>
               </div>
               <button
