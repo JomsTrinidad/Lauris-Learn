@@ -1343,17 +1343,12 @@ export default function StudentsPage() {
             className="flex items-center gap-1.5 px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors border border-border"
           >
             <HelpCircle className="w-4 h-4" />
-            Help
+            Help Topics
           </button>
           {activeTab === "students" && (
-            <div className="flex items-center gap-2">
-              <Button variant="outline" onClick={() => { setForm(EMPTY_FORM); setFormError(null); setAddModalOpen(true); }}>
-                <Plus className="w-4 h-4" /> Add Student Profile
-              </Button>
-              <Button onClick={() => { window.location.href = "/enrollment"; }}>
-                <UserCheck className="w-4 h-4" /> Enroll Student
-              </Button>
-            </div>
+            <Button onClick={() => { setForm(EMPTY_FORM); setFormError(null); setAddModalOpen(true); }}>
+              <Plus className="w-4 h-4" /> Add Student
+            </Button>
           )}
         </div>
       </div>
@@ -2212,14 +2207,23 @@ export default function StudentsPage() {
       {/* Add / Edit Student Modals */}
       {[
         { open: editModalOpen, onClose: () => { setEditModalOpen(false); setEditingStudent(null); }, title: "Edit Student", fErr: editFormError, setFErr: setEditFormError, f: editForm, setF: setEditForm, onSave: handleEdit, isEdit: true, photoFile: editPhotoFile, setPhotoFile: setEditPhotoFile },
-        { open: addModalOpen, onClose: () => { setAddModalOpen(false); setForm(EMPTY_FORM); }, title: "Add Student Profile", fErr: formError, setFErr: setFormError, f: form, setF: setForm, onSave: handleAdd, isEdit: false, photoFile: addPhotoFile, setPhotoFile: setAddPhotoFile },
+        { open: addModalOpen, onClose: () => { setAddModalOpen(false); setForm(EMPTY_FORM); }, title: "Add Student", fErr: formError, setFErr: setFormError, f: form, setF: setForm, onSave: handleAdd, isEdit: false, photoFile: addPhotoFile, setPhotoFile: setAddPhotoFile },
       ].map(({ open, onClose, title, fErr, setFErr, f, setF, onSave, isEdit, photoFile, setPhotoFile }) => (
         <Modal key={title} open={open} onClose={onClose} title={title} className="max-w-2xl">
           <div className="space-y-4">
             {fErr && <ErrorAlert message={fErr} />}
             {!isEdit && (
               <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800">
-                <strong>Profile only</strong> — creates a student record without a school year, class, or billing. To enroll a student properly, use <strong>Enroll Student</strong> from the Students page header instead.
+                <strong>Returning students should go through the Enrollment process.</strong>{" "}
+                Add Student only creates a student record without a school year, class, or billing.
+                To enroll a student, {" "}
+                <button
+                  type="button"
+                  className="underline font-medium cursor-pointer hover:text-amber-600 transition-colors"
+                  onClick={() => { onClose(); window.location.href = "/enrollment?startEnrollment=1"; }}
+                >
+                  start an enrollment instead
+                </button>.
               </div>
             )}
 
@@ -2548,41 +2552,41 @@ export default function StudentsPage() {
                   {
                     id: "enrollment-vs-profile",
                     icon: UserCheck,
-                    title: "Add Student Profile vs. Enroll Student — which to use",
+                    title: "Add Student vs. Enroll — which to use",
                     searchText: "enroll enrollment add student profile difference new returning class billing school year waitlist pending",
                     body: (
                       <div className="space-y-2">
-                        <p className="font-semibold text-foreground text-xs">Simple rule: if it involves a school year, use Enrollment. If it does not, use Add Student Profile.</p>
+                        <p className="font-semibold text-foreground text-xs">Simple rule: if it involves a school year, use Enrollment. If it does not, use Add Student.</p>
                         <div className="mt-2 space-y-3">
                           <div className="rounded-lg border border-border p-3 space-y-1">
-                            <p className="text-xs font-semibold">Add Student Profile</p>
-                            <p className="text-xs text-muted-foreground">Creates a basic student record only — no school year, no class, no billing. Use this when you need to store student information without enrolling them yet.</p>
+                            <p className="text-xs font-semibold">Add Student</p>
+                            <p className="text-xs text-muted-foreground">Creates a basic student record only — no school year, no class, no billing. Use this when you need to store student information without enrolling them yet (e.g. a walk-in inquiry you want to track before an active school year begins).</p>
                           </div>
                           <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 space-y-1">
-                            <p className="text-xs font-semibold">Enroll Student</p>
-                            <p className="text-xs text-muted-foreground">Use for everything that involves a school year — including waitlisting, class assignment, and billing. Pre-registration is an enrollment with status <em>Waitlisted</em>.</p>
+                            <p className="text-xs font-semibold">Enrollment (recommended for most cases)</p>
+                            <p className="text-xs text-muted-foreground">Use for everything that involves a school year — including waitlisting, class assignment, and billing. Returning students should always go through the Enrollment process. Pre-registration is an enrollment with status <em>Waitlisted</em>.</p>
                           </div>
                         </div>
-                        <Note>The <strong>Enroll Student</strong> button at the top of this page takes you to the Enrollment page.</Note>
+                        <Note>To start an enrollment, go to the <strong>Enrollment</strong> page and click <strong>Start Enrollment</strong>. You can also reach it directly from the banner inside the Add Student modal.</Note>
                       </div>
                     ),
                   },
                   {
                     id: "add-student-profile",
                     icon: UserPlus,
-                    title: "Add Student Profile — how to use it",
-                    searchText: "add student profile record no school year no class how to save",
+                    title: "Add Student — how to use it",
+                    searchText: "add student record no school year no class how to save",
                     body: (
                       <div className="space-y-2">
                         <p>Creates a student record without a school year, class, or billing. Use this only when you need to store information and enrollment isn&apos;t happening yet.</p>
                         <div className="space-y-2 mt-2">
-                          <Step n={1} text={<span>Click <strong>Add Student Profile</strong> (top right, outline button).</span>} />
+                          <Step n={1} text={<span>Click <strong>Add Student</strong> (top right).</span>} />
                           <Step n={2} text={<span>Enter <strong>First Name</strong>, <strong>Last Name</strong>, and the <strong>Parent/Guardian name</strong> — required.</span>} />
                           <Step n={3} text={<span>Fill in the guardian&apos;s <strong>contact number</strong> and <strong>email</strong> — needed later to send the parent portal invite.</span>} />
                           <Step n={4} text={<span>Expand optional sections (Medical, Emergency Contact, etc.) for additional details.</span>} />
                           <Step n={5} text={<span>Click <strong>Save Student</strong>.</span>} />
                         </div>
-                        <Tip>When you&apos;re ready to enroll this student, use <strong>Enroll Student → Enroll Returning Student</strong> to assign them to a school year and class.</Tip>
+                        <Tip>When you&apos;re ready to enroll this student, go to the <strong>Enrollment</strong> page and use <strong>Start Enrollment → Enroll Returning Student</strong> to assign them to a school year and class.</Tip>
                         <Note>Students added this way will not appear in attendance, billing, or class lists until they are enrolled.</Note>
                       </div>
                     ),

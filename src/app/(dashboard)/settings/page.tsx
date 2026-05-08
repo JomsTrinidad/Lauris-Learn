@@ -16,6 +16,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { PageSpinner, ErrorAlert } from "@/components/ui/spinner";
 import { createClient } from "@/lib/supabase/client";
 import { useSchoolContext } from "@/contexts/SchoolContext";
+import { GetStartedGuide } from "@/components/GetStartedGuide";
 
 type SchoolYearStatus = "draft" | "active" | "archived" | "planned" | "closed";
 
@@ -233,6 +234,7 @@ export default function SettingsPage() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [helpSearch, setHelpSearch] = useState("");
   const [helpExpanded, setHelpExpanded] = useState<Record<string, boolean>>({});
+  const [helpView, setHelpView] = useState<"topics" | "getting-started">("topics");
 
   // School info
   const [schoolInfo, setSchoolInfo] = useState({
@@ -633,6 +635,21 @@ export default function SettingsPage() {
       setError("Term name, start date, and end date are required.");
       return;
     }
+    if (periodForm.endDate < periodForm.startDate) {
+      setError("End date cannot be before the start date.");
+      return;
+    }
+    const parentYear = schoolYears.find((sy) => sy.id === periodForm.schoolYearId);
+    if (parentYear) {
+      if (periodForm.startDate < parentYear.startDate) {
+        setError(`Term start date cannot be before the school year start date (${new Date(parentYear.startDate + "T00:00:00").toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}).`);
+        return;
+      }
+      if (periodForm.endDate > parentYear.endDate) {
+        setError(`Term end date cannot be beyond the school year end date (${new Date(parentYear.endDate + "T00:00:00").toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}).`);
+        return;
+      }
+    }
     setSaving(true);
     setError(null);
     if (editingPeriod) {
@@ -719,6 +736,7 @@ export default function SettingsPage() {
   }
   async function saveTeacher() {
     if (!teacherForm.fullName.trim()) { setTeacherFormError("Full name is required."); return; }
+    if (!teacherForm.email.trim()) { setTeacherFormError("Email is required — teachers use it to log in."); return; }
     if (!schoolId) return;
     setSaving(true);
     setTeacherFormError(null);
@@ -1147,10 +1165,12 @@ export default function SettingsPage() {
           <h1>Settings</h1>
           <p className="text-muted-foreground text-sm mt-1">Configure your school, school years, and holidays</p>
         </div>
-        <button onClick={() => { setHelpOpen(true); setHelpSearch(""); }}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-primary/20 bg-primary/5 hover:bg-primary/10 text-primary text-sm font-medium transition-colors">
-          <HelpCircle className="w-4 h-4" /> Setup Guide
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => { setHelpOpen(true); setHelpSearch(""); setHelpView("topics"); }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border hover:bg-muted text-muted-foreground hover:text-foreground text-xs font-medium transition-colors hidden sm:flex">
+            <HelpCircle className="w-4 h-4" /> Help Topics
+          </button>
+        </div>
       </div>
       {error && <ErrorAlert message={error} />}
 
@@ -1695,8 +1715,7 @@ export default function SettingsPage() {
                             : "bg-card text-foreground border-border hover:bg-muted"
                         }`}
                       >
-                        {set.name}
-                        {set.isDefault && <span className="ml-1.5 text-xs opacity-70">(default)</span>}
+                        {set.name}{set.isDefault && <span className="ml-1.5 text-xs opacity-70">(default)</span>}
                       </button>
                     ))}
                   </div>
@@ -1987,15 +2006,26 @@ export default function SettingsPage() {
       {/* ── Settings Help Drawer ── */}
       {helpOpen && (
         <div className="fixed inset-0 z-50 flex justify-end">
-          <div className="absolute inset-0 bg-black/30" onClick={() => { setHelpOpen(false); setHelpSearch(""); }} />
+          <div className="absolute inset-0 bg-black/30" onClick={() => { setHelpOpen(false); setHelpSearch(""); setHelpView("topics"); }} />
           <div className="relative flex flex-col w-full max-w-md bg-card border-l border-border shadow-2xl h-full animate-in slide-in-from-right duration-200">
             <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
-              <div className="flex items-center gap-2.5">
-                <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center"><BookOpen className="w-4 h-4 text-primary" /></div>
-                <h2 className="font-semibold text-base">Setup Guide</h2>
-              </div>
-              <button onClick={() => { setHelpOpen(false); setHelpSearch(""); }} className="p-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
+              {helpView === "getting-started" ? (
+                <div className="flex items-center gap-2.5">
+                  <button onClick={() => setHelpView("topics")} className="p-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground" title="Back to Help Topics">
+                    <ChevronRight className="w-4 h-4 rotate-180" />
+                  </button>
+                  <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center"><BookOpen className="w-4 h-4 text-primary" /></div>
+                  <h2 className="font-semibold text-base">Getting Started</h2>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2.5">
+                  <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center"><BookOpen className="w-4 h-4 text-primary" /></div>
+                  <h2 className="font-semibold text-base">Help Topics</h2>
+                </div>
+              )}
+              <button onClick={() => { setHelpOpen(false); setHelpSearch(""); setHelpView("topics"); }} className="p-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
             </div>
+            {helpView === "topics" && (
             <div className="px-5 py-3 border-b border-border flex-shrink-0">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -2003,6 +2033,11 @@ export default function SettingsPage() {
                   className="w-full pl-9 pr-3 py-2 text-sm bg-muted border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors" />
               </div>
             </div>
+            )}
+            {helpView === "getting-started" ? (
+              <GetStartedGuide embedded isOpen={true} onClose={() => {}} showDismissOption={false} />
+            ) : (
+            <>
             <div className="flex-1 overflow-y-auto px-5 py-4 space-y-2 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full">
               {(() => {
                 const Step = ({ n, text }: { n: number; text: React.ReactNode }) => (
@@ -2024,40 +2059,24 @@ export default function SettingsPage() {
                 type HelpTopic = { id: string; icon: React.ElementType; title: string; searchText: string; body: React.ReactNode };
                 const topics: HelpTopic[] = [
                   {
-                    id: "getting-started",
-                    icon: BookOpen,
-                    title: "Getting Started — Initial School Setup",
-                    searchText: "getting started setup guide initial school year configure fees classes students teachers comprehensive",
-                    body: (
-                      <div className="space-y-3">
-                        <p className="text-sm font-medium text-foreground">Complete operational setup requires these 13 steps. Follow them in order:</p>
-                        <div className="space-y-2 mt-3">
-                          <Step n={1} text={<><strong>Confirm School Profile</strong> — Go to Settings → School Information. Verify school name, branch, address, phone, and upload your logo. These details appear on billing statements and parent portal.</>} />
-                          <Step n={2} text={<><strong>Set Up School Year</strong> — Go to Settings → School Year & Terms. Click Add School Year, enter the name (e.g., SY 2025–2026), set start and end dates, then check Mark as Active. Only one year can be active at a time.</>} />
-                          <Step n={3} text={<><strong>Add Academic Terms / Periods</strong> — Still in School Year & Terms, click Add Term under your school year. Create terms like Regular Term, Summer, or Semester with their date ranges. Terms organize billing cycles and tuition rates.</>} />
-                          <Step n={4} text={<><strong>Set Up Class Levels</strong> — Go to Settings → Class Levels. Click Add Level and create your levels like Toddler, Nursery, Pre-Kinder, Kinder, Grade 1, etc. Levels are backend groupings used for billing and reporting.</>} />
-                          <Step n={5} text={<><strong>Add Teachers</strong> — Go to Settings → Teachers. Click Add Teacher and enter their full name, email, phone, and optionally upload a photo. Teachers will appear in the class teacher dropdown later.</>} />
-                          <Step n={6} text={<><strong>Create Classes</strong> — Go to Classes (main sidebar). Click Add Class, enter class name (e.g., Kinder A), select level, set start/end times, set capacity, and assign a teacher. Create one class for each section.</>} />
-                          <Step n={7} text={<><strong>Configure Fee Types</strong> — Go to Billing (under Finance in the sidebar) → Setup tab → Fee Types sub-tab. Click Add Fee Type and create types like Tuition, Enrollment Fee, Books, Miscellaneous. These define what you can bill for.</>} />
-                          <Step n={8} text={<><strong>Set Up Tuition Rates</strong> — Go to Billing (under Finance in the sidebar) → Setup tab → Tuition Rates sub-tab. For each academic term and class level, enter the tuition amount. This drives automatic billing when you generate invoices.</>} />
-                          <Step n={9} text={<><strong>Configure Student ID Format</strong> — Go to Settings → Student IDs. Set the prefix (e.g., LL, BK), number of digits (padding), and whether to include the school year. This format auto-generates codes when you add students (e.g., LL-0001 or LL-26-0001).</>} />
-                          <Step n={10} text={<><strong>Enroll Students</strong> — Go to Students and click <strong>+ Add Student Profile</strong> to create the student record (profile only). Then go to <strong>Enrollment</strong> page and click <strong>+ Enroll Student</strong> to add them to the active school year. Students must be explicitly enrolled for each school year.</>} />
-                          <Step n={11} text={<><strong>Place Students Into Classes</strong> — Go to Classes, click a class card, then click Add Student to assign enrolled students to specific sections. Enrollment (year-level) and class placement (specific section) are separate steps.</>} />
-                          <Step n={12} text={<><strong>Invite Parents</strong> — Go to Students, click a student row, and under Guardians click Add Guardian. Enter parent name and email, check Send invite. Parents will receive a portal link to access their child's dashboard.</>} />
-                          <Step n={13} text={<><strong>Daily Operations</strong> — Your school is now ready for operations. Record daily attendance on the Attendance page, post class announcements in Updates, generate billing on the first of each month (Billing → Generate Billing), track payments, and manage events and student progress as needed.</>} />
-                        </div>
-                        <Tip>The school year is the operational container for everything — enrollments, classes, attendance, and billing all happen within the active year. Don't skip steps or reorder them — each builds on the previous ones.</Tip>
-                        <Note><strong>You're ready!</strong> Your school is now fully configured. Parents can start accessing the portal, teachers can record attendance and post updates, and you can track billing. Most settings can be updated anytime — changes take effect immediately. If you make mistakes, just edit the record or delete and recreate it.</Note>
-                      </div>
-                    ),
-                  },
-                  {
                     id: "year-transition",
                     icon: BookOpen,
                     title: "School Year Transition — Preparing for the Next Year",
                     searchText: "school year transition new year setup next year classes promote students renewal",
                     body: (
                       <div className="space-y-3">
+                        <div className="flex gap-2 bg-primary/5 border border-primary/20 rounded-lg px-3 py-2 text-xs text-primary">
+                          <BookOpen className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                          <span>Setting up for the first time?{" "}
+                            <button
+                              onClick={() => setHelpView("getting-started")}
+                              className="underline font-medium hover:opacity-70 transition-opacity"
+                            >
+                              Open Getting Started
+                            </button>
+                            {" "}for the full initial setup guide.
+                          </span>
+                        </div>
                         <p className="text-sm font-medium text-foreground">When your current school year ends and you need to set up for the next school year:</p>
                         <div className="space-y-2">
                           <Step n={1} text={<>At year-end, go to <strong>Students → Year-End Classification</strong> to classify all enrolled students (promoted, repeated, withdrawn, etc.). Then click <strong>Close School Year</strong>.</>} />
@@ -2155,7 +2174,7 @@ export default function SettingsPage() {
                         <p>Teacher records in Settings are your staff directory. These are the names that appear in the teacher dropdown when creating or editing classes.</p>
                         <div className="space-y-2 mt-2">
                           <Step n={1} text={<span>Click <strong>Teachers</strong> in the left nav.</span>} />
-                          <Step n={2} text={<span>Click <strong>Add Teacher</strong>. Enter their <strong>full name</strong> (required), email, phone, and start date. Optionally upload a photo.</span>} />
+                          <Step n={2} text={<span>Click <strong>Add Teacher</strong>. Enter their <strong>full name</strong> and <strong>email</strong> (both required — email is what they use to log in), plus optional phone and start date. Optionally upload a photo.</span>} />
                           <Step n={3} text={<span>To edit: click the <strong>pencil icon</strong> on the teacher row.</span>} />
                           <Step n={4} text={<span>To deactivate (no longer at the school): edit the record and uncheck <strong>Active</strong>. They'll no longer appear in the class teacher dropdown.</span>} />
                         </div>
@@ -2236,7 +2255,7 @@ export default function SettingsPage() {
                     <button onClick={() => setHelpSearch("")} className="mt-2 text-xs text-primary hover:underline">Clear search</button>
                   </div>
                 );
-                return filtered.map((item) => {
+                const topicRows = filtered.map((item) => {
                   const Icon = item.icon;
                   const open = !!helpExpanded[item.id];
                   return (
@@ -2251,11 +2270,28 @@ export default function SettingsPage() {
                     </div>
                   );
                 });
+                return (
+                  <>
+                    {!q && (
+                      <button
+                        onClick={() => setHelpView("getting-started")}
+                        className="w-full flex items-center gap-3 px-4 py-3 text-left border border-primary/30 bg-primary/5 hover:bg-primary/10 rounded-xl transition-colors"
+                      >
+                        <div className="w-6 h-6 rounded-md bg-primary/15 flex items-center justify-center flex-shrink-0"><BookOpen className="w-3.5 h-3.5 text-primary" /></div>
+                        <span className="flex-1 text-sm font-medium text-primary">Getting Started — Initial School Setup</span>
+                        <ChevronRight className="w-4 h-4 text-primary/60 flex-shrink-0" />
+                      </button>
+                    )}
+                    {topicRows}
+                  </>
+                );
               })()}
             </div>
             <div className="px-5 py-3 border-t border-border flex-shrink-0 text-xs text-muted-foreground">
-              {helpSearch ? <span>Showing results for "<span className="font-medium text-foreground">{helpSearch}</span>"</span> : <span>8 topics · click any to expand</span>}
+              {helpSearch ? <span>Showing results for "<span className="font-medium text-foreground">{helpSearch}</span>"</span> : <span>7 topics · click any to expand · <button onClick={() => setHelpView("getting-started")} className="underline hover:opacity-70">Getting Started guide</button></span>}
             </div>
+            </>
+            )}
           </div>
         </div>
       )}
@@ -2636,8 +2672,9 @@ export default function SettingsPage() {
               <Input value={teacherForm.fullName} onChange={(e) => setTeacherForm({ ...teacherForm, fullName: e.target.value })} placeholder="Teacher's full name" />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">Email</label>
+              <label className="block text-sm font-medium mb-1">Email *</label>
               <Input type="email" value={teacherForm.email} onChange={(e) => setTeacherForm({ ...teacherForm, email: e.target.value })} placeholder="teacher@school.com" />
+              <p className="text-xs text-muted-foreground mt-1">Used to log in to their account.</p>
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">Phone</label>
@@ -2665,7 +2702,7 @@ export default function SettingsPage() {
 
           <div className="flex justify-end gap-2 pt-2">
             <ModalCancelButton />
-            <Button onClick={saveTeacher} disabled={saving || !teacherForm.fullName}>{saving ? "Saving…" : "Save"}</Button>
+            <Button onClick={saveTeacher} disabled={saving || !teacherForm.fullName || !teacherForm.email.trim()}>{saving ? "Saving…" : "Save"}</Button>
           </div>
         </div>
       </Modal>
@@ -2702,6 +2739,7 @@ export default function SettingsPage() {
           </div>
         </div>
       </Modal>
+
     </div>
   );
 }

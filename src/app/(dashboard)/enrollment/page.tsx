@@ -140,14 +140,29 @@ export default function EnrollmentPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [recentlyMovedId, setRecentlyMovedId] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<InquiryStatus | "">("");
   const [levelFilter, setLevelFilter] = useState("");
-  const [view, setView] = useState<"pipeline" | "table" | "funnel">("pipeline");
-  const [showSummary, setShowSummary] = useState(false);
+  const [mainTab, setMainTab] = useState<"new" | "returning">("new");
+  const [view, setView] = useState<"pipeline" | "table">("pipeline");
   const [actionItemsOnly, setActionItemsOnly] = useState(false);
+  const [analyticsOpen, setAnalyticsOpen] = useState(false);
+  const [returningAnalyticsOpen, setReturningAnalyticsOpen] = useState(false);
+
+  // Returning Students workspace state
+  const [returningList, setReturningList] = useState<ReturnStudent[]>([]);
+  const [returningListLoading, setReturningListLoading] = useState(false);
+  const [returningListLoaded, setReturningListLoaded] = useState(false);
+  const [returningListSearch, setReturningListSearch] = useState("");
+  const [returningListStatusFilter, setReturningListStatusFilter] = useState<ReturnDerivedStatus | "">("");
+  const [returningListLevelFilter, setReturningListLevelFilter] = useState("");
+  const [returningListHideEnrolled, setReturningListHideEnrolled] = useState(false);
+  const [returningDetailStudent, setReturningDetailStudent] = useState<ReturnStudent | null>(null);
+  const [returningDetailExtra, setReturningDetailExtra] = useState<{ dob: string | null; gender: string | null; notes: string | null; emergencyContact: { name: string; phone: string; relationship: string } | null } | null>(null);
+  const [returningDetailLoading, setReturningDetailLoading] = useState(false);
 
   const [helpOpen, setHelpOpen] = useState(false);
   const [helpSearch, setHelpSearch] = useState("");
@@ -254,6 +269,13 @@ export default function EnrollmentPage() {
     if (placementPayRow && schoolId) { loadFeeTypes(); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [placementPayRow, schoolId]);
+
+  useEffect(() => {
+    if (mainTab === "returning" && !returningListLoaded && !returningListLoading && schoolId) {
+      loadAllReturningStudents();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mainTab, schoolId]);
 
   async function loadAll() {
     setLoading(true);
@@ -493,6 +515,8 @@ export default function EnrollmentPage() {
       return;
     }
     await loadInquiries();
+    setRecentlyMovedId(inquiry.id);
+    setTimeout(() => setRecentlyMovedId(null), 2000);
   }
 
   async function handleConvertToEnrolled() {
@@ -652,6 +676,27 @@ export default function EnrollmentPage() {
     };
   }
 
+  async function openReturningDetail(s: ReturnStudent) {
+    setReturningDetailStudent(s);
+    setReturningDetailExtra(null);
+    setReturningDetailLoading(true);
+    const { data } = await supabase
+      .from("students")
+      .select("date_of_birth, gender, notes, guardians(full_name, phone, relationship, is_emergency_contact)")
+      .eq("id", s.id)
+      .single();
+    if (data) {
+      const ec = (data.guardians as any[]).find((g: any) => g.is_emergency_contact) ?? null;
+      setReturningDetailExtra({
+        dob: data.date_of_birth ?? null,
+        gender: data.gender ?? null,
+        notes: data.notes ?? null,
+        emergencyContact: ec ? { name: ec.full_name, phone: ec.phone ?? "—", relationship: ec.relationship } : null,
+      });
+    }
+    setReturningDetailLoading(false);
+  }
+
   async function searchReturningStudents(q: string) {
     if (!schoolId || q.trim().length < 2) { setReturningResults([]); return; }
     setReturningSearching(true);
@@ -724,7 +769,7 @@ export default function EnrollmentPage() {
       return `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`);
     });
 
-    setReturningResults(results);
+    setReturningResults(results.filter(s => s.derivedStatus !== "graduated" && s.recommendedNextLevel !== "GRADUATE"));
     setReturningSearching(false);
   }
 
@@ -758,7 +803,44 @@ export default function EnrollmentPage() {
       if (d !== 0) return d;
       return `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`);
     });
-    setReturningPreloaded(mapped.slice(0, 5));
+    setReturningPreloaded(mapped.filter(s => s.derivedStatus !== "graduated" && s.recommendedNextLevel !== "GRADUATE").slice(0, 5));
+  }
+
+  async function loadAllReturningStudents() {
+    if (!schoolId) return;
+    setReturningListLoading(true);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data } = await (supabase as any)
+      .from("students")
+      .select(`
+        id, first_name, last_name, preferred_name, student_code,
+        guardians(full_name, phone, is_primary),
+        enrollments(
+          id, status, progression_status, progression_notes, school_year_id,
+          classes(name, next_level, class_levels(name)),
+          school_years(name)
+        )
+      `)
+      .eq("school_id", schoolId)
+      .eq("is_active", true);
+    if (!data) { setReturningListLoading(false); return; }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const mapped: ReturnStudent[] = (data as any[]).map((s) => mapRawToReturnStudent(s, activeYear?.id ?? null));
+    mapped.sort((a, b) => {
+      const rank = (r: ReturnStudent) =>
+        r.derivedStatus === "eligible_not_enrolled"   ? 0 :
+        r.derivedStatus === "no_classification"        ? 1 :
+        r.derivedStatus === "not_eligible_retained"    ? 2 :
+        r.derivedStatus === "not_eligible_other"       ? 3 :
+        r.derivedStatus === "already_enrolled"         ? 4 :
+        r.derivedStatus === "not_continuing"           ? 5 : 6;
+      const d = rank(a) - rank(b);
+      if (d !== 0) return d;
+      return `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`);
+    });
+    setReturningList(mapped);
+    setReturningListLoaded(true);
+    setReturningListLoading(false);
   }
 
   async function checkBillingSetup() {
@@ -781,6 +863,22 @@ export default function EnrollmentPage() {
     setForkOpen(true);
     checkBillingSetup();
   }
+
+  // Auto-open the Start Enrollment modal when navigated from another page
+  // with ?startEnrollment=1 (e.g. from the Add Student banner).
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("startEnrollment") === "1") {
+      params.delete("startEnrollment");
+      const newUrl = params.toString()
+        ? `${window.location.pathname}?${params.toString()}`
+        : window.location.pathname;
+      window.history.replaceState(null, "", newUrl);
+      openFork();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function openReturning() {
     setForkOpen(false);
@@ -1267,19 +1365,12 @@ export default function EnrollmentPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1>Enrollment</h1>
-          <p className="text-muted-foreground text-sm mt-1">Manage inquiries, waitlist, and enrollment pipeline</p>
+          <h1>Enrollment Hub</h1>
+          <p className="text-muted-foreground text-sm mt-1">Manage new admissions and returning student re-enrollment</p>
         </div>
         <div className="flex gap-2">
-          <button
-            onClick={() => setShowSummary((v) => !v)}
-            className={`flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg border transition-colors ${showSummary ? "border-primary/40 bg-primary/5 text-primary" : "border-border text-muted-foreground hover:text-foreground hover:bg-muted"}`}
-          >
-            <TrendingUp className="w-4 h-4" />
-            Summary Stats
-          </button>
           <button onClick={() => { setHelpOpen(true); setHelpSearch(""); }} className="flex items-center gap-1.5 px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg border border-border transition-colors">
-            <HelpCircle className="w-4 h-4" /> Help
+            <HelpCircle className="w-4 h-4" /> Help Topics
           </button>
           <Button onClick={openFork}>
             <Plus className="w-4 h-4" /> Start Enrollment
@@ -1404,114 +1495,111 @@ export default function EnrollmentPage() {
         </Card>
       )}
 
-      {/* Pipeline summary — compact filter strip always visible; counts behind toggle */}
-      <div className="space-y-2">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-xs text-muted-foreground">Filter by stage:</span>
+      {/* Main Enrollment Hub tabs */}
+      <div className="flex border-b border-border">
+        <button
+          onClick={() => setMainTab("new")}
+          className={`px-5 py-3 text-sm font-medium border-b-2 -mb-px transition-colors ${mainTab === "new" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+        >
+          New Students
+        </button>
+        <button
+          onClick={() => setMainTab("returning")}
+          className={`px-5 py-3 text-sm font-medium border-b-2 -mb-px transition-colors ${mainTab === "returning" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+        >
+          Returning Students
+        </button>
+      </div>
+
+      {/* ── NEW STUDENTS TAB ─────────────────────────────────────────── */}
+      {mainTab === "new" && <>
+
+      {/* Consolidated toolbar */}
+      <div className="flex items-center gap-2 flex-wrap">
+        {/* View segmented control */}
+        <div className="flex items-center rounded-lg border border-border overflow-hidden shrink-0">
           <button
-            onClick={() => setStatusFilter("")}
-            className={`px-2.5 py-1 text-xs rounded-lg border transition-colors font-medium ${!statusFilter ? "border-primary bg-primary/5 text-primary" : "border-border text-muted-foreground hover:bg-muted"}`}
+            onClick={() => { setView("pipeline"); setStatusFilter(""); }}
+            className={`px-3 py-1.5 text-xs font-medium transition-colors ${view === "pipeline" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}
+          >
+            Pipeline
+          </button>
+          <button
+            onClick={() => setView("table")}
+            className={`px-3 py-1.5 text-xs font-medium transition-colors border-l border-border ${view === "table" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}
+          >
+            Table
+          </button>
+        </div>
+
+        {/* Search */}
+        <div className="flex-1 min-w-[180px] relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+          <Input placeholder="Search child or parent…" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-8 h-8 text-xs" />
+        </div>
+
+        {/* All / Needs Action toggle */}
+        <div className="flex items-center rounded-lg border border-border overflow-hidden shrink-0">
+          <button
+            onClick={() => setActionItemsOnly(false)}
+            className={`px-3 py-1.5 text-xs font-medium transition-colors ${!actionItemsOnly ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}
           >
             All
           </button>
-          {PIPELINE.map((stage) => {
-            const count = inquiries.filter((i) => i.status === stage.status).length;
-            return (
-              <button
-                key={stage.status}
-                onClick={() => setStatusFilter(statusFilter === stage.status ? "" : stage.status)}
-                className={`px-2.5 py-1 text-xs rounded-lg border transition-colors font-medium ${statusFilter === stage.status ? "border-primary bg-primary/5 text-primary" : "border-border text-muted-foreground hover:bg-muted"}`}
-              >
-                {stage.label}
-                <span className="ml-1 opacity-60">{count}</span>
-              </button>
-            );
-          })}
+          <button
+            onClick={() => setActionItemsOnly(true)}
+            className={`px-3 py-1.5 text-xs font-medium transition-colors border-l border-border ${actionItemsOnly ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}
+          >
+            Needs Action
+          </button>
         </div>
-        {showSummary && (
-          <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
-            {PIPELINE.map((stage) => {
-              const count = inquiries.filter((i) => i.status === stage.status).length;
-              return (
-                <Card
-                  key={stage.status}
-                  className={`cursor-pointer transition-shadow hover:shadow-md ${statusFilter === stage.status ? "ring-2 ring-primary" : ""}`}
-                  onClick={() => setStatusFilter(statusFilter === stage.status ? "" : stage.status)}
-                >
-                  <CardContent className="p-3 text-center">
-                    <p className="text-2xl font-semibold">{count}</p>
-                    <p className="text-xs text-muted-foreground mt-0.5 leading-tight">{stage.label}</p>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
-        )}
-      </div>
 
-      {/* Search + filters + view toggle */}
-      <div className="space-y-2">
-        <div className="flex gap-3">
-          <div className="flex-1 relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input placeholder="Search child or parent name..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
-          </div>
-          <div className="flex gap-1 bg-muted p-1 rounded-lg border border-border">
-            {([
-              { v: "pipeline" as const, label: "Pipeline" },
-              { v: "table" as const, label: "Table" },
-              { v: "funnel" as const, label: "Analytics" },
-            ]).map(({ v, label }) => (
-              <button
-                key={v}
-                onClick={() => setView(v)}
-                className={`flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-semibold transition-all ${
-                  view === v
-                    ? "bg-primary text-primary-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground hover:bg-accent"
-                }`}
-              >
-                {v === "funnel" && <TrendingUp className="w-3.5 h-3.5" />}
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="flex items-center gap-3 flex-wrap">
-          {uniqueLevels.length > 0 && (
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-xs text-muted-foreground">Level:</span>
-              <button
-                onClick={() => setLevelFilter("")}
-                className={`px-2.5 py-1 text-xs rounded-lg border transition-colors font-medium ${!levelFilter ? "border-primary bg-primary/5 text-primary" : "border-border text-muted-foreground hover:bg-muted"}`}
-              >
-                All
-              </button>
-              {uniqueLevels.map((lvl) => (
-                <button
-                  key={lvl}
-                  onClick={() => setLevelFilter(levelFilter === lvl ? "" : lvl)}
-                  className={`px-2.5 py-1 text-xs rounded-lg border transition-colors font-medium ${levelFilter === lvl ? "border-primary bg-primary/5 text-primary" : "border-border text-muted-foreground hover:bg-muted"}`}
-                >
-                  {lvl}
-                </button>
-              ))}
-            </div>
-          )}
-          <label className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground cursor-pointer select-none ml-auto">
-            <input
-              type="checkbox"
-              checked={actionItemsOnly}
-              onChange={(e) => setActionItemsOnly(e.target.checked)}
-              className="rounded border-border"
-            />
-            Show action items only
-          </label>
-        </div>
+        {/* Level dropdown — both modes */}
+        {uniqueLevels.length > 0 && (
+          <select
+            value={levelFilter}
+            onChange={(e) => setLevelFilter(e.target.value)}
+            className="h-8 text-xs border border-border rounded-lg px-2 bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-primary shrink-0"
+          >
+            <option value="">All Levels</option>
+            {uniqueLevels.map((lvl) => <option key={lvl} value={lvl}>{lvl}</option>)}
+          </select>
+        )}
+
+        {/* Stage dropdown — table mode only */}
+        {view === "table" && (
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as InquiryStatus | "")}
+            className="h-8 text-xs border border-border rounded-lg px-2 bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-primary shrink-0"
+          >
+            <option value="">All Stages</option>
+            {PIPELINE.map((s) => <option key={s.status} value={s.status}>{s.label}</option>)}
+          </select>
+        )}
+
+        {/* View Analytics button */}
+        <button
+          onClick={() => setAnalyticsOpen(true)}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground border border-border rounded-lg hover:bg-muted transition-colors shrink-0"
+        >
+          <TrendingUp className="w-3.5 h-3.5" />
+          Analytics
+        </button>
       </div>
 
       {/* Pipeline View */}
       {view === "pipeline" && (
+        <>
+        {/* Stage progression guide */}
+        <div className="flex items-center gap-1 flex-wrap text-xs text-muted-foreground px-1 -mt-2 mb-1">
+          {(["Inquiry","Assessment Sched","Waitlisted","Offered Slot","Enrolled"] as const).map((label, i, arr) => (
+            <span key={label} className="flex items-center gap-1">
+              <span className={i === arr.length - 1 ? "font-medium text-green-600" : ""}>{label}</span>
+              {i < arr.length - 1 && <span className="text-border">→</span>}
+            </span>
+          ))}
+        </div>
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {PIPELINE.filter((s) => s.status !== "not_proceeding" && (!actionItemsOnly || s.status !== "enrolled")).map((stage) => {
             const stageItems = filtered.filter((i) => i.status === stage.status);
@@ -1522,22 +1610,41 @@ export default function EnrollmentPage() {
                   <span className="text-xs text-muted-foreground">({stageItems.length})</span>
                 </div>
                 <div className="space-y-3">
-                  {stageItems.map((inquiry) => (
-                    <Card key={inquiry.id} className="overflow-hidden hover:shadow-md transition-shadow">
-                      <CardContent className="p-4">
-                        <div className="flex items-start justify-between mb-2">
+                  {stageItems.map((inquiry) => {
+                    const daysSince = Math.floor((Date.now() - new Date(inquiry.createdAt).getTime()) / (1000 * 60 * 60 * 24));
+                    const today = new Date().toISOString().split("T")[0];
+                    const isFollowUpOverdue = !!inquiry.nextFollowUp && inquiry.nextFollowUp < today;
+                    const isStalled = daysSince >= 7 && !inquiry.nextFollowUp;
+                    return (
+                    <Card key={inquiry.id} className={`overflow-hidden hover:shadow-md transition-shadow ${isFollowUpOverdue ? "border-orange-200" : ""} ${recentlyMovedId === inquiry.id ? "ring-2 ring-primary ring-offset-1" : ""}`} style={recentlyMovedId === inquiry.id ? { animation: "pulse 0.6s ease-in-out 2" } : {}}>
+                      <CardContent className="p-3">
+                        <div className="flex items-start justify-between mb-1">
                           <div>
                             <p className="font-semibold text-sm">{inquiry.childName}</p>
                             <p className="text-xs text-muted-foreground">{inquiry.parentName}</p>
                           </div>
-                          <Badge variant="default" className="text-xs">{inquiry.desiredClass}</Badge>
+                          <Badge variant="default" className="text-xs shrink-0 ml-2">{inquiry.desiredClass}</Badge>
                         </div>
-                        {inquiry.contact && <p className="text-xs text-muted-foreground mb-2">{inquiry.contact}</p>}
-                        {inquiry.notes && <p className="text-xs text-muted-foreground italic mb-3">"{inquiry.notes}"</p>}
-                        {inquiry.nextFollowUp && (
-                          <p className="text-xs text-orange-600 mb-2">Follow up: {inquiry.nextFollowUp}</p>
+                        {inquiry.contact && <p className="text-xs text-muted-foreground mb-1">{inquiry.contact}</p>}
+                        <div className="flex items-center gap-2 flex-wrap mb-1.5">
+                          <span className="text-xs text-muted-foreground">
+                            {daysSince === 0 ? "Today" : daysSince === 1 ? "Waiting 1 day" : `Waiting ${daysSince} days`}
+                          </span>
+                          {isFollowUpOverdue && (
+                            <span className="text-xs text-orange-600 font-medium">· Follow-up overdue</span>
+                          )}
+                          {isStalled && !isFollowUpOverdue && (
+                            <span className="text-xs text-amber-600 font-medium">· No follow-up set</span>
+                          )}
+                        </div>
+                        {inquiry.notes && <p className="text-xs text-muted-foreground italic mb-1.5 line-clamp-2">"{inquiry.notes}"</p>}
+                        {inquiry.nextFollowUp && !isFollowUpOverdue && (
+                          <p className="text-xs text-muted-foreground mb-1.5">Follow up: {inquiry.nextFollowUp}</p>
                         )}
-                        <div className="flex items-center gap-2 mt-1">
+                        {inquiry.nextFollowUp && isFollowUpOverdue && (
+                          <p className="text-xs text-orange-600 mb-1.5">Follow up due: {inquiry.nextFollowUp}</p>
+                        )}
+                        <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                           {STATUS_FLOW[inquiry.status] && (
                             <button
                               onClick={() => advanceStatus(inquiry)}
@@ -1547,13 +1654,26 @@ export default function EnrollmentPage() {
                               <ArrowRight className="w-3 h-3" />
                             </button>
                           )}
-                          <button onClick={() => openDetail(inquiry)} className="text-xs text-muted-foreground hover:text-foreground ml-auto">
-                            Details
+                          <button
+                            onClick={() => openDetail(inquiry)}
+                            className="text-xs text-muted-foreground hover:text-foreground px-2 py-1 rounded-md hover:bg-muted transition-colors"
+                          >
+                            Follow Up
                           </button>
+                          {inquiry.status !== "not_proceeding" && inquiry.status !== "enrolled" && (
+                            <button
+                              onClick={() => markNotProceeding(inquiry.id)}
+                              className="text-xs text-muted-foreground hover:text-red-500 transition-colors ml-auto"
+                              title="Mark not proceeding"
+                            >
+                              Not Proceeding
+                            </button>
+                          )}
                         </div>
                       </CardContent>
                     </Card>
-                  ))}
+                    );
+                  })}
                   {stageItems.length === 0 && (
                     <div className="border-2 border-dashed border-border rounded-xl p-6 text-center text-xs text-muted-foreground">
                       No inquiries here
@@ -1564,6 +1684,7 @@ export default function EnrollmentPage() {
             );
           })}
         </div>
+        </>
       )}
 
       {/* Table View */}
@@ -1620,22 +1741,31 @@ export default function EnrollmentPage() {
         </Card>
       )}
 
-      {/* Analytics / Funnel View */}
-      {view === "funnel" && (() => {
+      {/* Analytics slide-over panel */}
+      {analyticsOpen && (() => {
         const total = analyticsData.length;
         const notProceeding = analyticsData.filter((i) => i.status === "not_proceeding").length;
         const enrolled = analyticsData.filter((i) => i.status === "enrolled").length;
-        const active = total - notProceeding;
+        const active = total - notProceeding - enrolled;
+        const today = new Date().toISOString().split("T")[0];
+        const stalled = analyticsData.filter((i) => {
+          if (i.status === "enrolled" || i.status === "not_proceeding") return false;
+          const daysSince = Math.floor((Date.now() - new Date(i.createdAt).getTime()) / (1000 * 60 * 60 * 24));
+          return (daysSince >= 7 && !i.nextFollowUp) || (!!i.nextFollowUp && i.nextFollowUp < today);
+        }).length;
         const conversionRate = total > 0 ? Math.round((enrolled / total) * 100) : 0;
         const dropOffRate = total > 0 ? Math.round((notProceeding / total) * 100) : 0;
 
-        // Stage counts (active pipeline only)
+        // Stage counts (active pipeline only, excl. enrolled — it's the goal, not a blocker)
         const activePipeline = PIPELINE.filter((s) => s.status !== "not_proceeding");
         const stageCounts = activePipeline.map((s) => ({
           ...s,
           count: analyticsData.filter((i) => i.status === s.status).length,
         }));
         const maxCount = Math.max(...stageCounts.map((s) => s.count), 1);
+        // Bottleneck: active (non-enrolled) stage with most inquiries relative to the next stage
+        const activeStageCounts = stageCounts.filter((s) => s.status !== "enrolled");
+        const bottleneckStage = activeStageCounts.reduce((max, s) => s.count > max.count ? s : max, activeStageCounts[0] ?? stageCounts[0]);
 
         // Source breakdown
         const sourceCounts: Record<string, number> = {};
@@ -1658,19 +1788,33 @@ export default function EnrollmentPage() {
         });
 
         return (
-          <div className="space-y-6">
+          <>
+          <div className="fixed inset-0 bg-black/20 z-40" onClick={() => setAnalyticsOpen(false)} />
+          <div className="fixed inset-y-0 right-0 w-full max-w-2xl bg-card border-l border-border shadow-xl z-50 flex flex-col animate-in slide-in-from-right duration-200">
+            {/* Panel header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border shrink-0">
+              <div className="flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-primary" />
+                <h2 className="font-semibold text-sm">Enrollment Analytics</h2>
+              </div>
+              <button onClick={() => setAnalyticsOpen(false)} className="p-1 rounded hover:bg-muted transition-colors" type="button">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            {/* Panel body */}
+            <div className="flex-1 overflow-y-auto p-5 space-y-6 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full">
             {/* Key metrics */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               {[
-                { label: "Total Inquiries", value: total, sub: "All time" },
-                { label: "Active Pipeline", value: active, sub: "Excl. not proceeding" },
-                { label: "Overall Conversion", value: `${conversionRate}%`, sub: "Inquiry → Enrolled" },
-                { label: "Drop-off Rate", value: `${dropOffRate}%`, sub: "Marked not proceeding" },
+                { label: "Total Inquiries", value: total, sub: "All time", color: "" },
+                { label: "In Progress", value: active, sub: "Not yet enrolled", color: "" },
+                { label: "Enrolled", value: enrolled, sub: `${conversionRate}% conversion`, color: "text-green-600" },
+                { label: "Needs Attention", value: stalled, sub: "Overdue or no follow-up set", color: stalled > 0 ? "text-orange-600" : "" },
               ].map((m) => (
                 <Card key={m.label}>
-                  <CardContent className="p-4">
+                  <CardContent className="p-3">
                     <p className="text-xs text-muted-foreground">{m.label}</p>
-                    <p className="text-2xl font-bold mt-1">{m.value}</p>
+                    <p className={`text-2xl font-bold mt-0.5 ${m.color}`}>{m.value}</p>
                     <p className="text-xs text-muted-foreground mt-0.5">{m.sub}</p>
                   </CardContent>
                 </Card>
@@ -1707,10 +1851,17 @@ export default function EnrollmentPage() {
                       );
                     })}
                   </div>
+                  {bottleneckStage && bottleneckStage.count > 0 && (
+                    <div className="mt-3 pt-3 border-t border-border">
+                      <p className="text-xs text-amber-700 font-medium">
+                        Bottleneck: <span className="font-semibold">{bottleneckStage.label}</span> has the most inquiries ({bottleneckStage.count}) — review and advance
+                      </p>
+                    </div>
+                  )}
                   {notProceeding > 0 && (
                     <div className="mt-3 pt-3 border-t border-border flex items-center justify-between text-sm">
                       <span className="text-muted-foreground">Not Proceeding</span>
-                      <span className="font-medium text-red-600">{notProceeding}</span>
+                      <span className="font-medium text-red-600">{notProceeding} ({dropOffRate}%)</span>
                     </div>
                   )}
                 </CardContent>
@@ -1788,10 +1939,498 @@ export default function EnrollmentPage() {
                 </CardContent>
               </Card>
             )}
+            </div>{/* end panel body */}
+          </div>{/* end slide-over panel */}
+          </>
+        );
+      })()}
+
+      </> /* end mainTab === "new" */ }
+
+      {/* ── RETURNING STUDENTS TAB ───────────────────────────────────── */}
+      {mainTab === "returning" && (() => {
+        const eligibleCount     = returningList.filter(s => s.derivedStatus === "eligible_not_enrolled").length;
+        const enrolledCount     = returningList.filter(s => s.derivedStatus === "already_enrolled").length;
+        const noClassCount      = returningList.filter(s => s.derivedStatus === "no_classification").length;
+        const notContinuingCount = returningList.filter(s => s.derivedStatus === "not_continuing").length;
+        const needsReviewCount  = returningList.filter(s =>
+          s.derivedStatus === "not_eligible_retained" || s.derivedStatus === "not_eligible_other" || s.derivedStatus === "graduated"
+        ).length;
+
+        const filteredReturning = returningList.filter((s) => {
+          if (s.derivedStatus === "graduated" || s.recommendedNextLevel === "GRADUATE") return false;
+          const matchSearch = !returningListSearch ||
+            `${s.firstName} ${s.lastName}`.toLowerCase().includes(returningListSearch.toLowerCase()) ||
+            (s.preferredName ?? "").toLowerCase().includes(returningListSearch.toLowerCase()) ||
+            (s.studentCode ?? "").toLowerCase().includes(returningListSearch.toLowerCase());
+          const matchStatus = !returningListStatusFilter || s.derivedStatus === returningListStatusFilter;
+          const matchLevel = !returningListLevelFilter || s.lastClassLevel === returningListLevelFilter;
+          const matchEnrolled = !returningListHideEnrolled || s.derivedStatus !== "already_enrolled";
+          return matchSearch && matchStatus && matchLevel && matchEnrolled;
+        });
+
+        const statusChips: { status: ReturnDerivedStatus; label: string; count: number; color: string; activeColor: string }[] = [
+          { status: "eligible_not_enrolled",  label: "Eligible",           count: eligibleCount,      color: "border-green-200 bg-green-50 text-green-700",   activeColor: "border-green-500 ring-2 ring-green-400" },
+          { status: "already_enrolled",       label: "Re-Enrolled",        count: enrolledCount,      color: "border-blue-200 bg-blue-50 text-blue-700",      activeColor: "border-blue-500 ring-2 ring-blue-400" },
+          { status: "no_classification",      label: "Not Yet Classified",  count: noClassCount,       color: "border-amber-200 bg-amber-50 text-amber-700",   activeColor: "border-amber-500 ring-2 ring-amber-400" },
+          { status: "not_eligible_retained",  label: "Needs Review",       count: needsReviewCount,   color: "border-orange-200 bg-orange-50 text-orange-700", activeColor: "border-orange-500 ring-2 ring-orange-400" },
+          { status: "not_continuing",         label: "Not Continuing",     count: notContinuingCount, color: "border-border bg-muted text-muted-foreground",    activeColor: "border-foreground ring-2 ring-border" },
+        ];
+
+        const returningLevels = [...new Set(
+          returningList
+            .filter(s => s.derivedStatus !== "graduated" && s.recommendedNextLevel !== "GRADUATE")
+            .map(s => s.lastClassLevel)
+            .filter(Boolean)
+        )].sort();
+
+        function eligibilityBadge(s: ReturnStudent) {
+          switch (s.derivedStatus) {
+            case "eligible_not_enrolled":  return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">Eligible</span>;
+            case "already_enrolled":       return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">Re-Enrolled</span>;
+            case "no_classification":      return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">Not Classified</span>;
+            case "not_eligible_retained":  return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-700">Retained</span>;
+            case "not_eligible_other":     return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-700">Needs Review</span>;
+            case "graduated":              return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700">Graduated</span>;
+            case "not_continuing":         return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-muted text-muted-foreground">Not Continuing</span>;
+          }
+        }
+
+        return (
+          <div className="space-y-4">
+            {/* Toolbar: search + view analytics + refresh */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex-1 min-w-[180px] relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                <Input
+                  placeholder="Search student by name or code…"
+                  value={returningListSearch}
+                  onChange={(e) => setReturningListSearch(e.target.value)}
+                  className="pl-8 h-8 text-xs"
+                />
+              </div>
+              <label className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground cursor-pointer select-none shrink-0">
+                <input
+                  type="checkbox"
+                  checked={returningListHideEnrolled}
+                  onChange={(e) => setReturningListHideEnrolled(e.target.checked)}
+                  className="rounded border-border"
+                />
+                Hide re-enrolled
+              </label>
+              <button
+                onClick={() => setReturningAnalyticsOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground border border-border rounded-lg hover:bg-muted transition-colors shrink-0"
+              >
+                <TrendingUp className="w-3.5 h-3.5" />
+                Analytics
+              </button>
+              <button
+                onClick={loadAllReturningStudents}
+                disabled={returningListLoading}
+                className="flex items-center gap-1 px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground border border-border rounded-lg hover:bg-muted transition-colors shrink-0"
+                title="Refresh list"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${returningListLoading ? "animate-spin" : ""}`} />
+              </button>
+            </div>
+
+            {/* Status filter chips */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                onClick={() => setReturningListStatusFilter("")}
+                className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${!returningListStatusFilter ? "border-primary bg-primary/5 text-primary" : "border-border text-muted-foreground hover:bg-muted"}`}
+              >
+                All <span className="ml-1">{returningList.length}</span>
+              </button>
+              {statusChips.map(({ status, label, count, color, activeColor }) => (
+                <button
+                  key={status}
+                  onClick={() => setReturningListStatusFilter(returningListStatusFilter === status ? "" : status)}
+                  className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${returningListStatusFilter === status ? `${color} ${activeColor}` : `${color} opacity-80 hover:opacity-100`}`}
+                >
+                  {label} <span className="ml-1 font-semibold">{count}</span>
+                </button>
+              ))}
+            </div>
+
+            {/* Level filter dropdown */}
+            {returningLevels.length > 0 && (
+              <select
+                value={returningListLevelFilter}
+                onChange={(e) => setReturningListLevelFilter(e.target.value)}
+                className="h-8 text-xs border border-border rounded-lg px-2 bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-primary shrink-0"
+              >
+                <option value="">All Levels</option>
+                {returningLevels.map((lvl) => <option key={lvl} value={lvl}>{lvl}</option>)}
+              </select>
+            )}
+
+            {/* Returning analytics slide-over */}
+            {returningAnalyticsOpen && (() => {
+              const total = returningList.length;
+              const byStatus = statusChips.map(c => ({ label: c.label, count: c.count, color: c.color }));
+              const reEnrollRate = total > 0 ? Math.round((enrolledCount / total) * 100) : 0;
+              const actionRate = total > 0 ? Math.round((eligibleCount / total) * 100) : 0;
+              const levelBreakdown = returningLevels.map(lvl => ({
+                level: lvl,
+                eligible: returningList.filter(s => s.lastClassLevel === lvl && s.derivedStatus === "eligible_not_enrolled").length,
+                enrolled: returningList.filter(s => s.lastClassLevel === lvl && s.derivedStatus === "already_enrolled").length,
+                total: returningList.filter(s => s.lastClassLevel === lvl).length,
+              }));
+              return (
+                <>
+                <div className="fixed inset-0 bg-black/20 z-40" onClick={() => setReturningAnalyticsOpen(false)} />
+                <div className="fixed inset-y-0 right-0 w-full max-w-2xl bg-card border-l border-border shadow-xl z-50 flex flex-col animate-in slide-in-from-right duration-200">
+                  <div className="flex items-center justify-between px-5 py-4 border-b border-border shrink-0">
+                    <div className="flex items-center gap-2">
+                      <TrendingUp className="w-4 h-4 text-primary" />
+                      <h2 className="font-semibold text-sm">Re-Enrollment Analytics</h2>
+                    </div>
+                    <button onClick={() => setReturningAnalyticsOpen(false)} className="p-1 rounded hover:bg-muted transition-colors" type="button">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <div className="flex-1 overflow-y-auto p-5 space-y-6 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full">
+                    {/* Summary cards */}
+                    <div className="grid grid-cols-3 gap-3">
+                      {[
+                        { label: "Total Students", value: total, sub: "On roster", color: "" },
+                        { label: "Re-Enrolled", value: enrolledCount, sub: `${reEnrollRate}% of total`, color: "text-green-600" },
+                        { label: "Eligible to Enroll", value: eligibleCount, sub: `${actionRate}% ready`, color: eligibleCount > 0 ? "text-blue-600" : "" },
+                      ].map(m => (
+                        <Card key={m.label}>
+                          <CardContent className="p-3">
+                            <p className="text-xs text-muted-foreground">{m.label}</p>
+                            <p className={`text-2xl font-bold mt-0.5 ${m.color}`}>{m.value}</p>
+                            <p className="text-xs text-muted-foreground mt-0.5">{m.sub}</p>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+
+                    {/* Status breakdown */}
+                    <Card>
+                      <CardContent className="p-4">
+                        <h3 className="font-semibold text-sm mb-3">Status Breakdown</h3>
+                        <div className="space-y-2.5">
+                          {byStatus.map(({ label, count, color }) => {
+                            const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+                            const width = total > 0 ? Math.max(Math.round((count / total) * 100), count > 0 ? 4 : 0) : 0;
+                            return (
+                              <div key={label}>
+                                <div className="flex items-center justify-between mb-1 text-xs">
+                                  <span className="font-medium">{label}</span>
+                                  <span className="text-muted-foreground">{count} · {pct}%</span>
+                                </div>
+                                <div className="h-5 bg-muted rounded-lg overflow-hidden">
+                                  <div className="h-full bg-primary/70 rounded-lg" style={{ width: `${width}%` }} />
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </CardContent>
+                    </Card>
+
+                    {/* Level breakdown */}
+                    {levelBreakdown.length > 0 && (
+                      <Card>
+                        <CardContent className="p-4">
+                          <h3 className="font-semibold text-sm mb-3">By Level</h3>
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="border-b border-border">
+                                <th className="text-left pb-2 text-xs text-muted-foreground font-medium">Level</th>
+                                <th className="text-right pb-2 text-xs text-muted-foreground font-medium">Total</th>
+                                <th className="text-right pb-2 text-xs text-muted-foreground font-medium">Eligible</th>
+                                <th className="text-right pb-2 text-xs text-muted-foreground font-medium">Re-Enrolled</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {levelBreakdown.map(row => (
+                                <tr key={row.level} className="border-b border-border last:border-0">
+                                  <td className="py-2 font-medium">{row.level}</td>
+                                  <td className="py-2 text-right text-muted-foreground">{row.total}</td>
+                                  <td className="py-2 text-right text-blue-600 font-medium">{row.eligible}</td>
+                                  <td className="py-2 text-right text-green-600 font-medium">{row.enrolled}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </CardContent>
+                      </Card>
+                    )}
+                  </div>
+                </div>
+                </>
+              );
+            })()}
+
+            {/* Year-End Classification link */}
+            <div className="flex items-center gap-2 px-4 py-3 rounded-lg border border-border bg-muted/40 text-xs text-muted-foreground">
+              <BookOpen className="w-4 h-4 shrink-0" />
+              <span>
+                <strong>Eligibility statuses</strong> come from Year-End Classification, done in the Students page.
+              </span>
+              <a
+                href="/students"
+                className="ml-auto shrink-0 text-primary hover:underline font-medium flex items-center gap-1"
+              >
+                Go to Year-End Classification <ArrowRight className="w-3.5 h-3.5" />
+              </a>
+            </div>
+
+            {/* Returning students table */}
+            {returningListLoading ? (
+              <div className="flex items-center justify-center py-12 text-muted-foreground text-sm">
+                <RefreshCw className="w-4 h-4 animate-spin mr-2" /> Loading students…
+              </div>
+            ) : (
+              <Card className="overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted border-b border-border">
+                      <tr>
+                        <th className="text-left px-5 py-3 font-medium text-muted-foreground">Student</th>
+                        <th className="text-left px-5 py-3 font-medium text-muted-foreground">Last Class</th>
+                        <th className="text-left px-5 py-3 font-medium text-muted-foreground">Level</th>
+                        <th className="text-left px-5 py-3 font-medium text-muted-foreground">Eligibility</th>
+                        <th className="text-left px-5 py-3 font-medium text-muted-foreground">Re-Enrollment</th>
+                        <th className="px-5 py-3" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredReturning.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="px-5 py-12 text-center text-muted-foreground text-sm">
+                            {returningList.length === 0
+                              ? "No students found. Make sure students have been added to the Students roster."
+                              : "No students match the current filters."}
+                          </td>
+                        </tr>
+                      ) : filteredReturning.map((s) => (
+                        <tr key={s.id} className="border-b border-border last:border-0 hover:bg-muted/30 transition-colors">
+                          <td className="px-5 py-3.5">
+                            <p className="font-medium">{s.preferredName ? `${s.preferredName} ${s.lastName}` : `${s.firstName} ${s.lastName}`}</p>
+                            {s.studentCode && <p className="text-xs text-muted-foreground">{s.studentCode}</p>}
+                            <p className="text-xs text-muted-foreground">{s.guardianName}</p>
+                          </td>
+                          <td className="px-5 py-3.5 text-muted-foreground">{s.lastClassName}</td>
+                          <td className="px-5 py-3.5 text-muted-foreground">{s.lastClassLevel}</td>
+                          <td className="px-5 py-3.5">{eligibilityBadge(s)}</td>
+                          <td className="px-5 py-3.5">
+                            {s.derivedStatus === "already_enrolled"
+                              ? <span className="text-sm text-muted-foreground">In {s.activeYearClassName ?? "a class"}</span>
+                              : <span className="text-xs text-muted-foreground">—</span>
+                            }
+                          </td>
+                          <td className="px-5 py-3.5">
+                            <div className="flex items-center justify-end gap-2">
+                              {s.derivedStatus !== "already_enrolled" && s.derivedStatus !== "not_continuing" && s.derivedStatus !== "graduated" && s.recommendedNextLevel !== "GRADUATE" && (
+                                <button
+                                  onClick={() => { openReturning(); selectReturning(s); }}
+                                  className="flex items-center gap-1 text-xs bg-primary/10 hover:bg-primary/20 text-primary px-2.5 py-1 rounded-md transition-colors font-medium"
+                                >
+                                  Start Re-Enrollment <ArrowRight className="w-3 h-3" />
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => openReturningDetail(s)}
+                                className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                              >
+                                View
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {filteredReturning.length > 0 && (
+                  <div className="px-5 py-2.5 border-t border-border text-xs text-muted-foreground bg-muted/20">
+                    {filteredReturning.length} student{filteredReturning.length !== 1 ? "s" : ""} shown
+                    {returningList.length !== filteredReturning.length && ` (${returningList.length} total)`}
+                  </div>
+                )}
+              </Card>
+            )}
           </div>
         );
       })()}
 
+      {/* Returning Student Detail Drawer */}
+      {returningDetailStudent && (
+        <>
+          <div className="fixed inset-0 bg-black/40 z-40" onClick={() => setReturningDetailStudent(null)} />
+          <div className="fixed inset-y-0 right-0 z-50 w-full max-w-sm bg-card border-l border-border flex flex-col shadow-xl animate-in slide-in-from-right duration-200">
+            {/* Header */}
+            <div className="flex items-start justify-between p-5 border-b border-border">
+              <div>
+                <h2 className="text-base font-semibold">
+                  {returningDetailStudent.preferredName
+                    ? `${returningDetailStudent.preferredName} ${returningDetailStudent.lastName}`
+                    : `${returningDetailStudent.firstName} ${returningDetailStudent.lastName}`}
+                </h2>
+                {returningDetailStudent.studentCode && (
+                  <p className="text-xs text-muted-foreground mt-0.5">{returningDetailStudent.studentCode}</p>
+                )}
+              </div>
+              <button type="button" onClick={() => setReturningDetailStudent(null)} className="text-muted-foreground hover:text-foreground p-1 rounded transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="flex-1 overflow-y-auto p-5 space-y-5 text-sm [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full">
+
+              {/* Identity */}
+              <section className="space-y-2">
+                <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Identity</h3>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                  <div>
+                    <p className="text-xs text-muted-foreground">First Name</p>
+                    <p className="font-medium">{returningDetailStudent.firstName}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Last Name</p>
+                    <p className="font-medium">{returningDetailStudent.lastName}</p>
+                  </div>
+                  {returningDetailStudent.preferredName && (
+                    <div>
+                      <p className="text-xs text-muted-foreground">Preferred Name</p>
+                      <p className="font-medium">{returningDetailStudent.preferredName}</p>
+                    </div>
+                  )}
+                  {returningDetailLoading ? (
+                    <div className="col-span-2 text-xs text-muted-foreground">Loading details…</div>
+                  ) : returningDetailExtra && (
+                    <>
+                      {returningDetailExtra.gender && (
+                        <div>
+                          <p className="text-xs text-muted-foreground">Gender</p>
+                          <p className="font-medium capitalize">{returningDetailExtra.gender}</p>
+                        </div>
+                      )}
+                      {returningDetailExtra.dob && (
+                        <div>
+                          <p className="text-xs text-muted-foreground">Age</p>
+                          <p className="font-medium">{(() => {
+                            const dob = new Date(returningDetailExtra.dob);
+                            const now = new Date();
+                            let y = now.getFullYear() - dob.getFullYear();
+                            let m = now.getMonth() - dob.getMonth();
+                            if (m < 0) { y--; m += 12; }
+                            return `${y}y ${m}m`;
+                          })()}</p>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </section>
+
+              {/* Guardian */}
+              <section className="space-y-2">
+                <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Guardian</h3>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Name</p>
+                    <p className="font-medium">{returningDetailStudent.guardianName}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Phone</p>
+                    <p className="font-medium">{returningDetailStudent.guardianPhone}</p>
+                  </div>
+                </div>
+              </section>
+
+              {/* Emergency Contact */}
+              {!returningDetailLoading && returningDetailExtra?.emergencyContact && (
+                <section className="space-y-2">
+                  <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Emergency Contact</h3>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Name</p>
+                      <p className="font-medium">{returningDetailExtra.emergencyContact.name}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Phone</p>
+                      <p className="font-medium">{returningDetailExtra.emergencyContact.phone}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Relationship</p>
+                      <p className="font-medium capitalize">{returningDetailExtra.emergencyContact.relationship}</p>
+                    </div>
+                  </div>
+                </section>
+              )}
+
+              {/* Enrollment history */}
+              <section className="space-y-2">
+                <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Last Enrollment</h3>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                  <div>
+                    <p className="text-xs text-muted-foreground">School Year</p>
+                    <p className="font-medium">{returningDetailStudent.lastSchoolYearName}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Class</p>
+                    <p className="font-medium">{returningDetailStudent.lastClassName}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Level</p>
+                    <p className="font-medium">{returningDetailStudent.lastClassLevel}</p>
+                  </div>
+                  {returningDetailStudent.recommendedNextLevel && (
+                    <div>
+                      <p className="text-xs text-muted-foreground">Recommended Next</p>
+                      <p className="font-medium">{returningDetailStudent.recommendedNextLevel}</p>
+                    </div>
+                  )}
+                </div>
+              </section>
+
+              {/* Progression */}
+              {returningDetailStudent.progressionNotes && (
+                <section className="space-y-1">
+                  <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Teacher Notes</h3>
+                  <p className="text-sm text-muted-foreground leading-relaxed">{returningDetailStudent.progressionNotes}</p>
+                </section>
+              )}
+
+              {/* Health & Medical */}
+              {!returningDetailLoading && returningDetailExtra?.notes && (
+                <section className="space-y-1">
+                  <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Health & Medical Notes</h3>
+                  <p className="text-sm text-muted-foreground leading-relaxed">{returningDetailExtra.notes}</p>
+                </section>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 border-t border-border flex items-center justify-between gap-3">
+              <a
+                href={`/students?student=${returningDetailStudent.id}`}
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Open full profile →
+              </a>
+              {returningDetailStudent.derivedStatus !== "already_enrolled" && returningDetailStudent.derivedStatus !== "not_continuing" && returningDetailStudent.derivedStatus !== "graduated" && returningDetailStudent.recommendedNextLevel !== "GRADUATE" && (
+                <button
+                  type="button"
+                  onClick={() => { setReturningDetailStudent(null); openReturning(); selectReturning(returningDetailStudent); }}
+                  className="flex items-center gap-1 text-xs bg-primary/10 hover:bg-primary/20 text-primary px-2.5 py-1.5 rounded-md transition-colors font-medium"
+                >
+                  Start Re-Enrollment <ArrowRight className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Inquiry Edit Modal */}
       <Modal open={!!selectedInquiry} onClose={() => setSelectedInquiry(null)} title="Edit Inquiry">
@@ -2007,20 +2646,41 @@ export default function EnrollmentPage() {
                   {
                     id: "page-overview",
                     icon: BookOpen,
-                    title: "What this page is for",
-                    searchText: "overview purpose enrollment pipeline waitlist assessment offered slot billing add student profile",
+                    title: "Enrollment Hub — what's here and when to use it",
+                    searchText: "overview purpose enrollment hub new students returning students pipeline re-enrollment admissions",
+                    body: (
+                      <div className="space-y-3">
+                        <p>The Enrollment Hub has two distinct tabs for the two fundamentally different ways a student joins your school.</p>
+                        <div className="space-y-2 mt-1">
+                          <div className="rounded-lg border border-border p-3 space-y-1">
+                            <p className="font-semibold text-xs">New Students</p>
+                            <p className="text-xs text-muted-foreground">For prospective students — children who have never been enrolled here before. You log an inquiry and move them through an admissions pipeline: Inquiry → Assessment → Waitlist → Offered Slot → Enrolled.</p>
+                          </div>
+                          <div className="rounded-lg border border-border p-3 space-y-1">
+                            <p className="font-semibold text-xs">Returning Students</p>
+                            <p className="text-xs text-muted-foreground">For students who were already enrolled in a previous school year and are continuing. You see their eligibility status from Year-End Classification and can launch re-enrollment directly from the roster table — no admissions pipeline needed.</p>
+                          </div>
+                        </div>
+                        <Note><strong>Add Student Profile</strong> (in the Students page) is not for enrollment. It creates a profile with no school year, class, or billing. Always use the Enrollment Hub to start an enrollment.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "returning-students-tab",
+                    icon: Users,
+                    title: "Returning Students tab — re-enroll existing students",
+                    searchText: "returning students re-enroll re-enrollment eligibility classification existing roster continuation school year",
                     body: (
                       <div className="space-y-2">
-                        <p>This is where you manage everything related to enrolling students — from the first inquiry all the way to class placement.</p>
-                        <p className="mt-1">All of the following happen here, not in the Students page:</p>
-                        <div className="mt-2 space-y-1.5 pl-1">
-                          <p className="text-xs">• <strong>Inquiry</strong> — a parent expresses interest</p>
-                          <p className="text-xs">• <strong>Assessment / Waitlist</strong> — you&apos;re evaluating or holding a spot</p>
-                          <p className="text-xs">• <strong>Offered Slot</strong> — a class seat has been offered</p>
-                          <p className="text-xs">• <strong>Enrollment confirmed</strong> — student record, guardian, and class assignment are all created</p>
-                          <p className="text-xs">• <strong>Section placement</strong> — assigning the enrolled student to a specific section</p>
+                        <p>The <strong>Returning Students</strong> tab shows every student in your roster with their re-enrollment readiness for the current school year.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Switch to the <strong>Returning Students</strong> tab. The table loads all active students and their eligibility status from Year-End Classification.</span>} />
+                          <Step n={2} text={<span>Use the <strong>status chips</strong> at the top to focus: <em>Eligible</em> students are your primary targets — they're cleared and ready. <em>Not Yet Classified</em> means Year-End hasn't been done for them yet.</span>} />
+                          <Step n={3} text={<span>Click <strong>Start Re-Enrollment →</strong> on any eligible student to open the re-enrollment flow. The student is pre-selected — you just pick the next level and confirm.</span>} />
+                          <Step n={4} text={<span>Once re-enrolled, the student moves to a <strong>Blocked Enrollment</strong> (at the top of the page) until payment is recorded and they're placed in a section.</span>} />
                         </div>
-                        <Note><strong>Add Student Profile</strong> (in the Students page) is not for enrollment. It creates a profile with no school year, class, or billing — use it only when you need to store information before enrollment is ready.</Note>
+                        <Tip>Year-End Classification (Eligible / Retained / Not Continuing, etc.) is done in <strong>Students → Year-End Classification tab</strong>. The status shown here comes directly from that classification — do that step first to get accurate Eligible counts.</Tip>
+                        <Note>Students already re-enrolled in the active year show "Re-Enrolled" status. Use "Hide re-enrolled" to focus only on those still needing action.</Note>
                       </div>
                     ),
                   },
@@ -2041,7 +2701,7 @@ export default function EnrollmentPage() {
                           <Step n={6} text={<span>Set a <strong>follow-up date</strong> if you agreed to call them back on a specific day.</span>} />
                           <Step n={7} text={<span>Click <strong>Save</strong>. The card appears in the Inquiry column of the pipeline.</span>} />
                         </div>
-                        <Note>You don&apos;t need all details upfront. Log just name + contact now and fill in the rest later by clicking <strong>Details</strong> on the card.</Note>
+                        <Note>You don&apos;t need all details upfront. Log just name + contact now and fill in the rest later by clicking <strong>Follow Up</strong> on the card.</Note>
                       </div>
                     ),
                   },
@@ -2082,7 +2742,7 @@ export default function EnrollmentPage() {
                           <Step n={2} text={<span>Click the <strong>→ Move to [Next Stage]</strong> link at the bottom of the card.</span>} />
                           <Step n={3} text={<span>The card moves to the next column immediately. No confirmation is needed until the final step (Enroll).</span>} />
                         </div>
-                        <Tip>You can also advance from inside the Details edit modal — there's a Move button at the bottom left. This is handy when you need to update notes and advance in one go.</Tip>
+                        <Tip>You can also advance from inside the <strong>Follow Up</strong> modal — there's a Move button at the bottom left. This is handy when you need to update notes and advance in one go.</Tip>
                         <Note>The pipeline flows: Inquiry → Assessment Scheduled → Waitlisted → Offered Slot → Enrolled. If a stage doesn't apply (e.g. you never waitlisted them), just advance through it — the stage history isn't tracked, only the current status matters.</Note>
                       </div>
                     ),
@@ -2115,12 +2775,11 @@ export default function EnrollmentPage() {
                       <div className="space-y-2">
                         <p>Use this when a parent confirms they're no longer interested, chose another school, or can't be reached after several follow-ups.</p>
                         <div className="space-y-2 mt-2">
-                          <Step n={1} text={<span>Switch to <strong>Table view</strong> (Pipeline view doesn't show a Not Proceeding button).</span>} />
-                          <Step n={2} text={<span>Find the row and click <strong>Not Proceeding</strong> on the right side.</span>} />
-                          <Step n={3} text={<span>The inquiry is removed from the active pipeline immediately. No confirmation prompt — it's instant.</span>} />
+                          <Step n={1} text={<span>In <strong>Pipeline view</strong>, click <strong>Not Proceeding</strong> at the bottom-right of the card. In <strong>Table view</strong>, click <strong>Not Proceeding</strong> on the right side of the row.</span>} />
+                          <Step n={2} text={<span>The inquiry is removed from the active pipeline immediately. No confirmation prompt — it's instant.</span>} />
                         </div>
                         <Note>Not Proceeding inquiries are not deleted. They're counted in the Analytics view's drop-off rate and still appear in Table view when no status filter is applied. This preserves your historical data for source analysis.</Note>
-                        <Tip>There's no undo button — if you mark one by mistake, open the Details modal and you won't find a way to un-set it from the UI currently. Be deliberate before clicking.</Tip>
+                        <Tip>There's no undo button — if you mark one by mistake, there's no way to reverse it from the UI. Be deliberate before clicking.</Tip>
                       </div>
                     ),
                   },
@@ -2133,7 +2792,7 @@ export default function EnrollmentPage() {
                       <div className="space-y-2">
                         <p>Use this any time you gather new information — a corrected contact number, a class preference change, notes from a call, or a new follow-up date.</p>
                         <div className="space-y-2 mt-2">
-                          <Step n={1} text={<span>In <strong>Pipeline view</strong>, click <strong>Details</strong> at the bottom of the card. In <strong>Table view</strong>, click <strong>Edit</strong> on the right.</span>} />
+                          <Step n={1} text={<span>In <strong>Pipeline view</strong>, click <strong>Follow Up</strong> at the bottom of the card. In <strong>Table view</strong>, click <strong>Edit</strong> on the right.</span>} />
                           <Step n={2} text={<span>Update any fields — name, contact, class preference, source, notes, or follow-up date.</span>} />
                           <Step n={3} text={<span>You can also <strong>advance the stage</strong> from this modal using the Move button at the bottom left — saves opening two things.</span>} />
                           <Step n={4} text={<span>Click <strong>Save Changes</strong>.</span>} />
@@ -2166,21 +2825,22 @@ export default function EnrollmentPage() {
                     searchText: "search filter find status level class look up narrow",
                     body: (
                       <div className="space-y-2">
-                        <p>Several ways to narrow down what you're looking at:</p>
+                        <p>Several ways to narrow down what you're looking at in the New Students tab:</p>
                         <div className="space-y-2 mt-2">
-                          <Step n={1} text={<span><strong>Search bar</strong> — filters by child name or parent name across all statuses. Works in all three views.</span>} />
-                          <Step n={2} text={<span><strong>Status cards</strong> (the six count cards at the top) — click any card to filter to just that stage. Click again to clear. Useful for quickly seeing all Waitlisted or all Offered Slot inquiries.</span>} />
-                          <Step n={3} text={<span><strong>Level chips</strong> (below the search bar) — filter by the class level the child is interested in (Pre-Kinder, Kinder, etc.). Only appears if classes with levels exist.</span>} />
+                          <Step n={1} text={<span><strong>Search bar</strong> (in the toolbar) — filters by child name or parent name across all statuses.</span>} />
+                          <Step n={2} text={<span><strong>All / Needs Action toggle</strong> (in the toolbar) — switch to <strong>Needs Action</strong> to show only inquiries not yet enrolled and not marked not proceeding. Use this at the start of each day to focus on what still needs follow-up.</span>} />
+                          <Step n={3} text={<span><strong>Stage filter chips</strong> (below the toolbar) — click any stage chip to filter to just those inquiries. Click again to clear. Useful for focusing on a specific stage like Waitlisted or Offered Slot.</span>} />
+                          <Step n={4} text={<span><strong>Level chips</strong> (next to Stage chips) — filter by the class level the child is interested in (Pre-Kinder, Kinder, etc.). Only appears if classes with levels exist.</span>} />
                         </div>
-                        <Note>The status filter and level filter stack with the search bar — you can combine them. To see all Waitlisted inquiries for Kinder, click the Waitlisted card and the Kinder chip at the same time.</Note>
+                        <Note>All filters stack together — you can combine Needs Action + a stage chip + a level chip at the same time.</Note>
                       </div>
                     ),
                   },
                   {
                     id: "views",
                     icon: TrendingUp,
-                    title: "Pipeline vs Table vs Analytics — which to use",
-                    searchText: "pipeline table analytics funnel view switch kanban board column",
+                    title: "Pipeline vs Table — which view to use",
+                    searchText: "pipeline table view switch kanban board column segmented control",
                     body: (
                       <div className="space-y-2.5 mt-1">
                         {[
@@ -2190,11 +2850,7 @@ export default function EnrollmentPage() {
                           },
                           {
                             label: "Table",
-                            desc: "Flat list with all details in columns. Best when you need to scan follow-up dates, sort by class, or perform bulk actions like marking multiple inquiries as Not Proceeding. Also the only view that shows Not Proceeding entries in context.",
-                          },
-                          {
-                            label: "Analytics",
-                            desc: "Funnel chart, source breakdown, and class demand table. Use this for reporting to management, deciding whether to open an extra class, or reviewing which marketing channel is sending the most inquiries.",
+                            desc: "Flat list with all details in columns. Best when you need to scan follow-up dates, sort by class, or review Not Proceeding entries in context.",
                           },
                         ].map(({ label, desc }) => (
                           <div key={label} className="flex gap-2.5 items-start">
@@ -2202,25 +2858,33 @@ export default function EnrollmentPage() {
                             <span className="text-xs">{desc}</span>
                           </div>
                         ))}
-                        <Note>Switching views preserves your active search and level filter. The status filter is respected in Pipeline and Table views but ignored in Analytics (which always counts all statuses for accurate funnel math).</Note>
+                        <Tip>Use the <strong>[Pipeline] [Table]</strong> segmented control in the toolbar to switch. Your active search, stage, and level filters carry over between views.</Tip>
                       </div>
                     ),
                   },
                   {
                     id: "analytics",
                     icon: TrendingUp,
-                    title: "Reading the Analytics view",
-                    searchText: "analytics funnel conversion rate drop off source breakdown class demand seats",
+                    title: "Reading the Analytics panel",
+                    searchText: "analytics funnel conversion rate drop off source breakdown class demand seats panel slide-over",
                     body: (
                       <div className="space-y-2">
-                        <p>Switch to <strong>Analytics</strong> (top right toggle) for a snapshot of how your enrollment pipeline is performing.</p>
-                        <div className="space-y-2 mt-2">
-                          <Step n={1} text={<span><strong>Overall Conversion</strong> — percentage of all inquiries that reached Enrolled status. A healthy rate varies, but anything below 30% is worth investigating at each stage drop-off.</span>} />
-                          <Step n={2} text={<span><strong>Pipeline Funnel</strong> — bar chart per stage. The "↓ X% continue" label between bars tells you what percentage of inquiries at that stage made it to the next. A large drop between Offered Slot → Enrolled usually means pricing or timing friction.</span>} />
-                          <Step n={3} text={<span><strong>Inquiry Sources</strong> — which channel brought in the most leads. Use this to decide where to focus your marketing spend next enrolment season.</span>} />
-                          <Step n={4} text={<span><strong>Class Demand vs. Capacity</strong> — how many active inquiries are interested in each class vs. how many seats remain. Red "Full" means no seats — consider opening a new section or redirecting interest to another class.</span>} />
+                        <p>Click the <strong>Analytics</strong> button in the New Students toolbar (or Returning Students toolbar) to open a slide-over panel with a snapshot of pipeline performance.</p>
+                        <p className="font-medium mt-2">New Students analytics:</p>
+                        <div className="space-y-2 mt-1">
+                          <Step n={1} text={<span><strong>Enrolled</strong> and <strong>Conversion %</strong> — how many inquiries made it to Enrolled status. Anything below 30% is worth investigating at each stage drop-off.</span>} />
+                          <Step n={2} text={<span><strong>Needs Attention</strong> (orange when non-zero) — inquiries with an overdue follow-up date or no follow-up set after 7 days. Zero is the goal.</span>} />
+                          <Step n={3} text={<span><strong>Pipeline Funnel</strong> — bar chart per stage with a "↓ X% continue" drop-off between stages. The <strong>Bottleneck</strong> callout highlights which active stage has the most inquiries.</span>} />
+                          <Step n={4} text={<span><strong>Inquiry Sources</strong> — which channel brought in the most leads.</span>} />
+                          <Step n={5} text={<span><strong>Class Demand vs. Capacity</strong> — active inquiries vs. seats remaining per class. Red "Full" means no seats left.</span>} />
                         </div>
-                        <Tip>The Analytics view uses your current <strong>level filter</strong> but ignores the status filter. To see funnel data for Kinder only, click the Kinder chip first, then switch to Analytics.</Tip>
+                        <p className="font-medium mt-2">Returning Students analytics:</p>
+                        <div className="space-y-2 mt-1">
+                          <Step n={1} text={<span><strong>Re-Enrolled %</strong> — how many of last year&apos;s students are confirmed for this year.</span>} />
+                          <Step n={2} text={<span><strong>Status Breakdown</strong> — bar chart showing Eligible, Re-Enrolled, Not Classified, etc.</span>} />
+                          <Step n={3} text={<span><strong>By Level</strong> — per-level table showing totals, eligible count, and re-enrolled count.</span>} />
+                        </div>
+                        <Tip>Close the panel with the X button or by clicking outside it. Filters you&apos;ve set in the main view affect what data is shown in the panel.</Tip>
                       </div>
                     ),
                   },

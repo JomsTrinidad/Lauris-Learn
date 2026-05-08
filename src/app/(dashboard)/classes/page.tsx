@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Plus, ExternalLink, BookOpen, HelpCircle, AlertTriangle, ChevronDown, ChevronRight, Search, X, Users, Clock, Link2, GraduationCap } from "lucide-react";
+import { Plus, ExternalLink, BookOpen, HelpCircle, AlertTriangle, ChevronDown, ChevronRight, Search, X, Users, Clock, Link2, GraduationCap, List } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -79,6 +79,19 @@ interface TeacherOption {
   fullName: string;
 }
 
+interface RosterStudent {
+  enrollmentId: string;
+  id: string;
+  firstName: string;
+  lastName: string;
+  preferredName: string;
+  gender: string;
+  dateOfBirth: string;
+  emergencyContactName: string;
+  emergencyContactPhone: string;
+  emergencyContactRelationship: string;
+}
+
 type ClassLevelKind = "core" | "sped" | "bridge" | "summer" | "mixed_age" | "enrichment" | "other";
 
 interface ClassLevelOption {
@@ -129,6 +142,16 @@ export default function ClassesPage() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [helpSearch, setHelpSearch] = useState("");
   const [helpExpanded, setHelpExpanded] = useState<Record<string, boolean>>({});
+
+  const [rosterOpen, setRosterOpen] = useState(false);
+  const [rosterClass, setRosterClass] = useState<ClassRecord | null>(null);
+  const [rosterStudents, setRosterStudents] = useState<RosterStudent[]>([]);
+  const [rosterLoading, setRosterLoading] = useState(false);
+  const [reassignStudentId, setReassignStudentId] = useState<string | null>(null);
+  const [reassignEnrollmentId, setReassignEnrollmentId] = useState<string | null>(null);
+  const [reassignTargetId, setReassignTargetId] = useState("");
+  const [reassignLoading, setReassignLoading] = useState(false);
+  const [reassignableClasses, setReassignableClasses] = useState<ClassRecord[]>([]);
 
   useEffect(() => {
     if (!schoolId) { setLoading(false); return; }
@@ -225,6 +248,86 @@ export default function ClassesPage() {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     setTeachers((data ?? []).map((p: any) => ({ id: p.id, fullName: p.full_name })));
+  }
+
+  function calcAge(dob: string): string {
+    if (!dob) return "—";
+    const now = new Date();
+    const birth = new Date(dob + "T00:00:00");
+    let years = now.getFullYear() - birth.getFullYear();
+    let months = now.getMonth() - birth.getMonth();
+    if (now.getDate() < birth.getDate()) months--;
+    if (months < 0) { years--; months += 12; }
+    if (years <= 0 && months <= 0) return "< 1 mo";
+    if (years === 0) return `${months} mo${months !== 1 ? "s" : ""}`;
+    if (months === 0) return `${years} yr${years !== 1 ? "s" : ""}`;
+    return `${years} yr${years !== 1 ? "s" : ""} ${months} mo${months !== 1 ? "s" : ""}`;
+  }
+
+  async function loadRoster(cls: ClassRecord) {
+    setRosterClass(cls);
+    setRosterStudents([]);
+    setRosterLoading(true);
+    setRosterOpen(true);
+    setReassignStudentId(null);
+    setReassignEnrollmentId(null);
+    setReassignTargetId("");
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data } = await (supabase as any)
+      .from("enrollments")
+      .select(`id, students(id, first_name, last_name, preferred_name, gender, date_of_birth, guardians(full_name, phone, relationship, is_emergency_contact))`)
+      .eq("class_id", cls.id)
+      .eq("status", "enrolled");
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows: RosterStudent[] = ((data ?? []) as any[]).map((enr: any) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const s = enr.students ?? {};
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const ec = ((s.guardians ?? []) as any[]).find((g: any) => g.is_emergency_contact) ?? (s.guardians?.[0] ?? {});
+      return {
+        enrollmentId: enr.id,
+        id: s.id ?? "",
+        firstName: s.first_name ?? "",
+        lastName: s.last_name ?? "",
+        preferredName: s.preferred_name ?? "",
+        gender: s.gender ?? "",
+        dateOfBirth: s.date_of_birth ?? "",
+        emergencyContactName: ec.full_name ?? "",
+        emergencyContactPhone: ec.phone ?? "",
+        emergencyContactRelationship: ec.relationship ?? "",
+      };
+    });
+    rows.sort((a, b) => `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`));
+    setRosterStudents(rows);
+    setRosterLoading(false);
+
+    // Reassignable classes: same year, same level, not full, not this class
+    const sameLevel = classes.filter(
+      (c) => c.id !== cls.id && c.level === cls.level && c.isActive && c.enrolled < c.capacity
+    );
+    setReassignableClasses(sameLevel);
+  }
+
+  async function handleReassign(enrollmentId: string) {
+    if (!reassignTargetId || !rosterClass) return;
+    setReassignLoading(true);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (supabase as any)
+      .from("enrollments")
+      .update({ class_id: reassignTargetId })
+      .eq("id", enrollmentId);
+    if (error) {
+      alert(error.message);
+      setReassignLoading(false);
+      return;
+    }
+    setReassignStudentId(null);
+    setReassignEnrollmentId(null);
+    setReassignTargetId("");
+    await Promise.all([loadRoster(rosterClass), loadClasses()]);
+    setReassignLoading(false);
   }
 
   function openAdd() {
@@ -335,7 +438,7 @@ export default function ClassesPage() {
             className="flex items-center gap-1.5 px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors border border-border"
           >
             <HelpCircle className="w-4 h-4" />
-            Help
+            Help Topics
           </button>
           <Button onClick={openAdd} disabled={!activeYear}>
             <Plus className="w-4 h-4" /> Add Class
@@ -449,12 +552,20 @@ export default function ClassesPage() {
                       <ExternalLink className="w-3 h-3" /> Messenger group chat
                     </a>
                   )}
-                  <button
-                    onClick={() => openEdit(cls)}
-                    className="w-full text-sm text-primary hover:underline text-left"
-                  >
-                    Edit class →
-                  </button>
+                  <div className="flex items-center justify-between">
+                    <button
+                      onClick={() => openEdit(cls)}
+                      className="text-sm text-primary hover:underline text-left"
+                    >
+                      Edit class →
+                    </button>
+                    <button
+                      onClick={() => loadRoster(cls)}
+                      className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground border border-border rounded-md px-2.5 py-1.5 hover:bg-muted transition-colors"
+                    >
+                      <List className="w-3.5 h-3.5" /> View Roster
+                    </button>
+                  </div>
                 </div>
               </Card>
             );
@@ -496,7 +607,12 @@ export default function ClassesPage() {
                     </td>
                     <td className="px-5 py-4"><Badge variant={cls.isActive ? "active" : "archived"}>{cls.isActive ? "Active" : "Inactive"}</Badge></td>
                     <td className="px-5 py-4 text-right">
-                      <button onClick={() => openEdit(cls)} className="text-primary text-sm hover:underline">Edit</button>
+                      <div className="flex items-center justify-end gap-3">
+                        <button onClick={() => loadRoster(cls)} className="text-muted-foreground text-sm hover:text-foreground flex items-center gap-1">
+                          <List className="w-3.5 h-3.5" /> Roster
+                        </button>
+                        <button onClick={() => openEdit(cls)} className="text-primary text-sm hover:underline">Edit</button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -577,6 +693,23 @@ export default function ClassesPage() {
                           <Step n={7} text={<span>Click <strong>Save Class</strong>.</span>} />
                         </div>
                         <Note>The class is tied to the currently active school year — it won't appear if you switch to a different year. Set the correct active year in Settings first.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "view-roster",
+                    icon: List,
+                    title: "View the class roster",
+                    searchText: "roster list students enrolled class view names age gender emergency contact reassign move",
+                    body: (
+                      <div className="space-y-2">
+                        <p>See all enrolled students in a class with key details at a glance.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Click <strong>View Roster</strong> on a class card, or <strong>Roster</strong> in the table row.</span>} />
+                          <Step n={2} text={<span>The panel shows each student's <strong>full name</strong>, preferred name, gender, age in years/months, and emergency contact details.</span>} />
+                          <Step n={3} text={<span>To move a student to another class: click <strong>Re-assign</strong> on the student row, pick a class from the dropdown, and click <strong>Move</strong>. Only classes of the same level that still have available capacity appear in the dropdown.</span>} />
+                        </div>
+                        <Note>Re-assign only changes the student's <strong>current class assignment</strong> — it does not affect attendance history or billing records already recorded for the old class.</Note>
                       </div>
                     ),
                   },
@@ -766,11 +899,142 @@ export default function ClassesPage() {
               {helpSearch ? (
                 <span>Showing results for "<span className="font-medium text-foreground">{helpSearch}</span>"</span>
               ) : (
-                <span>8 topics · click any to expand</span>
+                <span>9 topics · click any to expand</span>
               )}
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── Class Roster Slide-over ── */}
+      {rosterOpen && (
+        <>
+          <div className="fixed inset-0 bg-black/20 z-40" onClick={() => setRosterOpen(false)} />
+          <div className="fixed inset-y-0 right-0 w-full max-w-2xl bg-card border-l border-border shadow-xl z-50 flex flex-col animate-in slide-in-from-right duration-200">
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border shrink-0">
+              <div>
+                <div className="flex items-center gap-2">
+                  <List className="w-4 h-4 text-primary" />
+                  <h2 className="font-semibold text-sm">{rosterClass?.name} — Roster</h2>
+                </div>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {rosterLoading ? "Loading…" : `${rosterStudents.length} enrolled student${rosterStudents.length !== 1 ? "s" : ""}`}
+                  {rosterClass && ` · ${rosterClass.enrolled}/${rosterClass.capacity} capacity`}
+                </p>
+              </div>
+              <button type="button" onClick={() => setRosterOpen(false)} className="p-1 rounded hover:bg-muted transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="flex-1 overflow-y-auto [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full">
+              {rosterLoading ? (
+                <div className="flex items-center justify-center py-20 text-muted-foreground text-sm">Loading roster…</div>
+              ) : rosterStudents.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-20 text-center text-muted-foreground">
+                  <Users className="w-8 h-8 mb-3 opacity-30" />
+                  <p className="text-sm font-medium">No enrolled students</p>
+                  <p className="text-xs mt-1">Enroll students from the Students page.</p>
+                </div>
+              ) : (
+                <div className="divide-y divide-border">
+                  {rosterStudents.map((s, idx) => (
+                    <div key={s.id} className="px-5 py-4">
+                      <div className="flex items-start justify-between gap-4">
+                        {/* Student info */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs text-muted-foreground w-5 shrink-0">{idx + 1}.</span>
+                            <span className="font-medium text-sm">{s.lastName}, {s.firstName}</span>
+                            {s.preferredName && (
+                              <span className="text-xs text-muted-foreground">"{s.preferredName}"</span>
+                            )}
+                          </div>
+                          <div className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1 text-xs ml-7">
+                            <div>
+                              <span className="text-muted-foreground">Gender </span>
+                              <span>{s.gender || "—"}</span>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">Age </span>
+                              <span>{s.dateOfBirth ? calcAge(s.dateOfBirth) : "—"}</span>
+                            </div>
+                            <div className="col-span-2">
+                              <span className="text-muted-foreground">Emergency contact </span>
+                              {s.emergencyContactName ? (
+                                <span>
+                                  {s.emergencyContactName}
+                                  {s.emergencyContactRelationship && ` (${s.emergencyContactRelationship})`}
+                                  {s.emergencyContactPhone && ` · ${s.emergencyContactPhone}`}
+                                </span>
+                              ) : (
+                                <span>—</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Re-assign action */}
+                        {reassignableClasses.length > 0 && (
+                          <div className="shrink-0">
+                            {reassignStudentId === s.id ? (
+                              <div className="flex items-center gap-2">
+                                <select
+                                  value={reassignTargetId}
+                                  onChange={(e) => setReassignTargetId(e.target.value)}
+                                  className="text-xs border border-border rounded-md px-2 py-1.5 bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+                                >
+                                  <option value="">Move to…</option>
+                                  {reassignableClasses.map((c) => (
+                                    <option key={c.id} value={c.id}>
+                                      {c.name} ({c.enrolled}/{c.capacity})
+                                    </option>
+                                  ))}
+                                </select>
+                                <button
+                                  type="button"
+                                  onClick={() => handleReassign(s.enrollmentId)}
+                                  disabled={!reassignTargetId || reassignLoading}
+                                  className="text-xs px-2 py-1.5 bg-primary text-white rounded-md disabled:opacity-50 hover:bg-primary/90"
+                                >
+                                  {reassignLoading && reassignEnrollmentId === s.enrollmentId ? "Moving…" : "Move"}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => { setReassignStudentId(null); setReassignEnrollmentId(null); setReassignTargetId(""); }}
+                                  className="text-xs text-muted-foreground hover:text-foreground"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => { setReassignStudentId(s.id); setReassignEnrollmentId(s.enrollmentId); setReassignTargetId(""); }}
+                                className="text-xs text-muted-foreground hover:text-foreground border border-border rounded-md px-2 py-1.5 hover:bg-muted transition-colors"
+                              >
+                                Re-assign
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            {reassignableClasses.length === 0 && !rosterLoading && rosterStudents.length > 0 && (
+              <div className="px-5 py-3 border-t border-border text-xs text-muted-foreground shrink-0">
+                No other {rosterClass?.level} classes with available capacity to re-assign into.
+              </div>
+            )}
+          </div>
+        </>
       )}
 
       {/* Add/Edit Modal */}

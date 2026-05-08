@@ -315,7 +315,7 @@ export default function EventsPage() {
         <div className="flex items-center gap-2">
           <button onClick={() => { setHelpOpen(true); setHelpSearch(""); }}
             className="flex items-center gap-1.5 px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors border border-border">
-            <HelpCircle className="w-4 h-4" /> Help
+            <HelpCircle className="w-4 h-4" /> Help Topics
           </button>
           <Button onClick={() => { setForm(EMPTY_FORM); setFormError(null); setModalOpen(true); }}>
             <Plus className="w-4 h-4" /> Add Event

@@ -238,7 +238,7 @@ export default function AttendancePage() {
           className="flex items-center gap-1.5 px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors border border-border"
         >
           <HelpCircle className="w-4 h-4" />
-          Help
+          Help Topics
         </button>
       </div>
 

@@ -41,7 +41,7 @@ const navSections: NavSection[] = [
       { path: "/dashboard",  label: "Dashboard",  icon: LayoutDashboard },
       { path: "/students",   label: "Students",   icon: Users },
       { path: "/documents",  label: "Documents",  icon: FileText },
-      { path: "/enrollment", label: "Enrollment", icon: UserPlus,   adminOnly: true },
+      { path: "/enrollment", label: "Enrollment Hub", icon: UserPlus, adminOnly: true },
       { path: "/classes",    label: "Classes",    icon: School },
       { path: "/attendance", label: "Attendance", icon: CheckSquare },
     ],

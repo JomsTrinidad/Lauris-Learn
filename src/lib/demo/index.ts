@@ -325,6 +325,7 @@ export async function generateDemoData(
 
   const cfg     = SCENARIOS[scenario];
   const batchId = Date.now().toString(36).slice(-7); // still used for OR numbers + storage paths
+  const METHODS: string[] = ["gcash","cash","bank_transfer","maya","cash"];
   const slug    = schoolSlug(school.name);
   const password = demoPassword(slug);
 
@@ -688,6 +689,135 @@ export async function generateDemoData(
   });
   await batchInsert(admin, "enrollments", enrollRows);
 
+  // ── 11.5. Year-end classifications on archived year enrollments ─────────────
+  // Pre-classify students so the demo shows realistic year-end outcomes.
+  // Indices 0–3 get specific special cases; everyone else is eligible.
+  if (studentIds.length >= 4) {
+    const specialCases: Array<{ idx: number; progression_status: string; enrollment_status: string }> = [
+      { idx: 0, progression_status: "withdrawn",             enrollment_status: "withdrawn"  },
+      { idx: 1, progression_status: "not_continuing",        enrollment_status: "completed"  },
+      { idx: 2, progression_status: "not_eligible_retained", enrollment_status: "completed"  },
+      { idx: 3, progression_status: "not_eligible_other",    enrollment_status: "completed"  },
+    ];
+    for (const c of specialCases) {
+      await (admin as any).from("enrollments")
+        .update({ status: c.enrollment_status, progression_status: c.progression_status })
+        .eq("student_id", studentIds[c.idx]).eq("school_year_id", archivedYearId);
+    }
+    const eligibleIds = studentIds.slice(4);
+    if (eligibleIds.length > 0) {
+      await (admin as any).from("enrollments")
+        .update({ status: "completed", progression_status: "eligible" })
+        .in("student_id", eligibleIds).eq("school_year_id", archivedYearId);
+    }
+  }
+
+  // ── 11.6. Active-year enrollments + billing ──────────────────────────────────
+  // Enroll ~60% of eligible students into their promoted active-year class so
+  // the demo shows a school mid-way through SY 2026-2027 with classes running.
+  const activeEnrollRows: Record<string, unknown>[] = [];
+  let activeEnrollBillingCount = 0;
+  let activeEnrollPaymentCount = 0;
+  {
+    // Map: level name → list of indices into cfg.classes (and therefore nextClassIds)
+    const levelToNewClassIdx: Record<string, number[]> = {};
+    cfg.classes.forEach((c, i) => {
+      if (!levelToNewClassIdx[c.level]) levelToNewClassIdx[c.level] = [];
+      levelToNewClassIdx[c.level].push(i);
+    });
+    const levelSlotCounters: Record<string, number> = {};
+
+    let runningIdx = 0;
+    cfg.studentsPerClass.forEach((count, classIdx) => {
+      const classDef = cfg.classes[classIdx];
+      if (classDef.nextLevel === "GRADUATE" || classDef.nextLevel === "NON_PROMOTIONAL") {
+        runningIdx += count;
+        return;
+      }
+      const targetIndices = levelToNewClassIdx[classDef.nextLevel] ?? [];
+      if (!targetIndices.length) { runningIdx += count; return; }
+      if (!levelSlotCounters[classDef.nextLevel]) levelSlotCounters[classDef.nextLevel] = 0;
+
+      const eligibleInClass: number[] = [];
+      for (let j = 0; j < count; j++) {
+        const gi = runningIdx + j;
+        if (gi >= 4) eligibleInClass.push(gi); // skip special-case indices 0–3
+      }
+      const toEnroll = Math.ceil(eligibleInClass.length * 0.6);
+      eligibleInClass.slice(0, toEnroll).forEach((gi) => {
+        const slotIdx = (levelSlotCounters[classDef.nextLevel] ?? 0) % targetIndices.length;
+        levelSlotCounters[classDef.nextLevel] = slotIdx + 1;
+        activeEnrollRows.push({
+          student_id: studentIds[gi],
+          class_id: nextClassIds[targetIndices[slotIdx]],
+          school_year_id: schoolYearId,
+          academic_period_id: regularPeriodId,
+          status: "enrolled",
+          enrolled_at: "2026-06-01",
+        });
+      });
+      runningIdx += count;
+    });
+  }
+  if (activeEnrollRows.length) {
+    await batchInsert(admin, "enrollments", activeEnrollRows);
+
+    if (!cfg.trialNewMode) {
+      // Add 2 billing months for the active year to show ongoing payments
+      const activeMonths = ["2026-06-01", "2026-07-01"];
+      const activeBillingRows: Record<string, unknown>[] = [];
+      activeEnrollRows.forEach((enr, i) => {
+        const classIdx = nextClassIds.indexOf(enr.class_id as string);
+        const tuition = cfg.tuitionAmount + (classIdx % 2 === 0 ? 0 : 200);
+        const amountDue = tuition + 500;
+        activeMonths.forEach((month, mIdx) => {
+          const bStatus = mIdx === 0
+            ? (i % 3 === 0 ? "paid" : i % 3 === 1 ? "partial" : "unpaid")
+            : "unpaid";
+          activeBillingRows.push({
+            school_id: schoolId,
+            student_id: enr.student_id,
+            school_year_id: schoolYearId,
+            class_id: enr.class_id,
+            billing_month: month,
+            description: "Tuition & Miscellaneous",
+            amount_due: amountDue,
+            status: bStatus,
+            due_date: `${month.slice(0, 7)}-15`,
+            fee_type_id: tuitionFeeTypeId,
+          });
+        });
+      });
+      const { data: activeBillData, error: abErr } = await (admin as any)
+        .from("billing_records").insert(activeBillingRows).select("id, status, amount_due");
+      if (abErr) throw new Error(`active billing_records insert: ${abErr.message}`);
+      activeEnrollBillingCount = activeBillingRows.length;
+
+      const activePayRows: Record<string, unknown>[] = [];
+      (activeBillData ?? []).forEach((br: any, i: number) => {
+        if (br.status === "paid") {
+          activePayRows.push({
+            billing_record_id: br.id, amount: br.amount_due,
+            payment_method: METHODS[i % METHODS.length],
+            payment_date: "2026-06-05", status: "confirmed",
+            or_number: `OR-${batchId.toUpperCase()}-A${String(i + 1).padStart(4, "0")}`,
+            recorded_by: actorUserId,
+          });
+        } else if (br.status === "partial") {
+          activePayRows.push({
+            billing_record_id: br.id, amount: Math.floor(br.amount_due * 0.5),
+            payment_method: METHODS[(i * 3) % METHODS.length],
+            payment_date: "2026-06-10", status: "confirmed",
+            or_number: `OR-${batchId.toUpperCase()}-A${String(1000 + i).padStart(4, "0")}`,
+            recorded_by: actorUserId,
+          });
+        }
+      });
+      if (activePayRows.length) await batchInsert(admin, "payments", activePayRows, 150);
+      activeEnrollPaymentCount = activePayRows.length;
+    }
+  }
+
   // ── 12. Attendance records ──────────────────────────────────────────────────
   const days = schoolDays(shiftDate(cfg.attendStart, mo), shiftDate(cfg.attendEnd, mo));
   const attendRows: Record<string, unknown>[] = [];
@@ -740,7 +870,6 @@ export async function generateDemoData(
 
   // Payments for paid / partial records
   const payRows: Record<string, unknown>[] = [];
-  const METHODS: string[] = ["gcash","cash","bank_transfer","maya","cash"];
   (billingData ?? []).forEach((br: any, i: number) => {
     if (br.status === "paid") {
       payRows.push({
@@ -887,14 +1016,42 @@ export async function generateDemoData(
   }
   if (fileRows.length) await batchInsert(admin, "uploaded_files", fileRows);
 
+  // ── 21. Grading scale sets (Skills Progress + Numeric 1-5) ──────────────────
+  const { data: skillsSet } = await (admin as any)
+    .from("grading_scale_sets")
+    .insert({ school_id: schoolId, name: "Skills Progress Scale", description: "A progress-focused scale describing the level of support a student needs.", scale_mode: "label_only", is_default: false })
+    .select("id").single();
+  if (skillsSet?.id) {
+    await batchInsert(admin, "grading_scales", [
+      { school_id: schoolId, scale_set_id: skillsSet.id, label: "Needs Support", description: "Requires frequent guidance",                  color: "#ef4444", min_score: null, max_score: null, sort_order: 1 },
+      { school_id: schoolId, scale_set_id: skillsSet.id, label: "Progressing",   description: "Improving with some support",                 color: "#f97316", min_score: null, max_score: null, sort_order: 2 },
+      { school_id: schoolId, scale_set_id: skillsSet.id, label: "Independent",   description: "Performs skill without help",                 color: "#22c55e", min_score: null, max_score: null, sort_order: 3 },
+      { school_id: schoolId, scale_set_id: skillsSet.id, label: "Mastered",      description: "Performs skill consistently across settings", color: "#6366f1", min_score: null, max_score: null, sort_order: 4 },
+    ]);
+  }
+
+  const { data: numericSet } = await (admin as any)
+    .from("grading_scale_sets")
+    .insert({ school_id: schoolId, name: "Numeric 1–5 Scale", description: "A five-point numeric scale where each number represents a clear performance level.", scale_mode: "range_based", is_default: false })
+    .select("id").single();
+  if (numericSet?.id) {
+    await batchInsert(admin, "grading_scales", [
+      { school_id: schoolId, scale_set_id: numericSet.id, label: "1 – Needs Improvement",  description: "Well below expectations",              color: "#ef4444", min_score: 1, max_score: 1, sort_order: 1 },
+      { school_id: schoolId, scale_set_id: numericSet.id, label: "2 – Developing",         description: "Approaching expectations",             color: "#f97316", min_score: 2, max_score: 2, sort_order: 2 },
+      { school_id: schoolId, scale_set_id: numericSet.id, label: "3 – Meets Expectations", description: "Meets standard",                       color: "#eab308", min_score: 3, max_score: 3, sort_order: 3 },
+      { school_id: schoolId, scale_set_id: numericSet.id, label: "4 – Strong",             description: "Above expectations",                   color: "#22c55e", min_score: 4, max_score: 4, sort_order: 4 },
+      { school_id: schoolId, scale_set_id: numericSet.id, label: "5 – Excellent",          description: "Significantly exceeds expectations",   color: "#6366f1", min_score: 5, max_score: 5, sort_order: 5 },
+    ]);
+  }
+
   return {
     studentCount:       studentIds.length,
     teacherCount:       teacherIds.length,
     parentCount:        parentIds.length,
     classCount:         classIds.length,
     attendanceCount:    attendRows.length,
-    billingCount:       billingRows.length,
-    paymentCount:       payRows.length,
+    billingCount:       billingRows.length + activeEnrollBillingCount,
+    paymentCount:       payRows.length + activeEnrollPaymentCount,
     updatesCount:       updateRows.length,
     proudMomentsCount:  pmRows.length,
     observationCount:   obsRows.length,
@@ -986,6 +1143,8 @@ export async function clearDemoData(
   await (admin as any).from("holidays").delete().eq("school_id", schoolId);
   await (admin as any).from("enrollment_inquiries").delete().eq("school_id", schoolId);
   await (admin as any).from("progress_categories").delete().eq("school_id", schoolId);
+  await (admin as any).from("grading_scales").delete().eq("school_id", schoolId);
+  await (admin as any).from("grading_scale_sets").delete().eq("school_id", schoolId);
 
   // Document chain — migration 054 puts ON DELETE RESTRICT FKs from
   // child_documents / document_consents / document_requests back to students.

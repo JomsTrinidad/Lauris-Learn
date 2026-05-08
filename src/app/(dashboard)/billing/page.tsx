@@ -781,7 +781,7 @@ export default function BillingPage() {
         </div>
         <div className="flex gap-2">
           <button onClick={() => { setHelpOpen(true); setHelpSearch(""); }} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors px-2">
-            <HelpCircle className="w-4 h-4" /> Help
+            <HelpCircle className="w-4 h-4" /> Help Topics
           </button>
           {mainTab === "bills" && (
             <>

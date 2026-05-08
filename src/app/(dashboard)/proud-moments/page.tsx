@@ -1,9 +1,8 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Star, Plus, Trash2, Search, BookOpen, HelpCircle, X, ChevronDown, ChevronRight, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Modal, ModalCancelButton } from "@/components/ui/modal";
 import { Card, CardContent } from "@/components/ui/card";
@@ -74,6 +73,21 @@ export default function ProudMomentsPage() {
 
   const [showModal, setShowModal] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  // Student combobox state
+  const [studentSearch, setStudentSearch] = useState("");
+  const [showStudentDrop, setShowStudentDrop] = useState(false);
+  const studentComboRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (studentComboRef.current && !studentComboRef.current.contains(e.target as Node)) {
+        setShowStudentDrop(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   const [helpOpen, setHelpOpen] = useState(false);
   const [helpSearch, setHelpSearch] = useState("");
@@ -166,6 +180,7 @@ export default function ProudMomentsPage() {
     if (err) { setFormError("Could not save. Please try again."); return; }
     setShowModal(false);
     setForm({ studentId: "", category: "Kindness", note: "" });
+    setStudentSearch("");
     loadMoments();
   }
 
@@ -198,7 +213,7 @@ export default function ProudMomentsPage() {
         <div className="flex items-center gap-2">
           <button onClick={() => { setHelpOpen(true); setHelpSearch(""); }}
             className="flex items-center gap-1.5 px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors border border-border">
-            <HelpCircle className="w-4 h-4" /> Help
+            <HelpCircle className="w-4 h-4" /> Help Topics
           </button>
           <Button onClick={() => setShowModal(true)}>
             <Plus className="w-4 h-4 mr-2" />
@@ -451,21 +466,70 @@ export default function ProudMomentsPage() {
 
       <Modal
         open={showModal}
-        onClose={() => { setShowModal(false); setFormError(null); }}
+        onClose={() => { setShowModal(false); setFormError(null); setStudentSearch(""); setForm({ studentId: "", category: "Kindness", note: "" }); }}
         title="Add Proud Moment"
       >
         <div className="space-y-4">
           <div>
             <label className="text-sm font-medium mb-1.5 block">Student</label>
-            <Select
-              value={form.studentId}
-              onChange={(e) => setForm((f) => ({ ...f, studentId: e.target.value }))}
-            >
-              <option value="">Select a student…</option>
-              {students.map((s) => (
-                <option key={s.id} value={s.id}>{s.name} — {s.className}</option>
-              ))}
-            </Select>
+            <div ref={studentComboRef} className="relative">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+                <input
+                  type="text"
+                  value={studentSearch}
+                  onFocus={() => setShowStudentDrop(true)}
+                  onChange={(e) => {
+                    setStudentSearch(e.target.value);
+                    setForm((f) => ({ ...f, studentId: "" }));
+                    setShowStudentDrop(true);
+                  }}
+                  placeholder="Search by student name or class…"
+                  className="w-full pl-9 pr-8 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors"
+                />
+                {studentSearch && (
+                  <button
+                    type="button"
+                    onClick={() => { setStudentSearch(""); setForm((f) => ({ ...f, studentId: "" })); setShowStudentDrop(true); }}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+              {showStudentDrop && (() => {
+                const q = studentSearch.trim().toLowerCase();
+                const opts = q
+                  ? students.filter((s) =>
+                      s.name.toLowerCase().includes(q) || s.className.toLowerCase().includes(q)
+                    )
+                  : students;
+                return (
+                  <div className="absolute z-50 left-0 right-0 mt-1 bg-card border border-border rounded-lg shadow-lg max-h-52 overflow-y-auto [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full">
+                    {opts.length === 0 ? (
+                      <div className="px-4 py-3 text-sm text-muted-foreground">No students match "{studentSearch}"</div>
+                    ) : (
+                      opts.map((s) => (
+                        <button
+                          key={s.id}
+                          type="button"
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            setForm((f) => ({ ...f, studentId: s.id }));
+                            setStudentSearch(s.name);
+                            setShowStudentDrop(false);
+                          }}
+                          className={`w-full flex items-center justify-between gap-3 px-4 py-2.5 text-sm text-left hover:bg-muted transition-colors ${form.studentId === s.id ? "bg-primary/5 text-primary font-medium" : ""}`}
+                        >
+                          <span>{s.name}</span>
+                          <span className="text-xs text-muted-foreground flex-shrink-0">{s.className}</span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
           </div>
 
           <div>
