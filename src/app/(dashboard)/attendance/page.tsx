@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
-import { MessageSquare, Save, Check, AlertTriangle, Search, CheckSquare, Bell, BookOpen, HelpCircle, ChevronDown, ChevronRight, X, Calendar, Clock } from "lucide-react";
+import { MessageSquare, Save, Check, AlertTriangle, Search, CheckSquare, Bell, BookOpen, HelpCircle, ChevronDown, ChevronRight, X, Calendar, Clock, LayoutGrid, List } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -35,6 +35,18 @@ interface AbsenceNotif {
   reason: string | null;
 }
 
+interface SummaryRow {
+  classId: string;
+  className: string;
+  startTime: string | null;
+  enrolled: number;
+  present: number;
+  late: number;
+  absent: number;
+  excused: number;
+  unmarked: number;
+}
+
 const STATUS_OPTIONS = [
   { value: "present" as AttendanceStatus, label: "Present", active: "bg-green-500 text-white", inactive: "bg-muted hover:bg-green-100 hover:text-green-700" },
   { value: "late"    as AttendanceStatus, label: "Late",    active: "bg-yellow-400 text-white", inactive: "bg-muted hover:bg-yellow-100 hover:text-yellow-700" },
@@ -64,6 +76,9 @@ export default function AttendancePage() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [helpSearch, setHelpSearch] = useState("");
   const [helpExpanded, setHelpExpanded] = useState<Record<string, boolean>>({});
+  const [view, setView] = useState<"marking" | "summary">("marking");
+  const [summaryData, setSummaryData] = useState<SummaryRow[]>([]);
+  const [summaryLoading, setSummaryLoading] = useState(false);
   const [loadingStudents, setLoadingStudents] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -97,8 +112,10 @@ export default function AttendancePage() {
 
     // Pre-select from URL param or first class
     const paramClass = searchParams.get("class");
+    const paramView  = searchParams.get("view");
     const initial = paramClass && opts.find((c) => c.id === paramClass) ? paramClass : (opts[0]?.id ?? "");
     setSelectedClass(initial);
+    if (paramView === "summary") setView("summary");
     setLoading(false);
   }
 
@@ -174,6 +191,44 @@ export default function AttendancePage() {
     if (selectedClass) loadAttendance();
   }, [selectedClass, selectedDate, loadAttendance]);
 
+  const loadSummary = useCallback(async () => {
+    if (!classOptions.length || !selectedDate || !schoolId) return;
+    setSummaryLoading(true);
+    const classIds = classOptions.map((c) => c.id);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const [enrollRes, attRes] = await Promise.all([
+      (supabase as any).from("enrollments").select("class_id").in("class_id", classIds).eq("status", "enrolled"),
+      (supabase as any).from("attendance_records").select("class_id, status").in("class_id", classIds).eq("date", selectedDate),
+    ]);
+    const enrolledByClass: Record<string, number> = {};
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ((enrollRes.data ?? []) as any[]).forEach((e: any) => {
+      enrolledByClass[e.class_id] = (enrolledByClass[e.class_id] ?? 0) + 1;
+    });
+    const attByClass: Record<string, Record<string, number>> = {};
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ((attRes.data ?? []) as any[]).forEach((a: any) => {
+      if (!attByClass[a.class_id]) attByClass[a.class_id] = {};
+      attByClass[a.class_id][a.status] = (attByClass[a.class_id][a.status] ?? 0) + 1;
+    });
+    const rows: SummaryRow[] = classOptions.map((cls) => {
+      const enrolled = enrolledByClass[cls.id] ?? 0;
+      const att = attByClass[cls.id] ?? {};
+      const present = att.present ?? 0;
+      const late = att.late ?? 0;
+      const absent = att.absent ?? 0;
+      const excused = att.excused ?? 0;
+      return { classId: cls.id, className: cls.name, startTime: cls.startTime, enrolled, present, late, absent, excused, unmarked: Math.max(0, enrolled - present - late - absent - excused) };
+    });
+    setSummaryData(rows);
+    setSummaryLoading(false);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [classOptions, selectedDate, schoolId]);
+
+  useEffect(() => {
+    if (view === "summary") loadSummary();
+  }, [view, loadSummary]);
+
   function markAllPresent() {
     setSaved(false);
     setStudents((prev) => prev.map((s) => ({ ...s, status: "present" as AttendanceStatus })));
@@ -242,6 +297,27 @@ export default function AttendancePage() {
         </button>
       </div>
 
+      {/* View toggle */}
+      <div className="flex gap-1 border-b border-border">
+        {([
+          { key: "marking", label: "Mark Attendance", icon: List },
+          { key: "summary", label: "Daily Summary",   icon: LayoutGrid },
+        ] as const).map(({ key, label, icon: Icon }) => (
+          <button
+            key={key}
+            onClick={() => setView(key)}
+            className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px ${
+              view === key
+                ? "border-primary text-primary"
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Icon className="w-4 h-4" />
+            {label}
+          </button>
+        ))}
+      </div>
+
       {error && <ErrorAlert message={error} />}
 
       {!activeYear && (
@@ -250,6 +326,130 @@ export default function AttendancePage() {
         </div>
       )}
 
+      {view === "summary" ? (
+        <div className="space-y-4">
+          {/* Date picker for summary */}
+          <div className="w-64">
+            <label className="block text-sm font-medium mb-1">Date</label>
+            <DatePicker value={selectedDate} onChange={(v) => setSelectedDate(v)} />
+          </div>
+
+          {summaryLoading ? (
+            <div className="flex justify-center py-16"><div className="animate-spin rounded-full border-2 border-border border-t-primary w-8 h-8" /></div>
+          ) : (
+            <Card className="overflow-hidden">
+              <div className="px-5 py-4 border-b border-border bg-muted flex items-center justify-between">
+                <div>
+                  <h3>Attendance Summary</h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {selectedDate ? new Date(selectedDate + "T00:00:00").toLocaleDateString("en-PH", { weekday: "long", year: "numeric", month: "long", day: "numeric" }) : ""}
+                  </p>
+                </div>
+                {summaryData.length > 0 && (() => {
+                  const totEnrolled = summaryData.reduce((a, r) => a + r.enrolled, 0);
+                  const totPresent  = summaryData.reduce((a, r) => a + r.present + r.late, 0);
+                  const totUnmarked = summaryData.reduce((a, r) => a + r.unmarked, 0);
+                  return (
+                    <div className="text-right">
+                      <p className="text-sm font-semibold">{totPresent} / {totEnrolled} <span className="text-muted-foreground font-normal">attending</span></p>
+                      {totUnmarked > 0 && <p className="text-xs text-amber-600 mt-0.5">{totUnmarked} unmarked</p>}
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {summaryData.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-10">No classes found for this school year.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border bg-muted/40">
+                        <th className="text-left px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Class</th>
+                        <th className="text-center px-3 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Enrolled</th>
+                        <th className="text-center px-3 py-3 text-xs font-semibold text-green-700 uppercase tracking-wide">Present</th>
+                        <th className="text-center px-3 py-3 text-xs font-semibold text-yellow-700 uppercase tracking-wide">Late</th>
+                        <th className="text-center px-3 py-3 text-xs font-semibold text-red-700 uppercase tracking-wide">Absent</th>
+                        <th className="text-center px-3 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Excused</th>
+                        <th className="text-center px-3 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Unmarked</th>
+                        <th className="text-center px-3 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Rate</th>
+                        <th className="px-4 py-3" />
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {summaryData.map((row) => {
+                        const rate = row.enrolled > 0 ? Math.round(((row.present + row.late) / row.enrolled) * 100) : null;
+                        const allMarked = row.unmarked === 0 && row.enrolled > 0;
+                        return (
+                          <tr key={row.classId} className="hover:bg-muted/30 transition-colors">
+                            <td className="px-5 py-3.5">
+                              <p className="font-medium">{row.className}</p>
+                              {row.startTime && <p className="text-xs text-muted-foreground">{formatTime(row.startTime)}</p>}
+                            </td>
+                            <td className="text-center px-3 py-3.5 text-muted-foreground">{row.enrolled}</td>
+                            <td className="text-center px-3 py-3.5 font-medium text-green-700">{row.present || "—"}</td>
+                            <td className="text-center px-3 py-3.5 font-medium text-yellow-700">{row.late || "—"}</td>
+                            <td className="text-center px-3 py-3.5 font-medium text-red-700">{row.absent || "—"}</td>
+                            <td className="text-center px-3 py-3.5 text-gray-500">{row.excused || "—"}</td>
+                            <td className="text-center px-3 py-3.5">
+                              {row.unmarked > 0
+                                ? <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-amber-100 text-amber-700 text-xs font-semibold">{row.unmarked}</span>
+                                : <span className="text-muted-foreground">—</span>}
+                            </td>
+                            <td className="text-center px-3 py-3.5">
+                              {rate !== null
+                                ? <span className={`text-xs font-semibold ${rate >= 80 ? "text-green-700" : rate >= 60 ? "text-amber-700" : "text-red-700"}`}>{rate}%</span>
+                                : <span className="text-muted-foreground text-xs">—</span>}
+                            </td>
+                            <td className="px-4 py-3.5 text-right">
+                              <button
+                                onClick={() => { setView("marking"); setSelectedClass(row.classId); }}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                                  allMarked
+                                    ? "text-primary hover:underline"
+                                    : "bg-primary text-primary-foreground hover:opacity-90"
+                                }`}
+                              >
+                                {allMarked ? "View" : "Mark"}
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t-2 border-border bg-muted/40">
+                        <td className="px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Total</td>
+                        <td className="text-center px-3 py-3 font-semibold">{summaryData.reduce((a, r) => a + r.enrolled, 0)}</td>
+                        <td className="text-center px-3 py-3 font-semibold text-green-700">{summaryData.reduce((a, r) => a + r.present, 0) || "—"}</td>
+                        <td className="text-center px-3 py-3 font-semibold text-yellow-700">{summaryData.reduce((a, r) => a + r.late, 0) || "—"}</td>
+                        <td className="text-center px-3 py-3 font-semibold text-red-700">{summaryData.reduce((a, r) => a + r.absent, 0) || "—"}</td>
+                        <td className="text-center px-3 py-3 font-semibold text-gray-500">{summaryData.reduce((a, r) => a + r.excused, 0) || "—"}</td>
+                        <td className="text-center px-3 py-3">
+                          {summaryData.reduce((a, r) => a + r.unmarked, 0) > 0
+                            ? <span className="text-xs font-semibold text-amber-700">{summaryData.reduce((a, r) => a + r.unmarked, 0)}</span>
+                            : <span className="text-muted-foreground">—</span>}
+                        </td>
+                        <td className="text-center px-3 py-3">
+                          {(() => {
+                            const tot = summaryData.reduce((a, r) => a + r.enrolled, 0);
+                            const att = summaryData.reduce((a, r) => a + r.present + r.late, 0);
+                            return tot > 0
+                              ? <span className={`text-xs font-semibold ${(att/tot) >= 0.8 ? "text-green-700" : (att/tot) >= 0.6 ? "text-amber-700" : "text-red-700"}`}>{Math.round((att/tot)*100)}%</span>
+                              : <span className="text-muted-foreground text-xs">—</span>;
+                          })()}
+                        </td>
+                        <td />
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
+            </Card>
+          )}
+        </div>
+      ) : (
+      <>
       {/* Date + Class selectors */}
       <div className="flex flex-col sm:flex-row gap-4">
         <div className="flex-1">
@@ -431,6 +631,9 @@ export default function AttendancePage() {
           </Card>
         ))}
       </div>
+
+      </>
+      )}
 
       {/* ── Attendance Help Drawer ── */}
       {helpOpen && (
@@ -684,23 +887,25 @@ export default function AttendancePage() {
         </div>
       )}
 
-      {/* Sticky save */}
-      <div className="sticky bottom-4 flex justify-end">
-        <Button
-          onClick={handleSave}
-          size="lg"
-          className={`shadow-lg ${saved ? "bg-green-500" : ""}`}
-          disabled={saving || students.length === 0}
-        >
-          {saved ? (
-            <><Check className="w-5 h-5" /> Saved!</>
-          ) : saving ? (
-            <>Saving…</>
-          ) : (
-            <><Save className="w-5 h-5" /> Save Attendance</>
-          )}
-        </Button>
-      </div>
+      {/* Sticky save — marking view only */}
+      {view === "marking" && (
+        <div className="sticky bottom-4 flex justify-end">
+          <Button
+            onClick={handleSave}
+            size="lg"
+            className={`shadow-lg ${saved ? "bg-green-500" : ""}`}
+            disabled={saving || students.length === 0}
+          >
+            {saved ? (
+              <><Check className="w-5 h-5" /> Saved!</>
+            ) : saving ? (
+              <>Saving…</>
+            ) : (
+              <><Save className="w-5 h-5" /> Save Attendance</>
+            )}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

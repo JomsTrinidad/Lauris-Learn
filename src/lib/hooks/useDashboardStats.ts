@@ -48,12 +48,15 @@ export function useDashboardStats(schoolId: string | null, schoolYearId: string 
           .eq("school_id", schoolId)
           .in("status", ["unpaid", "partial"]),
 
-        // Overdue billing records
+        // Overdue billing records — matches computeStatus() in billing page:
+        // "overdue" = DB status 'overdue' OR (status 'unpaid' AND due_date < today).
+        // 'partial' records past due date still show as "partial" (not overdue) because
+        // computeStatus returns "partial" whenever amountPaid > 0, so exclude them here.
         supabase
           .from("billing_records")
           .select("id", { count: "exact", head: true })
           .eq("school_id", schoolId)
-          .eq("status", "overdue"),
+          .or(`status.eq.overdue,and(status.eq.unpaid,due_date.lt.${new Date().toISOString().split("T")[0]})`),
 
         // Upcoming events (next 30 days)
         supabase

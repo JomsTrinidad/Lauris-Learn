@@ -712,7 +712,7 @@ export default function DashboardPage() {
                   </p>
                 </div>
                 <Link
-                  href="/attendance"
+                  href="/attendance?view=summary"
                   className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline"
                 >
                   View Attendance Summary <ArrowRight className="w-3.5 h-3.5" />
@@ -803,7 +803,7 @@ export default function DashboardPage() {
                   return (
                     <div
                       key={cls.id}
-                      className="flex items-center justify-between px-6 py-4 opacity-60"
+                      className={`flex items-center justify-between px-6 py-4${marked ? " opacity-60" : ""}`}
                     >
                       <div className="flex items-start gap-3">
                         {marked ? (
@@ -824,7 +824,7 @@ export default function DashboardPage() {
                       {!marked && cls.totalEnrolled > 0 ? (
                         <Link
                           href={`/attendance?class=${cls.id}`}
-                          className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 text-white rounded-lg text-xs font-medium hover:opacity-90 transition-opacity"
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-muted text-muted-foreground border border-border rounded-lg text-xs font-medium hover:bg-muted/70 transition-colors"
                         >
                           <CheckSquare className="w-3.5 h-3.5" /> Mark
                         </Link>
