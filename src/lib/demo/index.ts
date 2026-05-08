@@ -59,6 +59,23 @@ const LAST_NAMES = [
 const T_FEMALE = ["Maria","Ana","Elena","Rosa","Carmen","Gloria","Patricia","Cecilia","Jennifer","Marilou"];
 const T_MALE   = ["Jose","Juan","Ricardo","Roberto","Antonio","Carlos","Eduardo","Manuel","Fernando","Rafael"];
 
+// Inquiry child names — completely separate from F_STUDENT / M_STUDENT / T_FEMALE / T_MALE
+// and use last names NOT in the LAST_NAMES pool, so there is zero overlap with enrolled students.
+const INQUIRY_CHILD_NAMES = [
+  "Alicia Buenaventura", "Bruno Macaraeg",    "Chloe Atienza",
+  "Dario Evangelista",   "Eloise Fabian",      "Franco Padilla",
+  "Gina Domingo",        "Hector Aguilar",     "Isabel Sy",
+  "Julius Tan",          "Kira Abad",          "Lorenzo Mata",
+  "Mara Chua",           "Nico Sison",         "Odessa Vera",
+];
+const INQUIRY_PARENT_NAMES = [
+  "Rachel Buenaventura", "Benedict Macaraeg",  "Vivian Atienza",
+  "Dennis Evangelista",  "Lydia Fabian",       "Ferdinand Padilla",
+  "Rowena Domingo",      "Arturo Aguilar",     "Norma Sy",
+  "Ignacio Tan",         "Connie Abad",        "Leandro Mata",
+  "Mylene Chua",         "Nardo Sison",        "Ofelia Vera",
+];
+
 function studentFirst(idx: number, female: boolean): string {
   const pool = female ? F_STUDENT : M_STUDENT;
   return pool[idx % pool.length];
@@ -974,8 +991,8 @@ export async function generateDemoData(
     const inquiryStatuses = ["inquiry","assessment_scheduled","waitlisted","offered_slot","not_proceeding"] as const;
     const inquiryRows: Record<string, unknown>[] = Array.from({ length: scenario === "compliance_heavy" ? 15 : 8 }, (_, i) => ({
       school_id: schoolId,
-      child_name: `${studentFirst(i + 50, i % 2 === 0)} ${lastName(i + 50)}`,
-      parent_name: `${T_FEMALE[i % T_FEMALE.length]} ${lastName(i + 60)}`,
+      child_name: INQUIRY_CHILD_NAMES[i % INQUIRY_CHILD_NAMES.length],
+      parent_name: INQUIRY_PARENT_NAMES[i % INQUIRY_PARENT_NAMES.length],
       contact: `0918${String((i * 7654321 + 1000000) % 9000000 + 1000000)}`,
       email: `inquiry.demo.${batchId}.${i + 1}@example.com`,
       desired_class: cfg.classes[i % cfg.classes.length].name,

@@ -6,7 +6,7 @@ export const metadata: Metadata = {
   title: "Lauris Learn",
   description: "School operating system for small preschool and tutorial centers",
   manifest: "/manifest.json",
-  icons: { icon: "/assets/logo/lauris-learn-logo.png" },
+  icons: { icon: "/assets/logo/favicon.png" },
 };
 
 export const viewport: Viewport = {

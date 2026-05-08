@@ -1,12 +1,13 @@
 "use client";
 import { useEffect, useState, useRef } from "react";
+import { useRouter } from "next/navigation";
 import {
   Plus, ArrowRight, Search, TrendingUp, Pencil,
   X, BookOpen, HelpCircle, AlertTriangle, ChevronDown, ChevronRight, UserCheck, Tag,
   RefreshCw, Check, Users, CreditCard,
 } from "lucide-react";
 import { DatePicker } from "@/components/ui/datepicker";
-import { formatTime } from "@/lib/utils";
+import { formatTime, getInitials, cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -104,6 +105,59 @@ interface ReturnStudent {
   activeYearClassName: string | null;
 }
 
+interface FullStudentProfile {
+  id: string;
+  firstName: string; lastName: string; preferredName: string | null;
+  studentCode: string | null; photoUrl: string | null; lrn: string | null;
+  dateOfBirth: string | null; gender: string | null;
+  className: string; enrollmentStatus: string | null;
+  guardianName: string; guardianRelationship: string; guardianPhone: string; guardianEmail: string; guardianCommPref: string | null;
+  allergies: string | null; medicalConditions: string | null;
+  emergencyContactName: string | null; emergencyContactPhone: string | null;
+  specialNeeds: string | null; teacherNotes: string | null;
+  progressionStatus: string | null; progressionNotes: string | null;
+  enrollments: { id: string; className: string; schoolYearName: string; periodName: string | null; status: string; startDate: string | null; endDate: string | null }[];
+}
+
+const COMM_PREF_LABELS: Record<string, string> = {
+  app: "App", sms_phone: "SMS / Phone", printed_note: "Printed Note",
+  in_person: "In-Person", assisted_by_school: "Assisted by School",
+};
+
+function calcFullAge(dob: string | null): string {
+  if (!dob) return "—";
+  const birth = new Date(dob + "T00:00:00");
+  const now = new Date();
+  let years = now.getFullYear() - birth.getFullYear();
+  let months = now.getMonth() - birth.getMonth();
+  if (now.getDate() < birth.getDate()) months--;
+  if (months < 0) { years--; months += 12; }
+  if (years < 0) return "—";
+  if (years === 0) return `${months} mo${months !== 1 ? "s" : ""}`;
+  if (months === 0) return `${years} yr${years !== 1 ? "s" : ""}`;
+  return `${years} yr${years !== 1 ? "s" : ""} ${months} mo`;
+}
+
+function ProfileSection({ title, children, defaultOpen = true }: { title: string; children: React.ReactNode; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="border border-border rounded-lg overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold bg-muted hover:bg-accent transition-colors text-left"
+      >
+        {title}
+        {open
+          ? <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+          : <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        }
+      </button>
+      {open && <div className="p-4 space-y-3">{children}</div>}
+    </div>
+  );
+}
+
 const PIPELINE: { status: InquiryStatus; label: string; badge: Parameters<typeof Badge>[0]["variant"] }[] = [
   { status: "inquiry",              label: "Inquiry",           badge: "inquiry" },
   { status: "assessment_scheduled", label: "Assessment Sched.", badge: "default" },
@@ -134,6 +188,7 @@ function levelRank(level: string): number {
 export default function EnrollmentPage() {
   const { schoolId, activeYear, userRole, userId } = useSchoolContext();
   const supabase = createClient();
+  const router = useRouter();
 
   const [inquiries, setInquiries] = useState<Inquiry[]>([]);
   const [classOptions, setClassOptions] = useState<ClassOption[]>([]);
@@ -163,6 +218,8 @@ export default function EnrollmentPage() {
   const [returningDetailStudent, setReturningDetailStudent] = useState<ReturnStudent | null>(null);
   const [returningDetailExtra, setReturningDetailExtra] = useState<{ dob: string | null; gender: string | null; notes: string | null; emergencyContact: { name: string; phone: string; relationship: string } | null } | null>(null);
   const [returningDetailLoading, setReturningDetailLoading] = useState(false);
+  const [fullProfileStudent, setFullProfileStudent] = useState<FullStudentProfile | null>(null);
+  const [fullProfileLoading, setFullProfileLoading] = useState(false);
 
   const [helpOpen, setHelpOpen] = useState(false);
   const [helpSearch, setHelpSearch] = useState("");
@@ -245,6 +302,15 @@ export default function EnrollmentPage() {
   const [placementPayError, setPlacementPayError] = useState<string | null>(null);
   const [placementPayType, setPlacementPayType] = useState<"full" | "installment">("installment");
   const [tuitionMonths, setTuitionMonths] = useState("10");
+
+  // On mount: read ?tab=returning and activate the tab
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("tab") === "returning") {
+      setMainTab("returning");
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+  }, []);
 
   useEffect(() => {
     if (!schoolId) { setLoading(false); return; }
@@ -695,6 +761,91 @@ export default function EnrollmentPage() {
       });
     }
     setReturningDetailLoading(false);
+  }
+
+  async function loadFullProfile(s: ReturnStudent) {
+    setReturningDetailStudent(null);
+    setFullProfileLoading(true);
+    setFullProfileStudent(null);
+
+    const { data } = await supabase
+      .from("students")
+      .select(`
+        id, first_name, last_name, preferred_name, student_code, photo_url, child_profile_id,
+        date_of_birth, gender, allergies, medical_conditions,
+        emergency_contact_name, emergency_contact_phone,
+        special_needs, teacher_notes,
+        guardians(id, full_name, relationship, phone, email, is_primary, communication_preference),
+        enrollments(id, status, start_date, end_date,
+          classes(name, class_levels(name)),
+          academic_periods(name),
+          school_years(name),
+          progression_status, progression_notes
+        )
+      `)
+      .eq("id", s.id)
+      .single();
+
+    if (!data) { setFullProfileLoading(false); return; }
+
+    // LRN lookup
+    let lrn: string | null = null;
+    if (data.child_profile_id) {
+      const { data: idRows } = await supabase
+        .from("child_identifiers")
+        .select("identifier_value")
+        .eq("child_profile_id", data.child_profile_id)
+        .eq("identifier_type", "lrn")
+        .maybeSingle();
+      lrn = idRows?.identifier_value ?? null;
+    }
+
+    const guardians: any[] = data.guardians as any[];
+    const primaryG = guardians.find((g) => g.is_primary) ?? guardians[0] ?? null;
+    const enrollments: any[] = data.enrollments as any[];
+
+    // active enrollment for className / status
+    const activeEnroll = enrollments.find((e) => e.status === "enrolled") ?? enrollments[0] ?? null;
+
+    const mapped: FullStudentProfile = {
+      id: data.id,
+      firstName: data.first_name, lastName: data.last_name,
+      preferredName: data.preferred_name ?? null,
+      studentCode: data.student_code ?? null,
+      photoUrl: data.photo_url ?? null,
+      lrn,
+      dateOfBirth: data.date_of_birth ?? null,
+      gender: data.gender ?? null,
+      className: activeEnroll?.classes?.name ?? "—",
+      enrollmentStatus: activeEnroll?.status ?? null,
+      guardianName: primaryG?.full_name ?? "—",
+      guardianRelationship: primaryG?.relationship ?? "",
+      guardianPhone: primaryG?.phone ?? "—",
+      guardianEmail: primaryG?.email ?? "",
+      guardianCommPref: primaryG?.communication_preference ?? null,
+      allergies: data.allergies ?? null,
+      medicalConditions: data.medical_conditions ?? null,
+      emergencyContactName: data.emergency_contact_name ?? null,
+      emergencyContactPhone: data.emergency_contact_phone ?? null,
+      specialNeeds: data.special_needs ?? null,
+      teacherNotes: data.teacher_notes ?? null,
+      progressionStatus: s.progressionStatus,
+      progressionNotes: s.progressionNotes,
+      enrollments: enrollments
+        .sort((a, b) => (b.school_years?.name ?? "").localeCompare(a.school_years?.name ?? ""))
+        .map((e) => ({
+          id: e.id,
+          className: e.classes?.name ?? "—",
+          schoolYearName: e.school_years?.name ?? "—",
+          periodName: e.academic_periods?.name ?? null,
+          status: e.status,
+          startDate: e.start_date ?? null,
+          endDate: e.end_date ?? null,
+        })),
+    };
+
+    setFullProfileStudent(mapped);
+    setFullProfileLoading(false);
   }
 
   async function searchReturningStudents(q: string) {
@@ -2412,12 +2563,13 @@ export default function EnrollmentPage() {
 
             {/* Footer */}
             <div className="p-4 border-t border-border flex items-center justify-between gap-3">
-              <a
-                href={`/students?student=${returningDetailStudent.id}`}
+              <button
+                type="button"
+                onClick={() => loadFullProfile(returningDetailStudent)}
                 className="text-xs text-muted-foreground hover:text-foreground transition-colors"
               >
                 Open full profile →
-              </a>
+              </button>
               {returningDetailStudent.derivedStatus !== "already_enrolled" && returningDetailStudent.derivedStatus !== "not_continuing" && returningDetailStudent.derivedStatus !== "graduated" && returningDetailStudent.recommendedNextLevel !== "GRADUATE" && (
                 <button
                   type="button"
@@ -2431,6 +2583,203 @@ export default function EnrollmentPage() {
           </div>
         </>
       )}
+
+      {/* Full Student Profile Modal */}
+      {fullProfileLoading && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
+          <div className="bg-card rounded-xl p-8 shadow-xl flex flex-col items-center gap-3">
+            <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+            <p className="text-sm text-muted-foreground">Loading profile…</p>
+          </div>
+        </div>
+      )}
+      <Modal open={!!fullProfileStudent} onClose={() => setFullProfileStudent(null)} title="Student Profile" className="max-w-xl">
+        {fullProfileStudent && (
+          <div className="space-y-3">
+            {/* Header */}
+            <div className="flex items-center gap-4 pb-1">
+              <div className="w-14 h-14 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xl font-semibold overflow-hidden flex-shrink-0">
+                {fullProfileStudent.photoUrl
+                  ? <img src={fullProfileStudent.photoUrl} alt={fullProfileStudent.firstName} className="w-full h-full object-cover" />
+                  : getInitials(`${fullProfileStudent.firstName} ${fullProfileStudent.lastName}`)
+                }
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-lg font-semibold">
+                  {fullProfileStudent.firstName} {fullProfileStudent.lastName}
+                  {fullProfileStudent.preferredName && (
+                    <span className="ml-2 text-sm font-normal text-muted-foreground">"{fullProfileStudent.preferredName}"</span>
+                  )}
+                </h3>
+                <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                  {fullProfileStudent.studentCode && (
+                    <span className="text-xs font-mono text-muted-foreground bg-muted px-2 py-0.5 rounded">ID: {fullProfileStudent.studentCode}</span>
+                  )}
+                  {fullProfileStudent.lrn && (
+                    <span className="text-xs font-mono text-muted-foreground bg-muted px-2 py-0.5 rounded">LRN: {fullProfileStudent.lrn}</span>
+                  )}
+                </div>
+                <p className="text-sm text-muted-foreground mt-0.5">{fullProfileStudent.className}</p>
+              </div>
+              <div className="ml-auto flex-shrink-0">
+                {fullProfileStudent.enrollmentStatus && (
+                  <Badge variant={fullProfileStudent.enrollmentStatus as "enrolled" | "completed" | "withdrawn" | "waitlisted" | "inquiry"}>
+                    {fullProfileStudent.enrollmentStatus}
+                  </Badge>
+                )}
+              </div>
+            </div>
+
+            <ProfileSection title="Personal Information">
+              <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                <div>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Date of Birth</p>
+                  <p className={cn("mt-0.5", !fullProfileStudent.dateOfBirth && "text-muted-foreground")}>{fullProfileStudent.dateOfBirth ?? "—"}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Age</p>
+                  <p className="mt-0.5">{calcFullAge(fullProfileStudent.dateOfBirth)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Gender</p>
+                  <p className={cn("mt-0.5", !fullProfileStudent.gender && "text-muted-foreground")}>{fullProfileStudent.gender ?? "—"}</p>
+                </div>
+              </div>
+            </ProfileSection>
+
+            <ProfileSection title="Parent / Guardian">
+              <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                <div>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Name</p>
+                  <p className="mt-0.5">{fullProfileStudent.guardianName}</p>
+                  {fullProfileStudent.guardianRelationship && (
+                    <p className="text-xs text-muted-foreground">{fullProfileStudent.guardianRelationship}</p>
+                  )}
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Phone</p>
+                  <p className={cn("mt-0.5", !fullProfileStudent.guardianPhone && "text-muted-foreground")}>{fullProfileStudent.guardianPhone || "—"}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Email</p>
+                  <p className={cn("mt-0.5", !fullProfileStudent.guardianEmail && "text-muted-foreground")}>{fullProfileStudent.guardianEmail || "—"}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Comm. Preference</p>
+                  <p className={cn("mt-0.5", !fullProfileStudent.guardianCommPref && "text-muted-foreground")}>{fullProfileStudent.guardianCommPref ? (COMM_PREF_LABELS[fullProfileStudent.guardianCommPref] ?? fullProfileStudent.guardianCommPref) : "—"}</p>
+                </div>
+              </div>
+            </ProfileSection>
+
+            <ProfileSection title="Health & Medical">
+              <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                <div>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Allergies</p>
+                  <p className={cn("mt-0.5", !fullProfileStudent.allergies && "text-muted-foreground")}>{fullProfileStudent.allergies || "—"}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Medical Conditions</p>
+                  <p className={cn("mt-0.5", !fullProfileStudent.medicalConditions && "text-muted-foreground")}>{fullProfileStudent.medicalConditions || "—"}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Special Needs</p>
+                  <p className={cn("mt-0.5", !fullProfileStudent.specialNeeds && "text-muted-foreground")}>{fullProfileStudent.specialNeeds || "—"}</p>
+                </div>
+              </div>
+            </ProfileSection>
+
+            <ProfileSection title="Emergency Contact & Pickups">
+              <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                <div>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Emergency Contact</p>
+                  <p className={cn("mt-0.5", !fullProfileStudent.emergencyContactName && "text-muted-foreground")}>
+                    {fullProfileStudent.emergencyContactName
+                      ? `${fullProfileStudent.emergencyContactName}${fullProfileStudent.emergencyContactPhone ? ` · ${fullProfileStudent.emergencyContactPhone}` : ""}`
+                      : "—"}
+                  </p>
+                </div>
+              </div>
+            </ProfileSection>
+
+            <ProfileSection title="Notes">
+              <div className="space-y-3 text-sm">
+                <div>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Teacher Notes</p>
+                  {fullProfileStudent.teacherNotes
+                    ? <p className="bg-yellow-50 border border-yellow-200 rounded px-3 py-2 text-yellow-900">{fullProfileStudent.teacherNotes}</p>
+                    : <p className="text-muted-foreground">—</p>
+                  }
+                </div>
+              </div>
+            </ProfileSection>
+
+            {(() => {
+              const ps = fullProfileStudent.progressionStatus;
+              if (!ps) return null;
+              const color =
+                ps === "eligible"              ? "bg-green-100 text-green-700" :
+                ps === "not_eligible_retained" ? "bg-amber-100 text-amber-700" :
+                ps === "not_eligible_other"    ? "bg-orange-100 text-orange-700" :
+                ps === "graduated"             ? "bg-muted text-muted-foreground" :
+                ps === "not_continuing"        ? "bg-rose-100 text-rose-700" :
+                                                 "bg-muted text-muted-foreground";
+              const label =
+                ps === "eligible"              ? "Eligible" :
+                ps === "not_eligible_retained" ? "Retained" :
+                ps === "not_eligible_other"    ? "Needs Review" :
+                ps === "graduated"             ? "Graduated" :
+                ps === "not_continuing"        ? "Not Continuing" :
+                ps.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+              return (
+                <ProfileSection title="Year-End Classification">
+                  <div className="text-sm space-y-1">
+                    <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${color}`}>{label}</span>
+                    {fullProfileStudent.progressionNotes && (
+                      <p className="text-muted-foreground">{fullProfileStudent.progressionNotes}</p>
+                    )}
+                  </div>
+                </ProfileSection>
+              );
+            })()}
+
+            <ProfileSection title="Enrollments">
+              <div className="space-y-2 text-sm">
+                {fullProfileStudent.enrollments.length === 0 ? (
+                  <p className="text-muted-foreground text-xs">No enrollments yet.</p>
+                ) : fullProfileStudent.enrollments.map((e) => (
+                  <div key={e.id} className="flex items-center justify-between gap-2">
+                    <div>
+                      <span className="font-medium">{e.className}</span>
+                      {e.schoolYearName && <span className="text-muted-foreground ml-1.5 text-xs">· {e.schoolYearName}</span>}
+                      {e.periodName && <span className="text-muted-foreground ml-1.5 text-xs">· {e.periodName}</span>}
+                      {(e.startDate || e.endDate) && (
+                        <span className="text-muted-foreground ml-1.5 text-xs">· {e.startDate ?? "?"} – {e.endDate ?? "?"}</span>
+                      )}
+                    </div>
+                    <Badge variant={e.status as "enrolled" | "completed" | "withdrawn" | "waitlisted" | "inquiry"}>{e.status}</Badge>
+                  </div>
+                ))}
+              </div>
+            </ProfileSection>
+
+            {/* Footer */}
+            <div className="flex justify-between items-center pt-2 border-t border-border">
+              <button
+                type="button"
+                onClick={() => {
+                  const studentId = fullProfileStudent.id;
+                  setFullProfileStudent(null);
+                  router.push(`/students?editStudent=${studentId}&returnTo=${encodeURIComponent("/enrollment?tab=returning")}`);
+                }}
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Edit in Students page →
+              </button>
+              <Button variant="outline" onClick={() => setFullProfileStudent(null)}>Close</Button>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       {/* Inquiry Edit Modal */}
       <Modal open={!!selectedInquiry} onClose={() => setSelectedInquiry(null)} title="Edit Inquiry">

@@ -1,5 +1,6 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Search, Plus, Pencil, ChevronDown, ChevronUp,
@@ -150,8 +151,8 @@ const STATUS_OPTIONS = [
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-function SectionToggle({ title, children }: { title: string; children: React.ReactNode }) {
-  const [open, setOpen] = useState(false);
+function SectionToggle({ title, children, defaultOpen = false }: { title: string; children: React.ReactNode; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
   return (
     <div className="border border-border rounded-lg overflow-hidden">
       <button
@@ -299,6 +300,11 @@ export default function StudentsPage() {
   const { schoolId, activeYear, userId, userRole, isReadOnly, allSchoolYears: schoolYearList } = useSchoolContext();
   const supabase = createClient();
   const queryClient = useQueryClient();
+  const router = useRouter();
+  const [pendingEditStudentId, setPendingEditStudentId] = useState<string | null>(null);
+  const [returnToPath, setReturnToPath] = useState<string | null>(null);
+  const [pendingEditLoading, setPendingEditLoading] = useState(false);
+  const openEditCalledRef = useRef(false);
 
   // Use cached query hooks for students and classes
   const studentsQuery = useStudentsList(schoolId);
@@ -400,6 +406,34 @@ export default function StudentsPage() {
   const [selectedClassId, setSelectedClassId] = useState("");
 
   // ─── Effects ───────────────────────────────────────────────────────────────
+
+  // On mount: read ?editStudent=<id>&returnTo=<path> — open the modal immediately (before data arrives)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const editId = params.get("editStudent");
+    const returnTo = params.get("returnTo");
+    if (editId) {
+      setPendingEditStudentId(editId);
+      setReturnToPath(returnTo ?? null);
+      openEditCalledRef.current = false;
+      window.history.replaceState(null, "", window.location.pathname);
+      // Open modal right away so the user never sees the page list
+      setPendingEditLoading(true);
+      setEditModalOpen(true);
+    }
+  }, []);
+
+  // Once students array is populated, populate the edit form and clear the loading state
+  useEffect(() => {
+    if (!pendingEditStudentId || students.length === 0 || openEditCalledRef.current) return;
+    const student = students.find((s) => s.id === pendingEditStudentId);
+    if (!student) return;
+    openEditCalledRef.current = true;
+    setPendingEditStudentId(null);
+    openEdit(student);
+    setPendingEditLoading(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingEditStudentId, students]);
 
   // On mount / school change: load code config and academic periods (still direct queries)
   // Students and classes now come from hooks
@@ -2045,11 +2079,11 @@ export default function StudentsPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4 text-sm">
-              <div className="space-y-3">
+            <SectionToggle title="Personal Information" defaultOpen>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
                 <div>
                   <p className="text-xs text-muted-foreground uppercase tracking-wide">Date of Birth</p>
-                  <p className="mt-0.5">{selectedStudent.dateOfBirth ?? "—"}</p>
+                  <p className={cn("mt-0.5", !selectedStudent.dateOfBirth && "text-muted-foreground")}>{selectedStudent.dateOfBirth ?? "—"}</p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground uppercase tracking-wide">Age</p>
@@ -2057,50 +2091,91 @@ export default function StudentsPage() {
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground uppercase tracking-wide">Gender</p>
-                  <p className="mt-0.5">{selectedStudent.gender ?? "—"}</p>
+                  <p className={cn("mt-0.5", !selectedStudent.gender && "text-muted-foreground")}>{selectedStudent.gender ?? "—"}</p>
                 </div>
               </div>
-              <div className="space-y-3">
+            </SectionToggle>
+
+            <SectionToggle title="Parent / Guardian" defaultOpen>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
                 <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Parent / Guardian</p>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Name</p>
                   <p className="mt-0.5">{selectedStudent.guardianName}</p>
                   {selectedStudent.guardianRelationship && (
                     <p className="text-xs text-muted-foreground">{selectedStudent.guardianRelationship}</p>
                   )}
                 </div>
                 <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Contact</p>
-                  <p className="mt-0.5">{selectedStudent.guardianPhone}</p>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Phone</p>
+                  <p className={cn("mt-0.5", !selectedStudent.guardianPhone && "text-muted-foreground")}>{selectedStudent.guardianPhone || "—"}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Email</p>
+                  <p className={cn("mt-0.5", !selectedStudent.guardianEmail && "text-muted-foreground")}>{selectedStudent.guardianEmail || "—"}</p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground uppercase tracking-wide">Comm. Preference</p>
-                  <p className="mt-0.5">{selectedStudent.guardianCommPref ? COMM_PREF_LABELS[selectedStudent.guardianCommPref] : "—"}</p>
+                  <p className={cn("mt-0.5", !selectedStudent.guardianCommPref && "text-muted-foreground")}>{selectedStudent.guardianCommPref ? COMM_PREF_LABELS[selectedStudent.guardianCommPref] : "—"}</p>
                 </div>
               </div>
-            </div>
+            </SectionToggle>
 
-            {(selectedStudent.allergies || selectedStudent.medicalConditions || selectedStudent.emergencyContactName || selectedStudent.specialNeeds) && (
-              <div className="border border-border rounded-lg p-4 space-y-2 text-sm">
-                <p className="font-semibold text-xs uppercase tracking-wide text-muted-foreground">Health & Emergency</p>
-                {selectedStudent.allergies && <div><span className="text-muted-foreground">Allergies:</span> {selectedStudent.allergies}</div>}
-                {selectedStudent.medicalConditions && <div><span className="text-muted-foreground">Medical Conditions:</span> {selectedStudent.medicalConditions}</div>}
-                {selectedStudent.emergencyContactName && (
-                  <div>
-                    <span className="text-muted-foreground">Emergency Contact:</span>{" "}
-                    {selectedStudent.emergencyContactName}
-                    {selectedStudent.emergencyContactPhone && ` · ${selectedStudent.emergencyContactPhone}`}
-                  </div>
-                )}
-                {selectedStudent.specialNeeds && <div><span className="text-muted-foreground">Special Needs:</span> {selectedStudent.specialNeeds}</div>}
+            <SectionToggle title="Health & Medical" defaultOpen>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                <div>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Allergies</p>
+                  <p className={cn("mt-0.5", !selectedStudent.allergies && "text-muted-foreground")}>{selectedStudent.allergies || "—"}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Medical Conditions</p>
+                  <p className={cn("mt-0.5", !selectedStudent.medicalConditions && "text-muted-foreground")}>{selectedStudent.medicalConditions || "—"}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Special Needs</p>
+                  <p className={cn("mt-0.5", !selectedStudent.specialNeeds && "text-muted-foreground")}>{selectedStudent.specialNeeds || "—"}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Primary Language</p>
+                  <p className={cn("mt-0.5", !selectedStudent.primaryLanguage && "text-muted-foreground")}>{selectedStudent.primaryLanguage || "—"}</p>
+                </div>
               </div>
-            )}
+            </SectionToggle>
 
-            {selectedStudent.teacherNotes && (
-              <div className="text-sm">
-                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Teacher Notes</p>
-                <p className="bg-yellow-50 border border-yellow-200 rounded px-3 py-2 text-yellow-900">{selectedStudent.teacherNotes}</p>
+            <SectionToggle title="Emergency Contact & Pickups" defaultOpen>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                <div>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Emergency Contact</p>
+                  <p className={cn("mt-0.5", !selectedStudent.emergencyContactName && "text-muted-foreground")}>
+                    {selectedStudent.emergencyContactName
+                      ? `${selectedStudent.emergencyContactName}${selectedStudent.emergencyContactPhone ? ` · ${selectedStudent.emergencyContactPhone}` : ""}`
+                      : "—"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Authorized Pickups</p>
+                  <p className={cn("mt-0.5", !selectedStudent.authorizedPickups && "text-muted-foreground")}>{selectedStudent.authorizedPickups || "—"}</p>
+                </div>
               </div>
-            )}
+            </SectionToggle>
+
+            <SectionToggle title="Notes" defaultOpen>
+              <div className="space-y-3 text-sm">
+                <div>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Teacher Notes</p>
+                  {selectedStudent.teacherNotes
+                    ? <p className="bg-yellow-50 border border-yellow-200 rounded px-3 py-2 text-yellow-900">{selectedStudent.teacherNotes}</p>
+                    : <p className="text-muted-foreground">—</p>
+                  }
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Admin Notes <span className="normal-case font-normal">(internal)</span></p>
+                  {selectedStudent.adminNotes
+                    ? <p className="bg-muted border border-border rounded px-3 py-2">{selectedStudent.adminNotes}</p>
+                    : <p className="text-muted-foreground">—</p>
+                  }
+                </div>
+              </div>
+            </SectionToggle>
 
             {selectedStudent.progressionStatus && (() => {
               const ps = selectedStudent.progressionStatus;
@@ -2121,78 +2196,77 @@ export default function StudentsPage() {
                 ps === "withdrawn"             ? "Withdrawn" :
                   ps.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
               return (
-                <div className="border border-border rounded-lg p-4 text-sm">
-                  <p className="font-semibold text-xs uppercase tracking-wide text-muted-foreground mb-2">Year-End Classification</p>
-                  <div className="flex items-center gap-2">
+                <SectionToggle title="Year-End Classification" defaultOpen>
+                  <div className="text-sm space-y-1">
                     <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${color}`}>{label}</span>
+                    {selectedStudent.progressionNotes && (
+                      <p className="text-muted-foreground">{selectedStudent.progressionNotes}</p>
+                    )}
                   </div>
-                  {selectedStudent.progressionNotes && (
-                    <p className="mt-1 text-muted-foreground">{selectedStudent.progressionNotes}</p>
-                  )}
-                </div>
+                </SectionToggle>
               );
             })()}
 
-            <div className="border border-border rounded-lg p-4 space-y-3 text-sm">
-              <div className="flex items-center justify-between">
-                <p className="font-semibold text-xs uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
-                  <BookOpen className="w-3.5 h-3.5" /> Enrollments
-                </p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEnrollmentModal(selectedStudent);
-                    setEnrollmentForm({ periodId: "", classId: "", status: "enrolled", startDate: "", endDate: "" });
-                    setEnrollmentFormError(null);
-                    setSelectedStudent(null);
-                  }}
-                  className="flex items-center gap-1 text-xs text-primary hover:underline"
-                >
-                  <Plus className="w-3 h-3" /> Add
-                </button>
-              </div>
-              {selectedStudent.allEnrollments.length === 0 ? (
-                <p className="text-muted-foreground text-xs">No enrollments yet.</p>
-              ) : (
-                <div className="space-y-2">
-                  {selectedStudent.allEnrollments.map((e) => (
-                    <div key={e.id} className="flex items-center justify-between gap-2">
-                      <div>
-                        <span className="font-medium">{e.className}</span>
-                        {e.schoolYearName && <span className="text-muted-foreground ml-1.5 text-xs">· {e.schoolYearName}</span>}
-                        {e.periodName && <span className="text-muted-foreground ml-1.5 text-xs">· {e.periodName}</span>}
-                        {(e.startDate || e.endDate) && (
-                          <span className="text-muted-foreground ml-1.5 text-xs">· {e.startDate ?? "?"} – {e.endDate ?? "?"}</span>
-                        )}
+            <SectionToggle title="Enrollments" defaultOpen>
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-end -mt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEnrollmentModal(selectedStudent);
+                      setEnrollmentForm({ periodId: "", classId: "", status: "enrolled", startDate: "", endDate: "" });
+                      setEnrollmentFormError(null);
+                      setSelectedStudent(null);
+                    }}
+                    className="flex items-center gap-1 text-xs text-primary hover:underline"
+                  >
+                    <Plus className="w-3 h-3" /> Add
+                  </button>
+                </div>
+                {selectedStudent.allEnrollments.length === 0 ? (
+                  <p className="text-muted-foreground text-xs">No enrollments yet.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {selectedStudent.allEnrollments.map((e) => (
+                      <div key={e.id} className="flex items-center justify-between gap-2">
+                        <div>
+                          <span className="font-medium">{e.className}</span>
+                          {e.schoolYearName && <span className="text-muted-foreground ml-1.5 text-xs">· {e.schoolYearName}</span>}
+                          {e.periodName && <span className="text-muted-foreground ml-1.5 text-xs">· {e.periodName}</span>}
+                          {(e.startDate || e.endDate) && (
+                            <span className="text-muted-foreground ml-1.5 text-xs">· {e.startDate ?? "?"} – {e.endDate ?? "?"}</span>
+                          )}
+                        </div>
+                        <Badge variant={e.status as "enrolled" | "completed" | "withdrawn" | "waitlisted" | "inquiry"}>{e.status}</Badge>
                       </div>
-                      <Badge variant={e.status as "enrolled" | "completed" | "withdrawn" | "waitlisted" | "inquiry"}>{e.status}</Badge>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className="border border-border rounded-lg p-4 space-y-2 text-sm">
-              <p className="font-semibold text-xs uppercase tracking-wide text-muted-foreground">Parent Portal Access</p>
-              {inviteStudent?.id === selectedStudent.id && inviteLink ? (
-                <div className="space-y-2">
-                  <p className="text-xs text-muted-foreground">Share this link with the guardian to give them access:</p>
-                  <div className="flex items-center gap-2">
-                    <input readOnly value={inviteLink} className="flex-1 text-xs border border-border rounded px-2 py-1.5 bg-muted font-mono truncate" />
-                    <button onClick={copyInviteLink} className="flex items-center gap-1 px-2 py-1.5 text-xs border border-border rounded hover:bg-accent transition-colors">
-                      {inviteCopied ? <Check className="w-3.5 h-3.5 text-green-600" /> : <Copy className="w-3.5 h-3.5" />}
-                      {inviteCopied ? "Copied!" : "Copy"}
-                    </button>
+                    ))}
                   </div>
-                  <p className="text-xs text-muted-foreground">Link expires in 30 days.</p>
-                </div>
-              ) : (
-                <Button size="sm" variant="outline" onClick={() => { setInviteStudent(selectedStudent); setInviteLink(null); handleGenerateInvite(selectedStudent); }} disabled={inviteGenerating}>
-                  <LinkIcon className="w-3.5 h-3.5" />
-                  {inviteGenerating ? "Generating…" : "Generate Invite Link"}
-                </Button>
-              )}
-            </div>
+                )}
+              </div>
+            </SectionToggle>
+
+            <SectionToggle title="Parent Portal Access" defaultOpen>
+              <div className="text-sm">
+                {inviteStudent?.id === selectedStudent.id && inviteLink ? (
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground">Share this link with the guardian to give them access:</p>
+                    <div className="flex items-center gap-2">
+                      <input readOnly value={inviteLink} className="flex-1 text-xs border border-border rounded px-2 py-1.5 bg-muted font-mono truncate" />
+                      <button onClick={copyInviteLink} className="flex items-center gap-1 px-2 py-1.5 text-xs border border-border rounded hover:bg-accent transition-colors">
+                        {inviteCopied ? <Check className="w-3.5 h-3.5 text-green-600" /> : <Copy className="w-3.5 h-3.5" />}
+                        {inviteCopied ? "Copied!" : "Copy"}
+                      </button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">Link expires in 30 days.</p>
+                  </div>
+                ) : (
+                  <Button size="sm" variant="outline" onClick={() => { setInviteStudent(selectedStudent); setInviteLink(null); handleGenerateInvite(selectedStudent); }} disabled={inviteGenerating}>
+                    <LinkIcon className="w-3.5 h-3.5" />
+                    {inviteGenerating ? "Generating…" : "Generate Invite Link"}
+                  </Button>
+                )}
+              </div>
+            </SectionToggle>
 
             <div className="flex justify-end gap-2 pt-2 border-t border-border">
               <Button variant="outline" onClick={() => setSelectedStudent(null)}>Close</Button>
@@ -2206,10 +2280,15 @@ export default function StudentsPage() {
 
       {/* Add / Edit Student Modals */}
       {[
-        { open: editModalOpen, onClose: () => { setEditModalOpen(false); setEditingStudent(null); }, title: "Edit Student", fErr: editFormError, setFErr: setEditFormError, f: editForm, setF: setEditForm, onSave: handleEdit, isEdit: true, photoFile: editPhotoFile, setPhotoFile: setEditPhotoFile },
+        { open: editModalOpen, onClose: () => { setEditModalOpen(false); setEditingStudent(null); setPendingEditLoading(false); if (returnToPath) { const p = returnToPath; setReturnToPath(null); openEditCalledRef.current = false; router.push(p); } }, title: "Edit Student", fErr: editFormError, setFErr: setEditFormError, f: editForm, setF: setEditForm, onSave: handleEdit, isEdit: true, photoFile: editPhotoFile, setPhotoFile: setEditPhotoFile },
         { open: addModalOpen, onClose: () => { setAddModalOpen(false); setForm(EMPTY_FORM); }, title: "Add Student", fErr: formError, setFErr: setFormError, f: form, setF: setForm, onSave: handleAdd, isEdit: false, photoFile: addPhotoFile, setPhotoFile: setAddPhotoFile },
       ].map(({ open, onClose, title, fErr, setFErr, f, setF, onSave, isEdit, photoFile, setPhotoFile }) => (
         <Modal key={title} open={open} onClose={onClose} title={title} className="max-w-2xl">
+          {isEdit && pendingEditLoading ? (
+            <div className="py-16 flex justify-center items-center">
+              <RefreshCw className="w-6 h-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
           <div className="space-y-4">
             {fErr && <ErrorAlert message={fErr} />}
             {!isEdit && (
@@ -2435,6 +2514,7 @@ export default function StudentsPage() {
               </Button>
             </div>
           </div>
+          )}
         </Modal>
       ))}
 
