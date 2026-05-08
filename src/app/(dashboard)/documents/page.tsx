@@ -69,7 +69,7 @@ interface ResolvedStudent {
 }
 
 export default function DocumentsPage() {
-  const { schoolId, userId, userRole, activeYear, loading: ctxLoading } = useSchoolContext();
+  const { schoolId, schoolName, userId, userRole, activeYear, loading: ctxLoading } = useSchoolContext();
   const supabase = useMemo(() => createClient(), []);
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -367,7 +367,9 @@ export default function DocumentsPage() {
       ) : viewMode === "plans-forms" ? (
         <PlansAndFormsView
           schoolId={schoolId}
+          schoolName={schoolName}
           schoolYearId={activeYear?.id ?? null}
+          schoolYearName={activeYear?.name ?? null}
           userId={userId ?? ""}
           userRole={userRole}
           defaultStudentId={studentFilter?.id ?? null}

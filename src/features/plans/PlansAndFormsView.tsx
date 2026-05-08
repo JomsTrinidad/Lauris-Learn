@@ -73,13 +73,17 @@ const STATUS_OPTIONS: PlanStatus[] = ["draft", "submitted", "in_review", "approv
 
 export function PlansAndFormsView({
   schoolId,
+  schoolName = "",
   schoolYearId,
+  schoolYearName = null,
   userId,
   userRole,
   defaultStudentId = null,
 }: {
   schoolId: string;
+  schoolName?: string;
   schoolYearId: string | null;
+  schoolYearName?: string | null;
   userId: string;
   userRole: "school_admin" | "teacher" | "parent" | "super_admin" | null;
   defaultStudentId?: string | null;
@@ -200,7 +204,9 @@ export function PlansAndFormsView({
         }}
         planId={editingId}
         schoolId={schoolId}
+        schoolName={schoolName}
         schoolYearId={schoolYearId}
+        schoolYearName={schoolYearName}
         userId={userId}
         userRole={userRole}
         defaultStudentId={defaultStudentId}

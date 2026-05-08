@@ -23,6 +23,7 @@ import type {
   StudentPlanGoalRow,
   StudentPlanInterventionRow,
   StudentPlanProgressEntryRow,
+  IepDetails,
 } from "./types";
 
 type Client = SupabaseClient<Database>;
@@ -178,24 +179,27 @@ export interface PlanSaveInput {
   title:          string;
   status:         PlanStatus;
 
-  // Profile
+  // Legacy profile fields (kept for backward compat; also pre-populate Present Levels)
   diagnosis:        string | null;
   strengths:        string | null;
   areasOfNeed:      string | null;
   backgroundNotes:  string | null;
 
-  // Parent input
+  // Legacy parent input fields
   parentNotes:        string | null;
   parentConcerns:     string | null;
   homeSupportNotes:   string | null;
 
-  // Review
-  reviewDate:           string | null;  // YYYY-MM-DD
+  // Legacy review fields
+  reviewDate:           string | null;
   reviewedByTeacherId:  string | null;
   reviewedByAdminId:    string | null;
-  parentAcknowledged:   boolean;        // toggle
+  parentAcknowledged:   boolean;
 
-  // Sub-rows — id is REQUIRED (caller mints with crypto.randomUUID() for new rows)
+  /** DepEd-specific payload (migration 085). */
+  iepDetails: IepDetails | null;
+
+  // Sub-rows
   goals:         Array<{
     id: string;
     domain: string | null;
@@ -204,6 +208,10 @@ export interface PlanSaveInput {
     measurement_method: string | null;
     baseline: string | null;
     success_criteria: string | null;
+    enroute_objectives: string | null;
+    timeline: string | null;
+    responsible_person: string | null;
+    remarks: string | null;
     sort_order: number;
   }>;
   interventions: Array<{
@@ -213,6 +221,7 @@ export interface PlanSaveInput {
     responsible_person: string | null;
     environment: string | null;
     notes: string | null;
+    goal_id: string | null;
     sort_order: number;
   }>;
   progress:      Array<{
@@ -225,9 +234,7 @@ export interface PlanSaveInput {
   }>;
   attachmentDocumentIds: string[];
 
-  /** Caller's profile id; saved on new progress entries' created_by. */
   currentUserId:  string;
-  /** Whether this is a brand-new plan (controls created_by + parent_acknowledged_at semantics). */
   isNew:          boolean;
 }
 
@@ -252,6 +259,7 @@ export async function savePlan(supabase: Client, input: PlanSaveInput): Promise<
     reviewed_by_teacher_id:             input.reviewedByTeacherId,
     reviewed_by_admin_id:               input.reviewedByAdminId,
     parent_acknowledged_at:             input.parentAcknowledged ? new Date().toISOString() : null,
+    iep_details:                        input.iepDetails as Record<string, unknown> | null,
     ...(input.isNew ? { created_by: input.currentUserId } : {}),
   };
 
@@ -282,6 +290,10 @@ async function diffSaveGoals(
       measurement_method:  g.measurement_method,
       baseline:            g.baseline,
       success_criteria:    g.success_criteria,
+      enroute_objectives:  g.enroute_objectives,
+      timeline:            g.timeline,
+      responsible_person:  g.responsible_person,
+      remarks:             g.remarks,
       sort_order:          g.sort_order,
     }));
     const { error } = await supabase
@@ -306,6 +318,7 @@ async function diffSaveInterventions(
       responsible_person:  i.responsible_person,
       environment:         i.environment,
       notes:               i.notes,
+      goal_id:             i.goal_id,
       sort_order:          i.sort_order,
     }));
     const { error } = await supabase
@@ -347,8 +360,6 @@ async function diffSaveAttachments(
   documentIds: string[],
   currentUserId: string,
 ) {
-  // Attachments don't have stable client ids — they are keyed by (plan_id, document_id).
-  // Fetch existing, delete dropped doc_ids, insert new doc_ids.
   const { data: existingRaw, error: readErr } = await supabase
     .from("student_plan_attachments")
     .select("id, document_id")
@@ -393,7 +404,6 @@ async function deleteRemoved(
 ) {
   let q = supabase.from(table).delete().eq("plan_id", planId);
   if (keepIds.length > 0) {
-    // PostgREST: not.in expects parenthesized comma-separated list
     q = q.not("id", "in", `(${keepIds.join(",")})`);
   }
   const { error } = await q;
