@@ -25,7 +25,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Plus, Trash2, Save, Send, Loader2, CheckCircle2,
-  Archive, Printer, Paperclip, X, ChevronDown, ChevronUp,
+  Archive, Printer, Paperclip, X, ChevronDown, ChevronUp, Sparkles, AlertCircle,
 } from "lucide-react";
 import { Modal, ModalCancelButton } from "@/components/ui/modal";
 import { Input } from "@/components/ui/input";
@@ -43,6 +43,9 @@ import {
 } from "./constants";
 import { getPlan, savePlan, setPlanStatus, type PlanSaveInput } from "./queries";
 import type { PlanFull, PlanStatus, IepDetails, IepTeamMember, IepAssistiveDevice, IepBarrier } from "./types";
+import { ProgressReportAssistant } from "./iep-assistant/ProgressReportAssistant";
+import { RecoveryPrompt } from "./RecoveryPrompt";
+import { useIepRecovery, type IepRecoveryState } from "@/lib/iep-recovery/useIepRecovery";
 import { format, parseISO } from "date-fns";
 import { DOCUMENT_TYPE_LABELS } from "@/features/documents/constants";
 import { cn } from "@/lib/utils";
@@ -90,6 +93,7 @@ export function IEPPlanModal({
   const [saving, setSaving]     = useState(false);
   const [error, setError]       = useState<string | null>(null);
   const [legendOpen, setLegendOpen] = useState(false);
+  const [assistantOpen, setAssistantOpen] = useState(false);
 
   // ── Head / legacy fields ──────────────────────────────────────────────
   const [title, setTitle]               = useState("");
@@ -181,6 +185,92 @@ export function IEPPlanModal({
   const [studentDocs, setStudentDocs] = useState<DocOption[]>([]);
   const [stableId, setStableId]   = useState<string | null>(null);
 
+  // ── Recovery system ────────────────────────────────────────────────────
+  const getFormStateForRecovery = (): IepRecoveryState => ({
+    title, studentId, status,
+    diagnosis, strengths, areasOfNeed, backgroundNotes,
+    parentNotes, parentConcerns, homeSupportNotes,
+    reviewDate, reviewedByTeacherId, reviewedByAdminId, parentAcknowledged,
+    region, division, district,
+    learnerLrn, learnerBirthDate, learnerSex, learnerGrade,
+    religion, motherTongue, homeAddress, parentWorkplace,
+    diffSeeing, diffHearing, diffCommunicating, diffMoving, diffConcentrating, diffRemembering,
+    diffOther, diffOtherDesc, hasMedical, medicalDiagnosis,
+    evaluationResults, presentStrengths, presentNeeds, disabilityImpact,
+    meetingDate, lastIepDate, meetingPurpose, revisionDate, iepReviewDate, recommendations, agreements,
+    teamMembers, assistiveDevices, barriers,
+    goals, interventions, progress, attachmentIds,
+  });
+
+  const restoreFormState = (data: IepRecoveryState) => {
+    setTitle(data.title ?? "");
+    setStudentId(data.studentId ?? "");
+    setStatus(data.status ?? "draft");
+    setDiagnosis(data.diagnosis ?? "");
+    setStrengths(data.strengths ?? "");
+    setAreasOfNeed(data.areasOfNeed ?? "");
+    setBackgroundNotes(data.backgroundNotes ?? "");
+    setParentNotes(data.parentNotes ?? "");
+    setParentConcerns(data.parentConcerns ?? "");
+    setHomeSupportNotes(data.homeSupportNotes ?? "");
+    setReviewDate(data.reviewDate ?? "");
+    setReviewedByTeacherId(data.reviewedByTeacherId ?? "");
+    setReviewedByAdminId(data.reviewedByAdminId ?? "");
+    setParentAcknowledged(data.parentAcknowledged ?? false);
+    setRegion(data.region ?? "");
+    setDivision(data.division ?? "");
+    setDistrict(data.district ?? "");
+    setLearnerLrn(data.learnerLrn ?? "");
+    setLearnerBirthDate(data.learnerBirthDate ?? "");
+    setLearnerSex(data.learnerSex ?? "");
+    setLearnerGrade(data.learnerGrade ?? "");
+    setReligion(data.religion ?? "");
+    setMotherTongue(data.motherTongue ?? "");
+    setHomeAddress(data.homeAddress ?? "");
+    setParentWorkplace(data.parentWorkplace ?? "");
+    setDiffSeeing(data.diffSeeing ?? false);
+    setDiffHearing(data.diffHearing ?? false);
+    setDiffCommunicating(data.diffCommunicating ?? false);
+    setDiffMoving(data.diffMoving ?? false);
+    setDiffConcentrating(data.diffConcentrating ?? false);
+    setDiffRemembering(data.diffRemembering ?? false);
+    setDiffOther(data.diffOther ?? false);
+    setDiffOtherDesc(data.diffOtherDesc ?? "");
+    setHasMedical(data.hasMedical ?? false);
+    setMedicalDiagnosis(data.medicalDiagnosis ?? "");
+    setEvaluationResults(data.evaluationResults ?? "");
+    setPresentStrengths(data.presentStrengths ?? "");
+    setPresentNeeds(data.presentNeeds ?? "");
+    setDisabilityImpact(data.disabilityImpact ?? "");
+    setMeetingDate(data.meetingDate ?? "");
+    setLastIepDate(data.lastIepDate ?? "");
+    setMeetingPurpose(data.meetingPurpose ?? "");
+    setRevisionDate(data.revisionDate ?? "");
+    setIepReviewDate(data.iepReviewDate ?? "");
+    setRecommendations(data.recommendations ?? "");
+    setAgreements(data.agreements ?? "");
+    setTeamMembers(data.teamMembers ?? []);
+    setAssistiveDevices(data.assistiveDevices ?? []);
+    setBarriers(data.barriers ?? []);
+    setGoals(data.goals ?? []);
+    setInterventions(data.interventions ?? []);
+    setProgress(data.progress ?? []);
+    setAttachmentIds(data.attachmentIds ?? []);
+  };
+
+  const recovery = useIepRecovery(
+    {
+      userId,
+      studentId,
+      planId,
+      schoolYearId,
+      draftUpdatedAt: updatedAt,
+      isEditing,
+    },
+    getFormStateForRecovery(),
+    restoreFormState,
+  );
+
   // ── Reset / hydrate ───────────────────────────────────────────────────
   useEffect(() => {
     if (!open) return;
@@ -241,6 +331,12 @@ export function IEPPlanModal({
       });
     return () => { cancelled = true; };
   }, [open, studentId, schoolId, supabase]);
+
+  // Mark changes on major field edits (title, studentId)
+  useEffect(() => {
+    if (!isEditing || !stableId) return; // Only during active editing
+    recovery.markChanged();
+  }, [title, studentId, recovery, isEditing, stableId]);
 
   // Prefetch LRN for selected student
   useEffect(() => {
@@ -459,6 +555,7 @@ export function IEPPlanModal({
         attachmentDocumentIds: attachmentIds,
         currentUserId: userId, isNew: !isEditing,
       });
+      recovery.clearOnSave(); // Clear recovery data after successful save
       setStatus(targetStatus);
       onSaved(stableId);
     } catch (err) {
@@ -473,6 +570,7 @@ export function IEPPlanModal({
     setSaving(true); setError(null);
     try {
       await setPlanStatus(supabase, stableId, next, next === "approved" ? userId : null);
+      recovery.clearOnSave(); // Clear recovery data after status change
       setStatus(next);
       onSaved(stableId);
     } catch (err) {
@@ -699,6 +797,17 @@ export function IEPPlanModal({
       title={isEditing ? `IEP Plan — ${title || studentName}` : "New IEP Plan"}
       className="max-w-5xl max-h-[94vh]"
     >
+      {/* Recovery Prompt */}
+      {recovery.showRecoveryPrompt && recovery.recoveryTimestamp && (
+        <div className="mx-6 mt-4">
+          <RecoveryPrompt
+            timestamp={recovery.recoveryTimestamp}
+            onRestore={recovery.handleRestore}
+            onDiscard={recovery.handleDiscardRecovery}
+          />
+        </div>
+      )}
+
       {/* Header strip */}
       <div className="-mx-6 -mt-6 px-6 pt-4 pb-4 border-b border-border bg-muted/30">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
@@ -913,6 +1022,20 @@ export function IEPPlanModal({
               <div className="pt-2 pb-0.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                 Present Levels of Academic Achievement / Functional Performance
               </div>
+              {isEditing && isStaff && (
+                <div className="flex justify-end mb-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setAssistantOpen(true)}
+                    title="Use a progress report to draft IEP sections"
+                  >
+                    <Sparkles className="w-4 h-4 mr-2" />
+                    Use Progress Report to Draft IEP Sections
+                  </Button>
+                </div>
+              )}
               <Field label="Results of Initial or Most Recent Evaluation">
                 <Textarea value={evaluationResults} onChange={(e) => setEvaluationResults(e.target.value)} disabled={!canEdit} rows={3} />
               </Field>
@@ -1414,9 +1537,40 @@ export function IEPPlanModal({
         </div>
       )}
 
+      {/* Unsaved changes indicator */}
+      {recovery.hasUnsavedChanges && isEditing && (
+        <div className="px-6 pt-2 pb-1 flex items-center gap-2 text-xs text-muted-foreground">
+          <AlertCircle className="w-3.5 h-3.5" />
+          <span>Unsaved changes are temporarily protected on this device.</span>
+        </div>
+      )}
+
       <div className="flex justify-end gap-2 pt-4 border-t border-border -mx-6 px-6">
         <ModalCancelButton label="Close" />
       </div>
+
+      {/* Progress Report Assistant panel */}
+      {assistantOpen && planId && (
+        <ProgressReportAssistant
+          open={assistantOpen}
+          onClose={() => setAssistantOpen(false)}
+          planId={planId}
+          studentId={studentId}
+          schoolId={schoolId}
+          userId={userId}
+          userRole={userRole}
+          setEvaluationResults={setEvaluationResults}
+          setPresentStrengths={setPresentStrengths}
+          setPresentNeeds={setPresentNeeds}
+          setParentConcerns={setParentConcerns}
+          setDisabilityImpact={setDisabilityImpact}
+          setGoals={setGoals}
+          setBarriers={setBarriers}
+          onSectionApplied={(label) => {
+            // Show brief inline feedback (optional toast)
+          }}
+        />
+      )}
     </Modal>
   );
 }

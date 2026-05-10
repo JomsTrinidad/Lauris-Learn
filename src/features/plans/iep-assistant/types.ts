@@ -1,0 +1,126 @@
+/**
+ * Types for IEP Progress Report Assistant.
+ * Extraction, summarization, suggestion mapping, and audit trail.
+ */
+
+// ─── Status types ────────────────────────────────────────────────────
+
+export type ExtractionStatus = "pending" | "extracting" | "done" | "failed" | "not_configured";
+export type SummaryStatus    = "pending" | "generating" | "done" | "failed" | "not_configured";
+export type SuggestionStatus = "pending" | "applied" | "rejected" | "edited";
+export type ConfidenceLabel  = "high" | "medium" | "low";
+export type TargetSection    = "assessment" | "supports" | "goals";
+export type TargetField      =
+  | "evaluation_results"
+  | "present_academic_strengths"
+  | "present_academic_needs"
+  | "parent_concerns"
+  | "disability_impact"
+  | "goal"
+  | "barrier";
+
+// ─── Row types (DB) ──────────────────────────────────────────────────
+
+export interface ReportDoc {
+  id: string;
+  title: string;
+  document_type: string;
+  effective_date: string | null;
+  created_at: string;
+}
+
+export interface ExtractionRow {
+  id: string;
+  status: ExtractionStatus;
+  extracted_text: string | null;
+  extraction_error: string | null;
+  provider: string | null;
+}
+
+export interface SummarySection {
+  therapy_focus?: string | null;
+  strengths?: string | null;
+  areas_of_need?: string | null;
+  progress_since_last?: string | null;
+  recommended_supports?: string | null;
+  suggested_goals?: string | null;
+  followup_notes?: string | null;
+}
+
+export interface SummaryRow extends SummarySection {
+  id: string;
+  status: SummaryStatus;
+  summary_error: string | null;
+}
+
+export interface SuggestionRow {
+  id: string;
+  target_section: TargetSection;
+  target_field: TargetField;
+  suggested_text: string;
+  source_excerpt: string | null;
+  confidence_label: ConfidenceLabel;
+  status: SuggestionStatus;
+  applied_text: string | null;
+  reviewed_at: string | null;
+  source_document_id: string;
+}
+
+// ─── API request/response contracts ──────────────────────────────────
+
+export interface ExtractRequest {
+  plan_id: string;
+  document_id: string;
+}
+
+export interface ExtractResponse {
+  extraction_id: string;
+  status: ExtractionStatus;
+  extracted_text?: string;
+  message?: string;
+}
+
+export interface SummarizeRequest {
+  extraction_id: string;
+}
+
+export interface SummarizeResponse {
+  summary_id: string;
+  status: SummaryStatus;
+  summary?: SummarySection;
+  suggestions?: SuggestionRow[];
+  message?: string;
+}
+
+export interface ReviewRequest {
+  suggestion_id: string;
+  action: "apply" | "reject" | "edit";
+  applied_text?: string;
+}
+
+export interface ReviewResponse {
+  ok: boolean;
+  message?: string;
+}
+
+// ─── Service layer interfaces ────────────────────────────────────────
+
+export interface ExtractionResult {
+  status: "done" | "not_configured";
+  text?: string;
+  message?: string;
+}
+
+export interface SummaryResult {
+  status: "done" | "not_configured";
+  sections?: SummarySection;
+  message?: string;
+}
+
+export interface SuggestionInsert {
+  target_section: TargetSection;
+  target_field: TargetField;
+  suggested_text: string;
+  source_excerpt: string | null;
+  confidence_label: ConfidenceLabel;
+}

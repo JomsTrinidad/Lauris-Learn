@@ -1018,6 +1018,188 @@ export type Database = {
           { foreignKeyName: "student_plan_attachments_attached_by_fkey"; columns: ["attached_by"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] }
         ];
       };
+      iep_report_extractions: {
+        Row: {
+          id: string;
+          school_id: string;
+          plan_id: string;
+          student_id: string;
+          document_id: string;
+          status: string;
+          extracted_text: string | null;
+          extraction_error: string | null;
+          provider: string | null;
+          extraction_metadata: Json | null;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          school_id: string;
+          plan_id: string;
+          student_id: string;
+          document_id: string;
+          status?: string;
+          extracted_text?: string | null;
+          extraction_error?: string | null;
+          provider?: string | null;
+          extraction_metadata?: Json | null;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          school_id?: string;
+          plan_id?: string;
+          student_id?: string;
+          document_id?: string;
+          status?: string;
+          extracted_text?: string | null;
+          extraction_error?: string | null;
+          provider?: string | null;
+          extraction_metadata?: Json | null;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          { foreignKeyName: "iep_report_extractions_school_id_fkey"; columns: ["school_id"]; isOneToOne: false; referencedRelation: "schools"; referencedColumns: ["id"] },
+          { foreignKeyName: "iep_report_extractions_plan_id_fkey"; columns: ["plan_id"]; isOneToOne: false; referencedRelation: "student_plans"; referencedColumns: ["id"] },
+          { foreignKeyName: "iep_report_extractions_student_id_fkey"; columns: ["student_id"]; isOneToOne: false; referencedRelation: "students"; referencedColumns: ["id"] },
+          { foreignKeyName: "iep_report_extractions_document_id_fkey"; columns: ["document_id"]; isOneToOne: false; referencedRelation: "child_documents"; referencedColumns: ["id"] },
+          { foreignKeyName: "iep_report_extractions_created_by_fkey"; columns: ["created_by"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] }
+        ];
+      };
+      iep_report_summaries: {
+        Row: {
+          id: string;
+          extraction_id: string;
+          plan_id: string;
+          school_id: string;
+          status: string;
+          therapy_focus: string | null;
+          strengths: string | null;
+          areas_of_need: string | null;
+          progress_since_last: string | null;
+          recommended_supports: string | null;
+          suggested_goals: string | null;
+          followup_notes: string | null;
+          summary_error: string | null;
+          provider: string | null;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          extraction_id: string;
+          plan_id: string;
+          school_id: string;
+          status?: string;
+          therapy_focus?: string | null;
+          strengths?: string | null;
+          areas_of_need?: string | null;
+          progress_since_last?: string | null;
+          recommended_supports?: string | null;
+          suggested_goals?: string | null;
+          followup_notes?: string | null;
+          summary_error?: string | null;
+          provider?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          extraction_id?: string;
+          plan_id?: string;
+          school_id?: string;
+          status?: string;
+          therapy_focus?: string | null;
+          strengths?: string | null;
+          areas_of_need?: string | null;
+          progress_since_last?: string | null;
+          recommended_supports?: string | null;
+          suggested_goals?: string | null;
+          followup_notes?: string | null;
+          summary_error?: string | null;
+          provider?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          { foreignKeyName: "iep_report_summaries_extraction_id_fkey"; columns: ["extraction_id"]; isOneToOne: false; referencedRelation: "iep_report_extractions"; referencedColumns: ["id"] },
+          { foreignKeyName: "iep_report_summaries_plan_id_fkey"; columns: ["plan_id"]; isOneToOne: false; referencedRelation: "student_plans"; referencedColumns: ["id"] },
+          { foreignKeyName: "iep_report_summaries_school_id_fkey"; columns: ["school_id"]; isOneToOne: false; referencedRelation: "schools"; referencedColumns: ["id"] },
+          { foreignKeyName: "iep_report_summaries_created_by_fkey"; columns: ["created_by"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] }
+        ];
+      };
+      iep_ai_suggestions: {
+        Row: {
+          id: string;
+          summary_id: string;
+          plan_id: string;
+          school_id: string;
+          source_document_id: string;
+          target_section: string;
+          target_field: string;
+          suggested_text: string;
+          source_excerpt: string | null;
+          confidence_label: string;
+          status: string;
+          applied_text: string | null;
+          reviewed_by: string | null;
+          reviewed_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          summary_id: string;
+          plan_id: string;
+          school_id: string;
+          source_document_id: string;
+          target_section: string;
+          target_field: string;
+          suggested_text: string;
+          source_excerpt?: string | null;
+          confidence_label?: string;
+          status?: string;
+          applied_text?: string | null;
+          reviewed_by?: string | null;
+          reviewed_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          summary_id?: string;
+          plan_id?: string;
+          school_id?: string;
+          source_document_id?: string;
+          target_section?: string;
+          target_field?: string;
+          suggested_text?: string;
+          source_excerpt?: string | null;
+          confidence_label?: string;
+          status?: string;
+          applied_text?: string | null;
+          reviewed_by?: string | null;
+          reviewed_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          { foreignKeyName: "iep_ai_suggestions_summary_id_fkey"; columns: ["summary_id"]; isOneToOne: false; referencedRelation: "iep_report_summaries"; referencedColumns: ["id"] },
+          { foreignKeyName: "iep_ai_suggestions_plan_id_fkey"; columns: ["plan_id"]; isOneToOne: false; referencedRelation: "student_plans"; referencedColumns: ["id"] },
+          { foreignKeyName: "iep_ai_suggestions_school_id_fkey"; columns: ["school_id"]; isOneToOne: false; referencedRelation: "schools"; referencedColumns: ["id"] },
+          { foreignKeyName: "iep_ai_suggestions_source_document_id_fkey"; columns: ["source_document_id"]; isOneToOne: false; referencedRelation: "child_documents"; referencedColumns: ["id"] },
+          { foreignKeyName: "iep_ai_suggestions_reviewed_by_fkey"; columns: ["reviewed_by"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] }
+        ];
+      };
     };
     Views: Record<string, never>;
     Functions: {
