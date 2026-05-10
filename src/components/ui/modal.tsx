@@ -7,13 +7,13 @@ import { Button } from "@/components/ui/button";
 const ModalCloseCtx = createContext<() => void>(() => {});
 export function useModalClose() { return useContext(ModalCloseCtx); }
 
-export function ModalCancelButton({ label = "Cancel" }: { label?: string }) {
+export function ModalCancelButton({ label = "Cancel", size }: { label?: string; size?: "sm" | "md" | "lg" }) {
   const tryClose = useModalClose();
   // type="button" is REQUIRED — without it, browsers default <button> to
   // type="submit" inside a <form>, which silently submits the form when the
   // user clicks Cancel. That bypassed the dirty-changes confirm prompt
   // because the form's onSubmit path closes the modal on success.
-  return <Button type="button" variant="outline" onClick={tryClose}>{label}</Button>;
+  return <Button type="button" variant="outline" size={size} onClick={tryClose}>{label}</Button>;
 }
 
 interface ModalProps {
@@ -22,9 +22,13 @@ interface ModalProps {
   title: string;
   children: ReactNode;
   className?: string;
+  /** "center" (default) vertically centers the dialog. "top" pins it to a
+   *  fixed distance from the top so the dialog doesn't jump when content
+   *  height changes between steps/views (e.g. multi-step wizards). */
+  align?: "center" | "top";
 }
 
-export function Modal({ open, onClose, title, children, className }: ModalProps) {
+export function Modal({ open, onClose, title, children, className, align = "center" }: ModalProps) {
   const [isDirty, setIsDirty] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const overlayRef = useRef<HTMLDivElement>(null);
@@ -97,7 +101,10 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
       <div
         ref={overlayRef}
         data-modal-overlay
-        className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+        className={cn(
+          "fixed inset-0 z-50 flex justify-center bg-black/50 p-4",
+          align === "top" ? "items-start pt-[5vh]" : "items-center",
+        )}
         onMouseDown={(e) => { backdropMouseDown.current = e.target === e.currentTarget; }}
         onClick={(e) => { if (e.target === e.currentTarget && backdropMouseDown.current) tryClose(); }}
       >

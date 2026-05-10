@@ -24,6 +24,9 @@ import {
   UserCircle2,
   ClipboardList,
   Share2,
+  Sparkles,
+  GitMerge,
+  Eye,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -784,6 +787,164 @@ function DocumentsHelpDrawer({
         </div>
       ),
     },
+
+    // ── IEP Collaboration Guide ──────────────────────────────────────────
+    {
+      id: "iep-what-is",
+      icon: ClipboardList,
+      title: "What is a Collaborative IEP?",
+      searchText: "iep individualized education plan what is collaborative deped order 44 special education sped learner disability",
+      body: (
+        <div className="space-y-2">
+          <p>An Individualized Education Program (IEP) is a written plan that describes a learner&apos;s current abilities, annual goals, and the supports and services they need to participate and progress in school.</p>
+          <p>Under DepEd Order No. 44 s. 2021, IEPs are required for learners with disabilities enrolled in public and private schools. Each IEP is developed collaboratively — meaning the school, family, and specialists all have a role in building the plan together.</p>
+          <Note>In Lauris Learn, IEP Plans live in the Plans &amp; Forms tab, separate from uploaded documents like therapy evaluation PDFs. The plan you author here is the official structured IEP; the PDFs are supporting evidence.</Note>
+        </div>
+      ),
+    },
+    {
+      id: "iep-who-participates",
+      icon: Users,
+      title: "Who Participates in the IEP?",
+      searchText: "iep team who participates parent sped teacher classroom teacher therapist admin role members",
+      body: (
+        <div className="space-y-2">
+          <p>A complete IEP team typically includes:</p>
+          <ul className="space-y-1.5 text-xs mt-1">
+            <li><strong>Parent / Caregiver</strong> — required by DepEd. Provides context, home observations, and priorities. Reviews and acknowledges the final plan.</li>
+            <li><strong>SPED Teacher</strong> — leads the IEP process, writes present levels and goals, coordinates the team.</li>
+            <li><strong>Classroom Teacher</strong> — shares academic and social participation observations; implements accommodations day-to-day.</li>
+            <li><strong>Therapists (speech, OT, behavioral)</strong> — contribute domain expertise and goal suggestions; do not finalize IEP wording.</li>
+            <li><strong>School Admin</strong> — reviews and approves the final plan; ensures DepEd compliance.</li>
+          </ul>
+          <Note>All team members are listed in Step 1 of the IEP. Adding a person here is for record-keeping — it does not grant them system access automatically.</Note>
+        </div>
+      ),
+    },
+    {
+      id: "iep-hybrid-workflow",
+      icon: GitMerge,
+      title: "How Hybrid IEP Collaboration Works",
+      searchText: "hybrid collaboration remote therapist online parent contribution workflow input gathering asynchronous",
+      body: (
+        <div className="space-y-2">
+          <p>IEP collaboration in Lauris is designed for schools where the team may not all be in the same room at the same time.</p>
+          <div className="space-y-3 mt-2 text-xs">
+            <div>
+              <p className="font-semibold text-foreground">Gathering input before the meeting</p>
+              <p className="text-muted-foreground mt-0.5">Therapists and teachers can send their observations, suggested goals, and assessment summaries to the SPED teacher ahead of time. The SPED teacher enters these into the IEP draft.</p>
+            </div>
+            <div>
+              <p className="font-semibold text-foreground">Parent contributions</p>
+              <p className="text-muted-foreground mt-0.5">Parent concerns and home observations can be gathered in a conversation, then captured in Step 2 (Needs &amp; Strengths) and Step 5 (Family Review).</p>
+            </div>
+            <div>
+              <p className="font-semibold text-foreground">Finalizing after the meeting</p>
+              <p className="text-muted-foreground mt-0.5">The SPED teacher saves the IEP as a Draft during authoring. Once the team has reviewed, the plan is submitted for admin approval.</p>
+            </div>
+          </div>
+        </div>
+      ),
+    },
+    {
+      id: "iep-suggestions-vs-official",
+      icon: AlertTriangle,
+      title: "Suggestions vs. Official IEP Content",
+      searchText: "therapist suggest official content school finalize ai suggestions review approve wording goals interventions",
+      body: (
+        <div className="space-y-2">
+          <p>This distinction is critical for IEP integrity:</p>
+          <ul className="space-y-1.5 text-xs mt-1">
+            <li><strong>Therapists suggest</strong> — domain-specific goals and observations based on their sessions. These are starting points, not final IEP language.</li>
+            <li><strong>Parents contribute</strong> — concerns, home observations, and priorities. This input informs the IEP but is not the official educational determination.</li>
+            <li><strong>The school finalizes</strong> — the SPED teacher and admin review all input and write the official IEP wording. This is what gets submitted and archived.</li>
+            <li><strong>AI generates suggestions</strong> — draft goals and support ideas based on the data entered. All AI output must be reviewed, adapted, and approved by a staff member before it becomes part of the official IEP.</li>
+          </ul>
+          <Tip>Never submit AI-generated text as official IEP content without human review. AI suggestions are drafts — they may need adaptation to fit the learner&apos;s specific context.</Tip>
+        </div>
+      ),
+    },
+    {
+      id: "iep-ai-assistance",
+      icon: Sparkles,
+      title: "How AI Assistance Works",
+      searchText: "ai artificial intelligence ocr document summarize goals suggestions progress report draft review assistant",
+      body: (
+        <div className="space-y-2">
+          <p>The AI assistant in Lauris can help speed up IEP authoring without replacing professional judgment.</p>
+          <div className="space-y-2 mt-1 text-xs">
+            <div><p className="font-semibold text-foreground">Document summarization</p><p className="text-muted-foreground mt-0.5">Upload a therapy evaluation or progress report to Document Coordination. The assistant can extract key findings and suggest how they translate into IEP present levels and goals.</p></div>
+            <div><p className="font-semibold text-foreground">Goal drafting</p><p className="text-muted-foreground mt-0.5">Based on the strengths and needs you document in Step 2, the assistant suggests measurable annual goals aligned to the learner&apos;s profile.</p></div>
+            <div><p className="font-semibold text-foreground">Support suggestions</p><p className="text-muted-foreground mt-0.5">The assistant can propose classroom accommodations and barriers/facilitators entries for Step 3.</p></div>
+          </div>
+          <Note>AI buttons are only enabled after you save the plan as a Draft. This ensures the assistant has enough context to generate relevant suggestions.</Note>
+          <Tip>All AI-generated content lands in the form as editable text. Review, edit, and approve before saving — the assistant helps you start, not finish.</Tip>
+        </div>
+      ),
+    },
+    {
+      id: "iep-revision-workflow",
+      icon: CheckCircle2,
+      title: "Draft, Review, and Approval",
+      searchText: "draft submit review approve archive status workflow revision cycle finalize",
+      body: (
+        <div className="space-y-2">
+          <p>IEP Plans in Lauris follow a clear lifecycle:</p>
+          <div className="space-y-1.5 mt-1">
+            <Step n={1} text={<><strong>Draft</strong> — the plan is being authored. Staff can edit freely; no formal review has occurred.</>} />
+            <Step n={2} text={<><strong>Submit for Review</strong> — signals the plan is ready for admin consideration. Available from Step 6 (Attachments).</>} />
+            <Step n={3} text={<><strong>Approve</strong> — school admin finalizes the IEP. Once approved, the plan is official. Editing is restricted.</>} />
+            <Step n={4} text={<><strong>Archive</strong> — plan is retired (superseded or end of year). Archived plans remain readable for audit.</>} />
+          </div>
+          <Note>The parent acknowledgment in Step 5 does not change the plan&apos;s status — it records that the family has reviewed the plan, separate from the school&apos;s approval workflow.</Note>
+        </div>
+      ),
+    },
+    {
+      id: "iep-privacy",
+      icon: Eye,
+      title: "Privacy and Visibility",
+      searchText: "privacy visibility parent see internal notes therapist access who sees what confidential",
+      body: (
+        <div className="space-y-2">
+          <p>IEP content visibility follows role-based access:</p>
+          <ul className="space-y-1.5 text-xs mt-1">
+            <li><strong>School Admin</strong> — sees all IEP plans across the school, including internal notes.</li>
+            <li><strong>SPED / Class Teachers</strong> — see plans for learners in their assigned classes.</li>
+            <li><strong>Parents</strong> — do not have access to IEP Plans in the current version. Parent input is captured by staff and reflected in the plan.</li>
+            <li><strong>Therapists</strong> — do not have direct IEP authoring access in Lauris Learn. Their contributions flow through shared documents and staff coordination.</li>
+            <li><strong>Internal Staff Notes</strong> (Step 2) — for team use only; not included in the printed IEP.</li>
+          </ul>
+          <Tip>If a therapist needs to review a progress report before contributing goals, share the relevant document with them via Document Coordination rather than giving them IEP authoring access.</Tip>
+        </div>
+      ),
+    },
+    {
+      id: "iep-supporting-documents",
+      icon: BookOpen,
+      title: "Supporting Documents and Evidence",
+      searchText: "supporting documents attachments therapy report evaluation evidence link upload iep connect",
+      body: (
+        <div className="space-y-2">
+          <p>IEP Plans in Lauris can reference documents from the Document Coordination workspace. These links create an audit trail connecting evidence to the official plan.</p>
+          <p className="text-xs">Common supporting documents:</p>
+          <ul className="space-y-0.5 text-xs mt-0.5">
+            <li>· Speech-language evaluation reports</li>
+            <li>· Occupational therapy assessments</li>
+            <li>· Developmental pediatrician reports</li>
+            <li>· School accommodation letters</li>
+            <li>· Previous IEP PDFs (archived or from prior school)</li>
+            <li>· Parent-provided medical certificates</li>
+          </ul>
+          <div className="space-y-1.5 mt-2 text-xs">
+            <Step n={1} text="Upload the document to Document Coordination (or request it from the parent or therapist)." />
+            <Step n={2} text="Set the document status to Active or Shared so it appears in the IEP attachment picker." />
+            <Step n={3} text="Open the IEP Plan → Step 6 (Attachments) → select the document to link it." />
+          </div>
+          <Note>Linking a document here does not change the document&apos;s access controls. It creates a reference from the IEP record to the document&apos;s audit trail.</Note>
+        </div>
+      ),
+    },
   ];
 
   const q = search.trim().toLowerCase();
@@ -800,7 +961,7 @@ function DocumentsHelpDrawer({
             <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center">
               <BookOpen className="w-4 h-4 text-primary" />
             </div>
-            <h2 className="font-semibold text-base">Documents Help</h2>
+            <h2 className="font-semibold text-base">Help &amp; Guides</h2>
           </div>
           <button type="button" onClick={onClose} className="p-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground">
             <X className="w-4 h-4" />

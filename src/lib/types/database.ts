@@ -23,11 +23,14 @@ export type Database = {
           text_size_scale: "default" | "large" | "extra_large";
           spacing_scale: "compact" | "default" | "relaxed";
           enrollment_balance_policy: "warn" | "block" | "allow";
+          region: string | null;
+          schools_division: string | null;
+          district: string | null;
           created_at: string;
           updated_at: string;
         };
-        Insert: { id?: string; name: string; trial_start_date?: string | null; trial_end_date?: string | null; trial_status?: "active" | "expired" | "converted"; logo_url?: string | null; primary_color?: string | null; accent_color?: string | null; report_footer_text?: string | null; text_size_scale?: "default" | "large" | "extra_large"; spacing_scale?: "compact" | "default" | "relaxed"; enrollment_balance_policy?: "warn" | "block" | "allow"; created_at?: string; updated_at?: string };
-        Update: { id?: string; name?: string; trial_start_date?: string | null; trial_end_date?: string | null; trial_status?: "active" | "expired" | "converted"; logo_url?: string | null; primary_color?: string | null; accent_color?: string | null; report_footer_text?: string | null; text_size_scale?: "default" | "large" | "extra_large"; spacing_scale?: "compact" | "default" | "relaxed"; enrollment_balance_policy?: "warn" | "block" | "allow"; updated_at?: string };
+        Insert: { id?: string; name: string; trial_start_date?: string | null; trial_end_date?: string | null; trial_status?: "active" | "expired" | "converted"; logo_url?: string | null; primary_color?: string | null; accent_color?: string | null; report_footer_text?: string | null; text_size_scale?: "default" | "large" | "extra_large"; spacing_scale?: "compact" | "default" | "relaxed"; enrollment_balance_policy?: "warn" | "block" | "allow"; region?: string | null; schools_division?: string | null; district?: string | null; created_at?: string; updated_at?: string };
+        Update: { id?: string; name?: string; trial_start_date?: string | null; trial_end_date?: string | null; trial_status?: "active" | "expired" | "converted"; logo_url?: string | null; primary_color?: string | null; accent_color?: string | null; report_footer_text?: string | null; text_size_scale?: "default" | "large" | "extra_large"; spacing_scale?: "compact" | "default" | "relaxed"; enrollment_balance_policy?: "warn" | "block" | "allow"; region?: string | null; schools_division?: string | null; district?: string | null; updated_at?: string };
         Relationships: [];
       };
       branches: {

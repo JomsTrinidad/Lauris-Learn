@@ -239,6 +239,7 @@ export default function SettingsPage() {
   // School info
   const [schoolInfo, setSchoolInfo] = useState({
     schoolName: "", branchName: "", address: "", phone: "", email: "",
+    region: "", schoolsDivision: "", district: "",
   });
 
   // School years
@@ -327,7 +328,7 @@ export default function SettingsPage() {
     const sb = supabase as any;
     const [{ data: school }, { data: branches }, { data: years }, { data: hols }, { data: periods }, { data: teacherRows }, { data: codeRow }, { data: scaleRows }, { data: scaleSetRows }, { data: levelRows }, { data: levelUsage }] =
       await Promise.all([
-        supabase.from("schools").select("name, enrollment_balance_policy").eq("id", schoolId).single(),
+        supabase.from("schools").select("name, enrollment_balance_policy, region, schools_division, district").eq("id", schoolId).single(),
         supabase.from("branches").select("name, address, phone").eq("school_id", schoolId).limit(1).maybeSingle(),
         supabase.from("school_years").select("id, name, start_date, end_date, status").eq("school_id", schoolId).order("start_date", { ascending: false }),
         supabase.from("holidays").select("id, name, date, applies_to_all, is_no_class, notes").eq("school_id", schoolId).order("date"),
@@ -346,6 +347,9 @@ export default function SettingsPage() {
       address: (branches as any)?.address ?? "",
       phone: (branches as any)?.phone ?? "",
       email: "",
+      region: (school as any)?.region ?? "",
+      schoolsDivision: (school as any)?.schools_division ?? "",
+      district: (school as any)?.district ?? "",
     });
     setBalancePolicy(((school as any)?.enrollment_balance_policy ?? "warn") as "warn" | "block" | "allow");
 
@@ -496,7 +500,13 @@ export default function SettingsPage() {
     setSaving(true);
     const { error: e1 } = await supabase
       .from("schools")
-      .update({ name: schoolInfo.schoolName, enrollment_balance_policy: balancePolicy })
+      .update({
+        name: schoolInfo.schoolName,
+        enrollment_balance_policy: balancePolicy,
+        region: schoolInfo.region || null,
+        schools_division: schoolInfo.schoolsDivision || null,
+        district: schoolInfo.district || null,
+      })
       .eq("id", schoolId);
     const { data: existing } = await supabase.from("branches").select("id").eq("school_id", schoolId).limit(1).maybeSingle();
     if (existing?.id) {
@@ -1214,6 +1224,20 @@ export default function SettingsPage() {
                 <div>
                   <label className="block text-sm font-medium mb-1">Telephone Number</label>
                   <Input value={schoolInfo.phone} onChange={(e) => setSchoolInfo({ ...schoolInfo, phone: e.target.value })} placeholder="+63 2 1234 5678" />
+                </div>
+                <div className="grid md:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Region</label>
+                    <Input value={schoolInfo.region} onChange={(e) => setSchoolInfo({ ...schoolInfo, region: e.target.value })} placeholder="e.g. Region IV-A" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Schools Division</label>
+                    <Input value={schoolInfo.schoolsDivision} onChange={(e) => setSchoolInfo({ ...schoolInfo, schoolsDivision: e.target.value })} placeholder="e.g. Division of Laguna" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">District</label>
+                    <Input value={schoolInfo.district} onChange={(e) => setSchoolInfo({ ...schoolInfo, district: e.target.value })} placeholder="e.g. Calamba District I" />
+                  </div>
                 </div>
                 <div>
                   <label className="block text-sm font-medium mb-1">Prior-Year Balance Policy</label>

@@ -114,6 +114,11 @@ export interface IepDetails {
   home_address?: string;
   parent_workplace?: string;
 
+  // Caregiver contact snapshot (point-in-time; prefilled from guardians on first open)
+  caregiver_name?: string;
+  caregiver_contact?: string;
+  caregiver_email?: string;
+
   // Difficulties / Medical Assessment checkboxes
   diff_seeing?: boolean;
   diff_hearing?: boolean;
