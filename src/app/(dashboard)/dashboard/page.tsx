@@ -16,6 +16,7 @@ import { formatCurrency } from "@/lib/utils";
 import { useDashboardStats, useBillingSummary } from "@/lib/hooks";
 import { GetStartedGuide } from "@/components/GetStartedGuide";
 import { useGetStartedDisplay } from "@/lib/hooks/useGetStartedDisplay";
+import { usePendingReviewCount } from "@/features/plans/review-queue";
 
 interface DashboardStats {
   presentToday: number;
@@ -100,6 +101,11 @@ export default function DashboardPage() {
 
   // Use the cached billing summary hook (Batch B1.6.1)
   const billingSummaryQuery = useBillingSummary(schoolId, activeYear?.id || null);
+
+  // Pending IEP review count — school_admin only
+  const { count: pendingIepCount } = usePendingReviewCount(
+    userRole === "school_admin" ? schoolId : null,
+  );
 
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [todayClasses, setTodayClasses] = useState<TodayClass[]>([]);
@@ -442,6 +448,15 @@ export default function DashboardPage() {
       id: "no_updates",
       label: noUpdatesToday ? "No parent update sent today" : "No parent updates in over 2 days",
       href: "/updates",
+      severity: "info",
+    });
+  }
+
+  if (pendingIepCount > 0) {
+    attention.push({
+      id: "pending_iep_review",
+      label: `${pendingIepCount} IEP plan${pendingIepCount > 1 ? "s" : ""} waiting for admin review`,
+      href: "/documents",
       severity: "info",
     });
   }

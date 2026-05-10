@@ -68,7 +68,7 @@ type GoalRow = PlanSaveInput["goals"][number];
 type InterventionRow = PlanSaveInput["interventions"][number];
 type ProgressRow = PlanSaveInput["progress"][number];
 
-interface StudentOption { id: string; full_name: string }
+interface StudentOption { id: string; full_name: string; student_code: string | null }
 interface DocOption { id: string; title: string; document_type: keyof typeof DOCUMENT_TYPE_LABELS }
 
 // ─── Props ─────────────────────────────────────────────────────────────
@@ -111,7 +111,10 @@ export function IEPPlanModal({
   const [expandedGoalTracking, setExpandedGoalTracking] = useState<Set<string>>(new Set());
   const [showReviewDetails, setShowReviewDetails] = useState(false);
   const [stepHelpOpen, setStepHelpOpen] = useState(false);
+  const [studentSearch, setStudentSearch] = useState("");
+  const [studentDropOpen, setStudentDropOpen] = useState(false);
   const moreMenuRef = useRef<HTMLDivElement>(null);
+  const studentDropRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!showMoreMenu) return;
@@ -126,6 +129,18 @@ export function IEPPlanModal({
 
   // Close step help panel when switching steps
   useEffect(() => { setStepHelpOpen(false); }, [activeStep]);
+
+  // Close student dropdown on outside click
+  useEffect(() => {
+    if (!studentDropOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (studentDropRef.current && !studentDropRef.current.contains(e.target as Node)) {
+        setStudentDropOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [studentDropOpen]);
 
   // ── Head / legacy fields ──────────────────────────────────────────────
   const [title, setTitle]               = useState("");
@@ -322,13 +337,13 @@ export function IEPPlanModal({
     (async () => {
       const { data: studentsData } = await supabase
         .from("students")
-        .select("id, first_name, last_name")
+        .select("id, first_name, last_name, student_code")
         .eq("school_id", schoolId)
         .order("last_name");
       if (cancelled) return;
       setStudents(
-        ((studentsData ?? []) as Array<{ id: string; first_name: string; last_name: string }>).map(
-          (s) => ({ id: s.id, full_name: `${s.first_name} ${s.last_name}` }),
+        ((studentsData ?? []) as Array<{ id: string; first_name: string; last_name: string; student_code: string | null }>).map(
+          (s) => ({ id: s.id, full_name: `${s.first_name} ${s.last_name}`, student_code: s.student_code ?? null }),
         ),
       );
 
@@ -467,6 +482,15 @@ export function IEPPlanModal({
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, studentId, schoolYearId, supabase]);
+
+  // Keep studentSearch display text in sync with the selected student
+  useEffect(() => {
+    if (studentDropOpen) return;
+    const found = students.find((s) => s.id === studentId);
+    if (found) setStudentSearch(found.full_name);
+    else if (!studentId) setStudentSearch("");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [studentId, students]);
 
   function resetAllFields() {
     setTitle(""); setStatus("draft");
@@ -960,6 +984,9 @@ export function IEPPlanModal({
             {studentName !== "—" && (
               <span className="text-xs text-muted-foreground truncate">{studentName}</span>
             )}
+            {title && studentName !== "—" && (
+              <span className="text-xs text-muted-foreground hidden sm:inline truncate">· {title}</span>
+            )}
             {updatedAt && (
               <span className="text-xs text-muted-foreground hidden sm:inline">
                 · {format(parseISO(updatedAt), "MMM d, h:mm a")}
@@ -1117,11 +1144,59 @@ export function IEPPlanModal({
                       placeholder="e.g. IEP Plan — SY 2025-2026" disabled={!canEdit} />
                   </Field>
                   <Field label="Learner" required>
-                    <Select value={studentId} onChange={(e) => setStudentId(e.target.value)}
-                      disabled={!canEdit || isEditing}>
-                      <option value="">Select a learner…</option>
-                      {students.map((s) => <option key={s.id} value={s.id}>{s.full_name}</option>)}
-                    </Select>
+                    <div className="relative" ref={studentDropRef}>
+                      <Input
+                        value={studentSearch}
+                        onChange={(e) => {
+                          setStudentSearch(e.target.value);
+                          setStudentDropOpen(true);
+                          if (!e.target.value) setStudentId("");
+                        }}
+                        onFocus={() => { if (canEdit && !isEditing) setStudentDropOpen(true); }}
+                        placeholder="Search learner…"
+                        disabled={!canEdit || isEditing}
+                        className="pr-7"
+                      />
+                      {studentId && canEdit && !isEditing && (
+                        <button
+                          type="button"
+                          onClick={() => { setStudentId(""); setStudentSearch(""); setStudentDropOpen(false); }}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                          tabIndex={-1}
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                      {studentDropOpen && canEdit && !isEditing && (
+                        <div className="absolute z-30 top-full left-0 right-0 mt-1 bg-card border border-border rounded-lg shadow-lg max-h-52 overflow-y-auto [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full">
+                          {students
+                            .filter((s) => s.full_name.toLowerCase().includes(studentSearch.toLowerCase()))
+                            .map((s) => (
+                              <button
+                                key={s.id}
+                                type="button"
+                                onClick={() => {
+                                  setStudentId(s.id);
+                                  setStudentSearch(s.full_name);
+                                  setStudentDropOpen(false);
+                                }}
+                                className={cn(
+                                  "flex items-center justify-between w-full px-3 py-2 text-sm text-left hover:bg-muted transition-colors gap-3",
+                                  s.id === studentId && "bg-primary/10 text-primary font-medium",
+                                )}
+                              >
+                                <span>{s.full_name}</span>
+                                {s.student_code && (
+                                  <span className="text-xs text-muted-foreground shrink-0 font-normal">{s.student_code}</span>
+                                )}
+                              </button>
+                            ))}
+                          {students.filter((s) => s.full_name.toLowerCase().includes(studentSearch.toLowerCase())).length === 0 && (
+                            <div className="px-3 py-2.5 text-sm text-muted-foreground">No learners found.</div>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </Field>
                 </div>
 

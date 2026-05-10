@@ -14,7 +14,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { createServerClient } from "@/lib/supabase/server";
+import { createClient } from "@/lib/supabase/server";
 import type {
   ReviewRequest,
   ReviewResponse,
@@ -37,7 +37,7 @@ function isValidUuid(id: string): boolean {
 const VALID_ACTIONS = ["apply", "reject", "edit"];
 
 export async function POST(req: NextRequest) {
-  const serverClient = await createServerClient();
+  const serverClient = await createClient();
 
   // ─── Step 1: Auth ────────────────────────────────────────────────
   const { data: { user }, error: authErr } = await serverClient.auth.getUser();
@@ -68,11 +68,14 @@ export async function POST(req: NextRequest) {
   }
 
   // ─── Step 3: Fetch suggestion row ────────────────────────────────
-  const { data: suggestion, error: suggErr } = await serverClient
+  const { data: suggestionRaw, error: suggErr } = await serverClient
     .from("iep_ai_suggestions")
     .select("id, plan_id, status")
     .eq("id", suggestion_id)
     .maybeSingle();
+
+  // Cast needed: Supabase generic inference degrades to `never` for this table in server context
+  const suggestion = suggestionRaw as { id: string; plan_id: string; status: string } | null;
 
   if (suggErr || !suggestion) {
     return errorJson("Suggestion not found or access denied", 404);
@@ -88,19 +91,18 @@ export async function POST(req: NextRequest) {
 
   // ─── Step 4: Update suggestion ───────────────────────────────────
   const newStatus = action === "reject" ? "rejected" : "applied";
-  const updatePayload: Record<string, any> = {
-    status: newStatus,
+  const base = {
+    status: newStatus as "applied" | "rejected",
     reviewed_by: user.id,
     reviewed_at: new Date().toISOString(),
   };
+  const updateData = action === "edit" && applied_text
+    ? { ...base, applied_text: applied_text.trim() }
+    : base;
 
-  if (action === "edit" && applied_text) {
-    updatePayload.applied_text = applied_text.trim();
-  }
-
-  const { error: updateErr } = await serverClient
-    .from("iep_ai_suggestions")
-    .update(updatePayload)
+  // Cast from() result to any: Supabase generic inference resolves Update type to `never` here
+  const { error: updateErr } = await (serverClient.from("iep_ai_suggestions") as any)
+    .update(updateData)
     .eq("id", suggestion_id);
 
   if (updateErr) {

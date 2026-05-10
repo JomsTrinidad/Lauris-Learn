@@ -84,15 +84,15 @@ export async function markSuggestionReviewed(
   userId: string,
   appliedText?: string,
 ): Promise<void> {
-  const updates: Record<string, any> = {
-    status: action === "apply" || action === "edit" ? "applied" : "rejected",
+  const base = {
+    status: (action === "apply" || action === "edit" ? "applied" : "rejected") as "applied" | "rejected",
     reviewed_by: userId,
     reviewed_at: new Date().toISOString(),
   };
 
-  if (action === "edit" && appliedText !== undefined) {
-    updates.applied_text = appliedText;
-  }
+  const updates = action === "edit" && appliedText !== undefined
+    ? { ...base, applied_text: appliedText }
+    : base;
 
   const { error } = await supabase
     .from("iep_ai_suggestions")

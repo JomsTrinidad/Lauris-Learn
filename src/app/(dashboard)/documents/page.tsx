@@ -58,6 +58,7 @@ import { RequestDocumentModal } from "@/features/documents/RequestDocumentModal"
 import { RequestsList } from "@/features/documents/RequestsList";
 import { CancelRequestModal } from "@/features/documents/CancelRequestModal";
 import { PlansAndFormsView } from "@/features/plans/PlansAndFormsView";
+import { usePendingReviewCount } from "@/features/plans/review-queue";
 import { ClinicSharingView } from "@/features/clinic-sharing/ClinicSharingView";
 import { cn } from "@/lib/utils";
 
@@ -113,6 +114,8 @@ export default function DocumentsPage() {
   const canUpload  = userRole === "school_admin" || userRole === "teacher";
   const canRequest = userRole === "school_admin" || userRole === "teacher";
   const isAdmin    = userRole === "school_admin";
+
+  const { count: pendingReviewCount } = usePendingReviewCount(isAdmin ? schoolId : null);
 
   // ── Resolve student filter from query param ─────────────────────────────
   const studentParam = searchParams.get("student");
@@ -285,6 +288,7 @@ export default function DocumentsPage() {
           onClick={() => setViewMode("plans-forms")}
           icon={<ClipboardList className="w-3.5 h-3.5" />}
           label="Plans & Forms"
+          badge={pendingReviewCount || undefined}
         />
         {userRole === "school_admin" && (
           <ViewTab
@@ -487,12 +491,13 @@ export default function DocumentsPage() {
 
 
 function ViewTab({
-  active, onClick, icon, label,
+  active, onClick, icon, label, badge,
 }: {
   active: boolean;
   onClick: () => void;
   icon: React.ReactNode;
   label: string;
+  badge?: number;
 }) {
   return (
     <button
@@ -507,6 +512,11 @@ function ViewTab({
     >
       {icon}
       {label}
+      {badge != null && badge > 0 && (
+        <span className="inline-flex items-center justify-center min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-amber-500 text-white text-[10px] font-semibold leading-none">
+          {badge > 99 ? "99+" : badge}
+        </span>
+      )}
     </button>
   );
 }

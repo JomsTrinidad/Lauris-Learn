@@ -12,7 +12,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { createServerClient } from "@/lib/supabase/server";
+import { createClient } from "@/lib/supabase/server";
 import {
   summarizeExtraction,
   mapToIepSuggestions,
@@ -37,7 +37,7 @@ function isValidUuid(id: string): boolean {
 }
 
 export async function POST(req: NextRequest) {
-  const serverClient = await createServerClient();
+  const serverClient = await createClient();
 
   // ─── Step 1: Auth ────────────────────────────────────────────────
   const { data: { user }, error: authErr } = await serverClient.auth.getUser();
@@ -59,11 +59,22 @@ export async function POST(req: NextRequest) {
   }
 
   // ─── Step 3: Fetch extraction row ────────────────────────────────
-  const { data: extraction, error: extractErr } = await serverClient
+  const { data: extractionRaw, error: extractErr } = await serverClient
     .from("iep_report_extractions")
     .select("id, plan_id, student_id, school_id, document_id, status, extracted_text")
     .eq("id", extraction_id)
     .maybeSingle();
+
+  // Cast needed: Supabase generic inference degrades to `never` for this table in server context
+  const extraction = extractionRaw as {
+    id: string;
+    plan_id: string;
+    student_id: string;
+    school_id: string;
+    document_id: string;
+    status: string;
+    extracted_text: string | null;
+  } | null;
 
   if (extractErr || !extraction) {
     return errorJson("Extraction not found", 404);
@@ -134,7 +145,7 @@ export async function POST(req: NextRequest) {
             applied_text: null,
             reviewed_by: null,
             reviewed_at: null,
-          })),
+          })) as any,
         );
 
       if (suggErr) {

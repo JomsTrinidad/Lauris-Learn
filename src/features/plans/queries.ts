@@ -34,7 +34,12 @@ export interface ListPlansFilters {
   schoolId:   string;
   planType?:  PlanType | null;
   studentId?: string | null;
+  /** Single-status filter. Ignored when `statuses` is also provided. */
   status?:    PlanStatus | null;
+  /** Multi-status filter (e.g. review queue). Takes precedence over `status`. */
+  statuses?:  readonly PlanStatus[];
+  /** Default false (newest first). Pass true to show oldest first (review queue). */
+  sortAscending?: boolean;
 }
 
 export async function listPlans(
@@ -45,11 +50,15 @@ export async function listPlans(
     .from("student_plans")
     .select("*")
     .eq("school_id", f.schoolId)
-    .order("updated_at", { ascending: false });
+    .order("updated_at", { ascending: f.sortAscending ?? false });
 
   if (f.planType)  q = q.eq("plan_type",  f.planType);
   if (f.studentId) q = q.eq("student_id", f.studentId);
-  if (f.status)    q = q.eq("status",     f.status);
+  if (f.statuses && f.statuses.length > 0) {
+    q = q.in("status", [...f.statuses]);
+  } else if (f.status) {
+    q = q.eq("status", f.status);
+  }
 
   const { data, error } = await q;
   if (error) throw error;

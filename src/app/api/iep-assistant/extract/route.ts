@@ -12,7 +12,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { createServerClient } from "@/lib/supabase/server";
+import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { extractFromUrl } from "@/features/plans/iep-assistant/extraction-service";
 import { checkFileSize, checkPdfPageCount, checkImageCount } from "@/lib/extraction-guardrails/guardrails";
@@ -33,7 +33,7 @@ function isValidUuid(id: string): boolean {
 }
 
 export async function POST(req: NextRequest) {
-  const serverClient = await createServerClient();
+  const serverClient = await createClient();
 
   // ─── Step 1: Auth ────────────────────────────────────────────────
   const { data: { user }, error: authErr } = await serverClient.auth.getUser();
@@ -59,23 +59,41 @@ export async function POST(req: NextRequest) {
   }
 
   // ─── Step 3: Check access to plan ────────────────────────────────
-  const { data: planRow, error: planErr } = await serverClient
+  const { data: planRowRaw, error: planErr } = await serverClient
     .from("student_plans")
     .select("id, school_id, student_id")
     .eq("id", plan_id)
     .maybeSingle();
+
+  // Cast needed: Supabase generic inference degrades to `never` for this table in server context
+  const planRow = planRowRaw as { id: string; school_id: string; student_id: string } | null;
 
   if (planErr || !planRow) {
     return errorJson("Plan not found or access denied", 403);
   }
 
   // ─── Step 4: Fetch document version ──────────────────────────────
-  const { data: docVersion, error: versionErr } = await serverClient
+  // child_document_versions has no 'current' column — the head pointer lives on child_documents.current_version_id
+  const { data: docHeadRaw } = await serverClient
+    .from("child_documents")
+    .select("current_version_id")
+    .eq("id", document_id)
+    .maybeSingle();
+
+  const docHead = docHeadRaw as { current_version_id: string | null } | null;
+  const currentVersionId = docHead?.current_version_id;
+
+  if (!currentVersionId) {
+    return errorJson("Document version not found", 404);
+  }
+
+  const { data: docVersionRaw, error: versionErr } = await serverClient
     .from("child_document_versions")
     .select("storage_path, mime_type")
-    .eq("document_id", document_id)
-    .eq("current", true)
+    .eq("id", currentVersionId)
     .maybeSingle();
+
+  const docVersion = docVersionRaw as { storage_path: string | null; mime_type: string | null } | null;
 
   if (versionErr || !docVersion) {
     return errorJson("Document version not found", 404);
@@ -129,7 +147,7 @@ export async function POST(req: NextRequest) {
   }
 
   // ─── Step 6: Call extraction service ─────────────────────────────
-  const extractionResult = await extractFromUrl(signedUrl, mimeType, fileSizeBytes);
+  const extractionResult = await extractFromUrl(signedUrl ?? "", mimeType, fileSizeBytes);
 
   // ─── Step 6: Store extraction row ────────────────────────────────
   const extractionId = crypto.randomUUID();

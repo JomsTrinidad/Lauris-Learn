@@ -26,11 +26,9 @@ import {
   AlertCircle,
   CheckCircle2,
   XCircle,
-  Copy,
   MessageCircle,
   Sparkles,
   Loader2,
-  X,
 } from "lucide-react";
 import { Modal, ModalCancelButton } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
@@ -342,20 +340,14 @@ export function ProgressReportAssistant({
   // ─── Render step: select ────────────────────────────────────────────
   if (step === "select") {
     return (
-      <Modal open={open} onClose={onClose} className="max-w-2xl max-h-[90vh]">
-        <div className="-mx-6 -mt-6 px-6 pt-6 pb-4 border-b border-border">
-          <div className="flex items-center gap-2">
-            <Sparkles className="w-5 h-5 text-primary" />
-            <h2 className="text-lg font-semibold">Use Progress Report to Draft IEP</h2>
-          </div>
-          <p className="text-xs text-muted-foreground mt-1">
-            Select a therapy or progress report to extract and generate IEP suggestions.
-          </p>
-        </div>
+      <Modal open={open} onClose={onClose} title="Use Progress Report to Draft IEP" className="max-w-2xl max-h-[90vh]">
+        <p className="text-xs text-muted-foreground mb-4">
+          Select a therapy or progress report to extract and generate IEP suggestions.
+        </p>
 
-        {error && <div className="m-4"><ErrorAlert message={error} /></div>}
+        {error && <div className="mb-4"><ErrorAlert message={error} /></div>}
 
-        <div className="py-4 space-y-2 max-h-[60vh] overflow-y-auto">
+        <div className="space-y-2 max-h-[50vh] overflow-y-auto">
           {reports.length === 0 ? (
             <div className="text-center py-8 text-sm text-muted-foreground">
               No progress reports found. Upload a therapy evaluation or progress report first.
@@ -371,8 +363,8 @@ export function ProgressReportAssistant({
                 <div>
                   <div className="font-medium text-sm">{report.title}</div>
                   <div className="flex items-center gap-2 mt-1">
-                    <Badge variant="secondary" className="text-xs">
-                      {DOCUMENT_TYPE_LABELS[report.document_type as any] || report.document_type}
+                    <Badge variant="default" className="text-xs">
+                      {(DOCUMENT_TYPE_LABELS as Record<string, string>)[report.document_type] || report.document_type}
                     </Badge>
                     {report.effective_date && (
                       <span className="text-xs text-muted-foreground">
@@ -387,8 +379,8 @@ export function ProgressReportAssistant({
           )}
         </div>
 
-        <div className="border-t border-border pt-4 flex gap-2 justify-end">
-          <ModalCancelButton onClick={onClose}>Cancel</ModalCancelButton>
+        <div className="border-t border-border pt-4 mt-4 flex gap-2 justify-end">
+          <ModalCancelButton />
         </div>
       </Modal>
     );
@@ -397,7 +389,7 @@ export function ProgressReportAssistant({
   // ─── Render step: extracting ────────────────────────────────────────
   if (step === "extracting") {
     return (
-      <Modal open={open} onClose={onClose} className="max-w-2xl">
+      <Modal open={open} onClose={onClose} title="Extracting Document" className="max-w-2xl">
         <div className="py-12 text-center space-y-3">
           <Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" />
           <p className="text-sm font-medium">Extracting text from {selectedReport?.title}…</p>
@@ -412,13 +404,10 @@ export function ProgressReportAssistant({
     const isProviderMissing = error === "Extraction provider not configured";
 
     return (
-      <Modal open={open} onClose={onClose} className="max-w-2xl max-h-[90vh]">
-        <div className="-mx-6 -mt-6 px-6 pt-6 pb-4 border-b border-border">
-          <h2 className="text-lg font-semibold">Extracted Text</h2>
-          <p className="text-xs text-muted-foreground mt-1">{selectedReport?.title}</p>
-        </div>
+      <Modal open={open} onClose={onClose} title="Extracted Text" className="max-w-2xl max-h-[90vh]">
+        <p className="text-xs text-muted-foreground mb-4">{selectedReport?.title}</p>
 
-        <div className="py-4 space-y-3 max-h-[60vh] overflow-y-auto">
+        <div className="space-y-3 max-h-[50vh] overflow-y-auto">
           {isProviderMissing && (
             <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-900 space-y-1">
               <div className="font-medium flex items-center gap-2">
@@ -462,7 +451,7 @@ export function ProgressReportAssistant({
   // ─── Render step: summarizing ────────────────────────────────────────
   if (step === "summarizing") {
     return (
-      <Modal open={open} onClose={onClose} className="max-w-2xl">
+      <Modal open={open} onClose={onClose} title="Generating Suggestions" className="max-w-2xl">
         <div className="py-12 text-center space-y-3">
           <Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" />
           <p className="text-sm font-medium">Generating IEP suggestions…</p>
@@ -475,22 +464,14 @@ export function ProgressReportAssistant({
   // ─── Render step: review ────────────────────────────────────────────
   if (step === "review") {
     return (
-      <Modal open={open} onClose={onClose} className="max-w-3xl max-h-[90vh]">
-        <div className="-mx-6 -mt-6 px-6 pt-6 pb-4 border-b border-border flex justify-between items-start">
-          <div>
-            <h2 className="text-lg font-semibold">Review Suggested IEP Updates</h2>
-            <p className="text-xs text-muted-foreground mt-1">
-              From: {selectedReport?.title}
-            </p>
-          </div>
-          <button type="button" onClick={onClose} className="text-muted-foreground hover:text-foreground">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+      <Modal open={open} onClose={onClose} title="Review Suggested IEP Updates" className="max-w-3xl max-h-[90vh]">
+        <p className="text-xs text-muted-foreground mb-4">
+          From: {selectedReport?.title}
+        </p>
 
-        {error && <div className="m-4"><ErrorAlert message={error} /></div>}
+        {error && <div className="mb-4"><ErrorAlert message={error} /></div>}
 
-        <div className="py-4 space-y-3 max-h-[65vh] overflow-y-auto">
+        <div className="space-y-3 max-h-[55vh] overflow-y-auto">
           {suggestions.length === 0 ? (
             <div className="text-center py-8 text-sm text-muted-foreground px-4">
               No suggestions generated. The document may not contain actionable IEP content.
@@ -513,7 +494,7 @@ export function ProgressReportAssistant({
                   {/* Header */}
                   <div className="flex items-start justify-between mb-2">
                     <div className="flex items-center gap-2">
-                      <Badge variant="outline" className="text-xs">
+                      <Badge variant="default" className="text-xs">
                         {sugg.target_section}
                       </Badge>
                       <span className="font-medium text-sm">

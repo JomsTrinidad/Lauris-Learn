@@ -8,8 +8,14 @@
  *   - Body: list of IEP Plans + "New IEP Plan" affordance, opened in
  *     IEPPlanModal.
  *
- * Permissions follow the same pattern as the rest of the documents UI:
+ * Review queue (Phase 1):
+ *   School admins see a "Review Queue (N)" toggle when plans are pending.
+ *   When active, the queue shows only submitted/in_review plans, sorted
+ *   oldest first so the most urgent items appear at the top.
+ *
+ * Permissions:
  *   - school_admin / teacher  — can create + edit plans
+ *   - school_admin            — can see and use the review queue
  *   - parent / external       — no UI (parent portal deferred)
  */
 
@@ -22,6 +28,8 @@ import {
   LayoutTemplate,
   Plus,
   Lock,
+  Clock,
+  X,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -29,6 +37,7 @@ import { Select } from "@/components/ui/select";
 import { PageSpinner, ErrorAlert } from "@/components/ui/spinner";
 import { createClient } from "@/lib/supabase/client";
 import { listPlans } from "./queries";
+import { getPendingReviewCount, PENDING_REVIEW_STATUSES } from "./review-queue";
 import { IEPPlansList } from "./IEPPlansList";
 import { IEPPlanModal } from "./IEPPlanModal";
 import { PLAN_STATUS_LABELS } from "./constants";
@@ -90,16 +99,38 @@ export function PlansAndFormsView({
 }) {
   const supabase = useMemo(() => createClient(), []);
 
+  // ── Role gates ────────────────────────────────────────────────────────
+  const canCreate   = userRole === "school_admin" || userRole === "teacher";
+  const isReviewer  = userRole === "school_admin" || userRole === "super_admin";
+
+  // ── Plan list state ───────────────────────────────────────────────────
   const [plans, setPlans]     = useState<PlanListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<PlanStatus | "">("");
 
+  // ── Review queue state ────────────────────────────────────────────────
+  const [reviewQueueActive, setReviewQueueActive] = useState(false);
+  const [pendingCount, setPendingCount] = useState(0);
+
+  // ── Modal ─────────────────────────────────────────────────────────────
   const [modalOpen, setModalOpen]   = useState(false);
   const [editingId, setEditingId]   = useState<string | null>(null);
 
-  const canCreate = userRole === "school_admin" || userRole === "teacher";
+  // ── Load pending count ────────────────────────────────────────────────
+  const reloadPendingCount = useCallback(async () => {
+    if (!isReviewer || !schoolId) return;
+    try {
+      const n = await getPendingReviewCount(supabase, schoolId);
+      setPendingCount(n);
+    } catch {
+      // Non-fatal — badge just stays at its previous value
+    }
+  }, [supabase, schoolId, isReviewer]);
 
+  useEffect(() => { void reloadPendingCount(); }, [reloadPendingCount]);
+
+  // ── Load plan list ────────────────────────────────────────────────────
   const loadPlans = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     setError(null);
@@ -108,7 +139,10 @@ export function PlansAndFormsView({
         schoolId,
         planType:  "iep",
         studentId: defaultStudentId,
-        status:    statusFilter || null,
+        // Queue mode: show all pending statuses, oldest first
+        ...(reviewQueueActive
+          ? { statuses: PENDING_REVIEW_STATUSES, sortAscending: true }
+          : { status: statusFilter || null }),
       });
       if (signal?.aborted) return;
       setPlans(data);
@@ -118,7 +152,7 @@ export function PlansAndFormsView({
     } finally {
       if (!signal?.aborted) setLoading(false);
     }
-  }, [supabase, schoolId, defaultStudentId, statusFilter]);
+  }, [supabase, schoolId, defaultStudentId, statusFilter, reviewQueueActive]);
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -126,6 +160,17 @@ export function PlansAndFormsView({
     return () => ctrl.abort();
   }, [loadPlans]);
 
+  // ── Review queue toggle ───────────────────────────────────────────────
+  function toggleReviewQueue() {
+    setReviewQueueActive((v) => !v);
+    if (!reviewQueueActive) setStatusFilter(""); // clear status filter when entering queue
+  }
+
+  function exitReviewQueue() {
+    setReviewQueueActive(false);
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────
   function openNew() {
     setEditingId(null);
     setModalOpen(true);
@@ -167,16 +212,48 @@ export function PlansAndFormsView({
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as PlanStatus | "")}
-            className="w-44"
-          >
-            <option value="">All statuses</option>
-            {STATUS_OPTIONS.map((s) => (
-              <option key={s} value={s}>{PLAN_STATUS_LABELS[s]}</option>
-            ))}
-          </Select>
+          {/* Review Queue toggle — reviewers only, visible when there are pending
+              plans OR when the queue is already active */}
+          {isReviewer && (pendingCount > 0 || reviewQueueActive) && (
+            <button
+              type="button"
+              onClick={toggleReviewQueue}
+              className={cn(
+                "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors shrink-0",
+                reviewQueueActive
+                  ? "bg-amber-50 border-amber-200 text-amber-800 dark:bg-amber-950/30 dark:border-amber-700 dark:text-amber-200"
+                  : "border-border text-muted-foreground hover:text-foreground hover:bg-muted",
+              )}
+            >
+              <Clock className="w-3.5 h-3.5" />
+              Review Queue
+              {pendingCount > 0 && (
+                <span className={cn(
+                  "inline-flex items-center justify-center min-w-[1.1rem] h-[1.1rem] px-1 rounded-full text-[10px] font-semibold leading-none",
+                  reviewQueueActive
+                    ? "bg-amber-200 text-amber-900 dark:bg-amber-700 dark:text-amber-100"
+                    : "bg-primary text-primary-foreground",
+                )}>
+                  {pendingCount > 9 ? "9+" : pendingCount}
+                </span>
+              )}
+            </button>
+          )}
+
+          {/* Status filter — hidden when review queue is active (queue has its own filter) */}
+          {!reviewQueueActive && (
+            <Select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as PlanStatus | "")}
+              className="w-44"
+            >
+              <option value="">All statuses</option>
+              {STATUS_OPTIONS.map((s) => (
+                <option key={s} value={s}>{PLAN_STATUS_LABELS[s]}</option>
+              ))}
+            </Select>
+          )}
+
           <Button
             onClick={openNew}
             disabled={!canCreate}
@@ -188,11 +265,31 @@ export function PlansAndFormsView({
         </div>
       </div>
 
+      {/* Review queue context banner */}
+      {reviewQueueActive && (
+        <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg dark:bg-amber-950/20 dark:border-amber-700/60">
+          <Clock className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+          <p className="flex-1 text-xs text-amber-800 dark:text-amber-200">
+            {plans.length === 0 || loading
+              ? "Showing plans waiting for review · oldest submissions appear first"
+              : `${plans.length} plan${plans.length > 1 ? "s" : ""} waiting for review · oldest first`}
+          </p>
+          <button
+            type="button"
+            onClick={exitReviewQueue}
+            className="text-amber-600 hover:text-amber-900 dark:text-amber-400 dark:hover:text-amber-200 transition-colors"
+            title="Exit review queue"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
       {error && <ErrorAlert message={error} />}
       {loading ? (
         <PageSpinner />
       ) : (
-        <IEPPlansList plans={plans} onOpen={openExisting} />
+        <IEPPlansList plans={plans} onOpen={openExisting} queueMode={reviewQueueActive} />
       )}
 
       <IEPPlanModal
@@ -201,6 +298,7 @@ export function PlansAndFormsView({
         onSaved={() => {
           setModalOpen(false);
           void loadPlans();
+          void reloadPendingCount();
         }}
         planId={editingId}
         schoolId={schoolId}
