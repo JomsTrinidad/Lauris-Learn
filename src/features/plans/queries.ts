@@ -486,3 +486,113 @@ export async function setPlanStatus(
   const { error } = await supabase.from("student_plans").update(update).eq("id", planId);
   if (error) throw error;
 }
+
+
+// ─── Create Revision ──────────────────────────────────────────────────────────
+
+/**
+ * Creates a new draft plan that is a revision of an existing finalized or
+ * approved plan. Copies: head fields, goals, interventions, attachment refs.
+ * Does NOT copy: progress entries (they belong to the original plan).
+ *
+ * Returns the new plan's ID so the caller can open it immediately.
+ */
+export async function createRevision(
+  supabase: Client,
+  sourcePlanId: string,
+  userId: string,
+): Promise<string> {
+  const full = await getPlan(supabase, sourcePlanId);
+  if (!full) throw new Error("Source plan not found or you do not have access.");
+
+  const { plan } = full;
+  const newPlanId  = crypto.randomUUID();
+  const revNum     = (plan.revision_number ?? 1) + 1;
+  // Root of the chain: if source is already a revision, point to the same root.
+  const parentId   = plan.parent_plan_id ?? plan.id;
+
+  // 1. Insert new plan head (status='draft', all audit timestamps reset)
+  const { error: headErr } = await supabase.from("student_plans").insert({
+    id:                    newPlanId,
+    school_id:             plan.school_id,
+    student_id:            plan.student_id,
+    school_year_id:        plan.school_year_id,
+    plan_type:             plan.plan_type,
+    title:                 plan.title,
+    status:                "draft",
+    diagnosis:             plan.diagnosis,
+    strengths:             plan.strengths,
+    areas_of_need:         plan.areas_of_need,
+    background_notes:      plan.background_notes,
+    parent_notes:          plan.parent_notes,
+    parent_concerns:       plan.parent_concerns,
+    home_support_notes:    plan.home_support_notes,
+    review_date:           plan.review_date,
+    reviewed_by_teacher_id: plan.reviewed_by_teacher_id,
+    reviewed_by_admin_id:  plan.reviewed_by_admin_id,
+    iep_details:           plan.iep_details,
+    created_by:            userId,
+    // Revision lineage
+    parent_plan_id:        parentId,
+    supersedes_plan_id:    sourcePlanId,
+    revision_number:       revNum,
+  });
+  if (headErr) throw headErr;
+
+  // 2. Copy goals — mint new IDs; build old→new map for intervention remapping.
+  const goalIdMap = new Map<string, string>();
+  if (full.goals.length > 0) {
+    const newGoals = full.goals.map((g) => {
+      const newId = crypto.randomUUID();
+      goalIdMap.set(g.id, newId);
+      return {
+        id:                 newId,
+        plan_id:            newPlanId,
+        domain:             g.domain,
+        description:        g.description,
+        target_date:        g.target_date,
+        measurement_method: g.measurement_method,
+        baseline:           g.baseline,
+        success_criteria:   g.success_criteria,
+        enroute_objectives: g.enroute_objectives,
+        timeline:           g.timeline,
+        responsible_person: g.responsible_person,
+        remarks:            g.remarks,
+        sort_order:         g.sort_order,
+      };
+    });
+    const { error } = await supabase.from("student_plan_goals").insert(newGoals);
+    if (error) throw error;
+  }
+
+  // 3. Copy interventions — remap goal_id to the new goal IDs.
+  if (full.interventions.length > 0) {
+    const newInterventions = full.interventions.map((iv) => ({
+      id:                 crypto.randomUUID(),
+      plan_id:            newPlanId,
+      strategy:           iv.strategy,
+      frequency:          iv.frequency,
+      responsible_person: iv.responsible_person,
+      environment:        iv.environment,
+      notes:              iv.notes,
+      goal_id:            iv.goal_id ? (goalIdMap.get(iv.goal_id) ?? null) : null,
+      sort_order:         iv.sort_order,
+    }));
+    const { error } = await supabase.from("student_plan_interventions").insert(newInterventions);
+    if (error) throw error;
+  }
+
+  // 4. Copy attachment references — same child_documents rows, no file copy.
+  if (full.attachments.length > 0) {
+    const newAttachments = full.attachments.map((a) => ({
+      id:          crypto.randomUUID(),
+      plan_id:     newPlanId,
+      document_id: a.document_id,
+      attached_by: userId,
+    }));
+    const { error } = await supabase.from("student_plan_attachments").insert(newAttachments);
+    if (error) throw error;
+  }
+
+  return newPlanId;
+}

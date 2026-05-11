@@ -304,6 +304,11 @@ export function PlansAndFormsView({
           void loadPlans();
           void reloadPendingCount();
         }}
+        onRevisionCreated={(newId) => {
+          setEditingId(newId);
+          void loadPlans();
+          // Keep modal open — planId change triggers re-load inside the modal.
+        }}
         planId={editingId}
         schoolId={schoolId}
         schoolName={schoolName}

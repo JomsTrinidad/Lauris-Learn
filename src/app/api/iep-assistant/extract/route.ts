@@ -15,7 +15,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { extractFromUrl } from "@/features/plans/iep-assistant/extraction-service";
-import { checkFileSize, checkPdfPageCount, checkImageCount } from "@/lib/extraction-guardrails/guardrails";
+import { checkFileSize } from "@/lib/extraction-guardrails/guardrails";
 import type { ExtractRequest, ExtractResponse } from "@/features/plans/iep-assistant/types";
 
 const NO_STORE: HeadersInit = { "Cache-Control": "no-store, private" };
@@ -163,6 +163,13 @@ export async function POST(req: NextRequest) {
       extracted_text: extractionResult.text ?? null,
       extraction_error: extractionResult.message ?? null,
       provider: process.env.IEP_EXTRACTION_PROVIDER ?? "none",
+      extraction_method: extractionResult.extractionMethod ?? null,
+      page_count: extractionResult.pageCount ?? null,
+      processed_page_count: extractionResult.processedPageCount ?? null,
+      image_count: extractionResult.imageCount ?? null,
+      extracted_character_count: extractionResult.extractedCharCount ?? null,
+      ai_character_count: extractionResult.aiCharCount ?? null,
+      skipped_reason: extractionResult.skippedReason ?? null,
       created_by: user.id,
     } as any);
 

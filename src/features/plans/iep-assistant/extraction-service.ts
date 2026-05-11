@@ -12,7 +12,8 @@
  */
 
 import type { ExtractionResult } from "./types";
-import { checkFileSize, checkPdfPageCount } from "@/lib/extraction-guardrails/guardrails";
+import { checkFileSize, checkPdfPageCount, truncateForAi } from "@/lib/extraction-guardrails/guardrails";
+import { getExtractionConfig } from "@/lib/extraction-guardrails/config";
 import { detectPdfType } from "@/lib/extraction-guardrails/pdf-extractor";
 
 /**
@@ -108,6 +109,9 @@ export async function extractFromUrl(
           "This PDF appears to be scanned or image-only. " +
           "To extract text, please convert to PNG/JPEG and upload as images, " +
           "or enable OCR by setting IEP_EXTRACTION_PROVIDER=azure_form_recognizer.",
+        extractionMethod: "pdf_scanned",
+        pageCount: pdfType.estimatedPageCount,
+        skippedReason: "pdf_scanned_no_ocr",
       };
     }
 
@@ -148,6 +152,15 @@ async function extractWithOpenAIVision(
   signedUrl: string,
   mimeType: string | null,
 ): Promise<ExtractionResult> {
+  const config = getExtractionConfig();
+  if (!config.ocrEnabled) {
+    return {
+      status: "not_configured",
+      message: "Image/OCR extraction is disabled. Set REPORT_OCR_ENABLED=true to enable.",
+      extractionMethod: "image_ocr",
+    };
+  }
+
   const apiKey = process.env.OPENAI_API_KEY?.trim();
 
   if (!apiKey) {
@@ -232,17 +245,29 @@ async function extractWithOpenAIVision(
         status: "not_configured",
         message:
           "No text extracted from document. Document may be blank or unreadable.",
+        extractionMethod: "image_ocr",
+        imageCount: 1,
+        skippedReason: "empty_extraction",
       };
     }
 
+    const rawText = extractedText.trim();
+    const { text: aiText, characterCount: aiChars } = truncateForAi(rawText);
+
     return {
       status: "done",
-      text: extractedText.trim(),
+      text: aiText,
+      extractionMethod: "image_ocr",
+      imageCount: 1,
+      extractedCharCount: rawText.length,
+      aiCharCount: aiChars,
     };
   } catch (err) {
     return {
       status: "not_configured",
       message: `Extraction failed: ${err instanceof Error ? err.message : "Unknown error"}`,
+      extractionMethod: "image_ocr",
+      imageCount: 1,
     };
   }
 }

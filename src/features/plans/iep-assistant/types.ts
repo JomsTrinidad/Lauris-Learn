@@ -1,5 +1,5 @@
 /**
- * Types for IEP Progress Report Assistant.
+ * Types for IEP Evidence Assistant.
  * Extraction, summarization, suggestion mapping, and audit trail.
  */
 
@@ -19,6 +19,10 @@ export type TargetField      =
   | "goal"
   | "barrier";
 
+// ─── Evidence source ──────────────────────────────────────────────────
+export type ExtractionMethod  = "pdf_native_text" | "pdf_scanned" | "image_ocr" | "uploaded_file" | "skipped";
+export type EvidenceSourceMode = "existing_doc" | "upload_file" | "upload_image";
+
 // ─── Row types (DB) ──────────────────────────────────────────────────
 
 export interface ReportDoc {
@@ -35,6 +39,13 @@ export interface ExtractionRow {
   extracted_text: string | null;
   extraction_error: string | null;
   provider: string | null;
+  extraction_method: string | null;
+  page_count: number | null;
+  processed_page_count: number | null;
+  image_count: number | null;
+  extracted_character_count: number | null;
+  ai_character_count: number | null;
+  skipped_reason: string | null;
 }
 
 export interface SummarySection {
@@ -78,6 +89,7 @@ export interface ExtractResponse {
   status: ExtractionStatus;
   extracted_text?: string;
   message?: string;
+  low_trust_warning?: string;
 }
 
 export interface SummarizeRequest {
@@ -109,6 +121,14 @@ export interface ExtractionResult {
   status: "done" | "not_configured";
   text?: string;
   message?: string;
+  // Metadata stored in iep_report_extractions flat columns
+  extractionMethod?: ExtractionMethod;
+  pageCount?: number;
+  processedPageCount?: number;
+  imageCount?: number;
+  extractedCharCount?: number;
+  aiCharCount?: number;
+  skippedReason?: string;
 }
 
 export interface SummaryResult {

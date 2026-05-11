@@ -15,6 +15,7 @@ import type {
   SummarySection,
   SuggestionInsert,
 } from "./types";
+import { getExtractionConfig } from "@/lib/extraction-guardrails/config";
 
 /**
  * Summarize extracted text into 7 structured sections.
@@ -32,6 +33,14 @@ export async function summarizeExtraction(
     return {
       status: "not_configured",
       message: "No extracted text to summarize.",
+    };
+  }
+
+  const { aiSummaryEnabled } = getExtractionConfig();
+  if (!aiSummaryEnabled) {
+    return {
+      status: "not_configured",
+      message: "AI summary is disabled. Set REPORT_AI_SUMMARY_ENABLED=true to enable.",
     };
   }
 

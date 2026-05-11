@@ -2,11 +2,14 @@
  * useIepRecovery — custom hook for IEP form recovery.
  *
  * Handles:
- *   - Autosaving form state to localStorage every 5-10 seconds
+ *   - Autosaving form state to localStorage every 7 seconds
  *   - Autosaving on major field changes (title, student change)
  *   - Loading recovery data on mount
  *   - Clearing recovery data on successful save
  *   - Browser unload warning for unsaved changes
+ *
+ * Generic over T so callers get strong typing on formState and
+ * onRestoreState — no `any` leaks into the IEP form.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -18,10 +21,6 @@ import {
   isRecoveryNewer,
 } from "./recovery-utils";
 
-export interface IepRecoveryState {
-  [key: string]: any;
-}
-
 export interface UseIepRecoveryOptions {
   userId: string;
   studentId: string;
@@ -31,14 +30,14 @@ export interface UseIepRecoveryOptions {
   isEditing: boolean;
 }
 
-export function useIepRecovery(
+export function useIepRecovery<T extends object>(
   options: UseIepRecoveryOptions,
-  formState: IepRecoveryState,
-  onRestoreState: (data: IepRecoveryState) => void,
+  formState: T,
+  onRestoreState: (data: T) => void,
 ) {
   const { userId, studentId, planId, schoolYearId, draftUpdatedAt, isEditing } = options;
   const recoveryKey = generateRecoveryKey(userId, studentId, planId, schoolYearId);
-  const autosaveTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const autosaveTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const hasUnsavedChangesRef = useRef(false);
 
   // ─── State ────────────────────────────────────────────────────────
@@ -48,7 +47,7 @@ export function useIepRecovery(
 
   // ─── On mount: check for recovery data ────────────────────────────
   useEffect(() => {
-    const recovery = getRecoveryData<IepRecoveryState>(recoveryKey);
+    const recovery = getRecoveryData<T>(recoveryKey);
     if (recovery) {
       const isNewer = isRecoveryNewer(recovery.timestamp, draftUpdatedAt);
       if (isNewer) {
@@ -56,7 +55,6 @@ export function useIepRecovery(
         setRecoveryTimestamp(recovery.timestamp);
         setShowRecoveryPrompt(true);
       } else {
-        // Recovery data is stale compared to saved draft; clear it
         clearRecovery(recoveryKey);
       }
     }
@@ -64,10 +62,11 @@ export function useIepRecovery(
 
   // ─── Handle recovery restore ────────────────────────────────────────
   const handleRestore = useCallback(() => {
-    const recovery = getRecoveryData<IepRecoveryState>(recoveryKey);
+    const recovery = getRecoveryData<T>(recoveryKey);
     if (recovery) {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { timestamp, ...data } = recovery;
-      onRestoreState(data);
+      onRestoreState(data as T);
       setShowRecoveryPrompt(false);
       hasUnsavedChangesRef.current = true;
     }
@@ -88,27 +87,18 @@ export function useIepRecovery(
     }
   }, [recoveryKey, formState]);
 
-  // ─── Set autosave interval (5-10 seconds) ──────────────────────────
+  // ─── Set autosave interval (7 seconds) ────────────────────────────
   useEffect(() => {
-    if (!isEditing) {
-      // Don't autosave if not editing (e.g., view mode)
-      return;
-    }
-
-    // Autosave every 7 seconds
+    if (!isEditing) return;
     autosaveTimerRef.current = setInterval(autosave, 7000);
-
     return () => {
-      if (autosaveTimerRef.current) {
-        clearInterval(autosaveTimerRef.current);
-      }
+      if (autosaveTimerRef.current) clearInterval(autosaveTimerRef.current);
     };
   }, [autosave, isEditing]);
 
   // ─── Mark changes on major field updates ────────────────────────────
   const markChanged = useCallback(() => {
     hasUnsavedChangesRef.current = true;
-    // Trigger immediate autosave after a major change
     autosave();
   }, [autosave]);
 
@@ -127,21 +117,18 @@ export function useIepRecovery(
         return "";
       }
     };
-
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [isEditing]);
 
-  // ─── Check for unsaved changes (for UI indicator) ────────────────────
-  const hasUnsavedChanges = hasUnsavedChangesRef.current;
-
   return {
     showRecoveryPrompt,
     recoveryTimestamp,
+    recoveryAvailable,
     handleRestore,
     handleDiscardRecovery,
     markChanged,
     clearOnSave,
-    hasUnsavedChanges,
+    get hasUnsavedChanges() { return hasUnsavedChangesRef.current; },
   };
 }

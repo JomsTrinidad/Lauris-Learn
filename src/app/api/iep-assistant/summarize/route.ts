@@ -13,10 +13,12 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import {
   summarizeExtraction,
   mapToIepSuggestions,
 } from "@/features/plans/iep-assistant/summary-service";
+import { getExtractionConfig } from "@/lib/extraction-guardrails/config";
 import type {
   SummarizeRequest,
   SummarizeResponse,
@@ -85,6 +87,50 @@ export async function POST(req: NextRequest) {
     return errorJson(
       "Extraction must be completed before summarizing (status: done, text present)",
       400,
+    );
+  }
+
+  // ─── Step 3.5: Daily rate-limit checks ───────────────────────────
+  // Use adminClient so counts are accurate across all school users, not just
+  // the caller's RLS-visible subset.
+  const adminClient = createAdminClient();
+  const config = getExtractionConfig();
+  const todayStart = new Date();
+  todayStart.setUTCHours(0, 0, 0, 0);
+  const todayEnd = new Date();
+  todayEnd.setUTCHours(23, 59, 59, 999);
+  const todayStartIso = todayStart.toISOString();
+  const todayEndIso = todayEnd.toISOString();
+
+  // Per-plan daily limit (plan maps 1:1 to a student's current IEP)
+  const { count: planCount } = await adminClient
+    .from("iep_report_summaries")
+    .select("id", { count: "exact", head: true })
+    .eq("plan_id", extraction.plan_id)
+    .eq("status", "done")
+    .gte("created_at", todayStartIso)
+    .lte("created_at", todayEndIso);
+
+  if ((planCount ?? 0) >= config.maxAiSummariesPerChildPerDay) {
+    return NextResponse.json(
+      { error: `Daily AI summary limit reached for this plan (${config.maxAiSummariesPerChildPerDay}/day). Try again tomorrow.` },
+      { status: 429, headers: NO_STORE },
+    );
+  }
+
+  // Per-org daily limit
+  const { count: orgCount } = await adminClient
+    .from("iep_report_summaries")
+    .select("id", { count: "exact", head: true })
+    .eq("school_id", extraction.school_id)
+    .eq("status", "done")
+    .gte("created_at", todayStartIso)
+    .lte("created_at", todayEndIso);
+
+  if ((orgCount ?? 0) >= config.maxAiSummariesPerOrgPerDay) {
+    return NextResponse.json(
+      { error: `Daily AI summary limit reached for this organization (${config.maxAiSummariesPerOrgPerDay}/day). Try again tomorrow.` },
+      { status: 429, headers: NO_STORE },
     );
   }
 

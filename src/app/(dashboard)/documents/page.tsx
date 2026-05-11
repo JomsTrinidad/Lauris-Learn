@@ -119,6 +119,20 @@ export default function DocumentsPage() {
     isAdmin && iepWorkflowMode === "admin_approval_required" ? schoolId : null,
   );
 
+  // ── Switch tab from ?view= URL param (e.g. from dashboard attention links) ─
+  const viewParam = searchParams.get("view");
+  useEffect(() => {
+    if (
+      viewParam === "documents" ||
+      viewParam === "requests" ||
+      viewParam === "plans-forms" ||
+      viewParam === "clinic-sharing"
+    ) {
+      setViewMode(viewParam as ViewMode);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewParam]);
+
   // ── Resolve student filter from query param ─────────────────────────────
   const studentParam = searchParams.get("student");
   useEffect(() => {

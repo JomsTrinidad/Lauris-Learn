@@ -88,7 +88,14 @@ export function IEPPlansList({
                   className="border-b border-border last:border-0 hover:bg-muted/30 cursor-pointer transition-colors"
                 >
                   <td className="px-5 py-3">
-                    <div className="font-medium text-foreground">{p.title}</div>
+                    <div className="font-medium text-foreground">
+                    {p.title}
+                    {(p.revision_number ?? 1) > 1 && (
+                      <span className="ml-2 text-xs font-normal text-muted-foreground">
+                        Rev.&nbsp;{p.revision_number}
+                      </span>
+                    )}
+                  </div>
                     {queueMode ? (
                       (p.submitted_by_profile?.full_name ?? p.created_by_profile?.full_name) && (
                         <div className="text-xs text-muted-foreground">

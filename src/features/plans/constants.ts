@@ -92,3 +92,17 @@ export const BARRIERS_LEGEND = [
 export const TEAM_FOOTNOTE =
   "The IEP Team must include at least one regular education teacher of the " +
   "learner if the learner is or may be participating in the regular education environment.";
+
+// ─── Wizard ────────────────────────────────────────────────────────────────
+
+/** Numeric step identifier for the IEP plan wizard. */
+export type WizardStep = 1 | 2 | 3 | 4 | 5 | 6;
+
+export const WIZARD_STEPS: { id: WizardStep; label: string; shortLabel: string }[] = [
+  { id: 1, label: "Learner & Meeting",      shortLabel: "Learner"  },
+  { id: 2, label: "Needs & Strengths",     shortLabel: "Needs"    },
+  { id: 3, label: "Supports",              shortLabel: "Supports" },
+  { id: 4, label: "Goals & Interventions", shortLabel: "Goals"    },
+  { id: 5, label: "Progress & Review",     shortLabel: "Progress" },
+  { id: 6, label: "Attachments",           shortLabel: "Attach"   },
+];

@@ -16,7 +16,8 @@ import { formatCurrency } from "@/lib/utils";
 import { useDashboardStats, useBillingSummary } from "@/lib/hooks";
 import { GetStartedGuide } from "@/components/GetStartedGuide";
 import { useGetStartedDisplay } from "@/lib/hooks/useGetStartedDisplay";
-import { usePendingReviewCount } from "@/features/plans/review-queue";
+import { useIepAttentionItems } from "@/features/attention/useAttentionItems";
+import type { AttentionItem } from "@/features/attention/types";
 
 interface DashboardStats {
   presentToday: number;
@@ -50,12 +51,6 @@ interface StudentAlert {
   count: number;
 }
 
-interface AttentionItem {
-  id: string;
-  label: string;
-  href: string;
-  severity: "critical" | "warning" | "info";
-}
 
 function formatTime12(t: string) {
   const [h, m] = t.split(":");
@@ -102,10 +97,13 @@ export default function DashboardPage() {
   // Use the cached billing summary hook (Batch B1.6.1)
   const billingSummaryQuery = useBillingSummary(schoolId, activeYear?.id || null);
 
-  // Pending IEP review count — school_admin + admin_approval_required mode only
-  const { count: pendingIepCount } = usePendingReviewCount(
-    userRole === "school_admin" && iepWorkflowMode === "admin_approval_required" ? schoolId : null,
-  );
+  // IEP attention items — role-gated, fetched once on mount
+  const { items: iepItems } = useIepAttentionItems({
+    schoolId,
+    userId,
+    userRole,
+    workflowMode: iepWorkflowMode ?? "simple_review",
+  });
 
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [todayClasses, setTodayClasses] = useState<TodayClass[]>([]);
@@ -414,52 +412,53 @@ export default function DashboardPage() {
 
   // ── Needs Attention ────────────────────────────────────────────────────────
 
-  const attention: AttentionItem[] = [];
+  const computedItems: AttentionItem[] = [];
 
   if (unmarkedClasses.length > 0) {
-    attention.push({
+    computedItems.push({
       id: "unmarked_att",
-      label: `${unmarkedClasses.length} class${unmarkedClasses.length > 1 ? "es" : ""} haven't marked attendance today`,
-      href: "/attendance",
-      severity: "warning",
+      category: "needs_input",
+      title: `${unmarkedClasses.length} class${unmarkedClasses.length > 1 ? "es" : ""} haven't marked attendance today`,
+      action_href: "/attendance",
+      action_label: "Mark Attendance",
+      priority: "medium",
     });
   }
 
   if ((statsQuery.data?.overdueCount ?? 0) > 0) {
-    attention.push({
+    computedItems.push({
       id: "overdue_billing",
-      label: `${statsQuery.data!.overdueCount} overdue billing record${statsQuery.data!.overdueCount > 1 ? "s" : ""} need follow-up`,
-      href: "/billing",
-      severity: "critical",
+      category: "needs_review",
+      title: `${statsQuery.data!.overdueCount} overdue billing record${statsQuery.data!.overdueCount > 1 ? "s" : ""} need follow-up`,
+      action_href: "/billing",
+      action_label: "View Billing",
+      priority: "high",
     });
   }
 
   if ((statsQuery.data?.inquiryCount ?? 0) > 0) {
-    attention.push({
+    computedItems.push({
       id: "pending_inquiries",
-      label: `${statsQuery.data!.inquiryCount} new enrolment inquir${statsQuery.data!.inquiryCount > 1 ? "ies" : "y"} pending review`,
-      href: "/enrollment",
-      severity: "info",
+      category: "needs_review",
+      title: `${statsQuery.data!.inquiryCount} new enrolment inquir${statsQuery.data!.inquiryCount > 1 ? "ies" : "y"} pending review`,
+      action_href: "/enrollment",
+      action_label: "Review",
+      priority: "medium",
     });
   }
 
   if (noUpdatesRecently && todayClasses.length > 0) {
-    attention.push({
+    computedItems.push({
       id: "no_updates",
-      label: noUpdatesToday ? "No parent update sent today" : "No parent updates in over 2 days",
-      href: "/updates",
-      severity: "info",
+      category: "needs_input",
+      title: noUpdatesToday ? "No parent update sent today" : "No parent updates in over 2 days",
+      action_href: "/updates",
+      action_label: "Send Update",
+      priority: "low",
     });
   }
 
-  if (pendingIepCount > 0) {
-    attention.push({
-      id: "pending_iep_review",
-      label: `${pendingIepCount} IEP plan${pendingIepCount > 1 ? "s" : ""} waiting for admin review`,
-      href: "/documents",
-      severity: "info",
-    });
-  }
+  const allAttention = [...iepItems, ...computedItems];
 
   // ── Grouped classes ────────────────────────────────────────────────────────
 
@@ -548,7 +547,7 @@ export default function DashboardPage() {
       )}
 
       {/* Needs Attention */}
-      {attention.length > 0 ? (
+      {allAttention.length > 0 ? (
         <Card className="border-amber-200 bg-amber-50/30">
           <CardContent className="p-4">
             <div className="flex items-center gap-2 mb-3">
@@ -556,33 +555,53 @@ export default function DashboardPage() {
               <p className="text-sm font-semibold text-amber-900">Needs Attention</p>
             </div>
             <div className="space-y-2">
-              {attention.map((item) => (
-                <Link key={item.id} href={item.href}>
+              {allAttention.map((item) => {
+                const isHigh = item.priority === "high";
+                const rowBg = isHigh
+                  ? "bg-red-50 border-red-200"
+                  : item.category === "needs_review"
+                  ? "bg-blue-50 border-blue-200"
+                  : item.category === "needs_input"
+                  ? "bg-amber-50 border-amber-200"
+                  : "bg-muted border-border";
+                const iconColor = isHigh
+                  ? "text-red-500"
+                  : item.category === "needs_review"
+                  ? "text-blue-500"
+                  : item.category === "needs_input"
+                  ? "text-amber-500"
+                  : "text-muted-foreground";
+                const btnColor = isHigh
+                  ? "bg-red-100 text-red-700 hover:bg-red-200"
+                  : item.category === "needs_review"
+                  ? "bg-blue-100 text-blue-700 hover:bg-blue-200"
+                  : "bg-amber-100 text-amber-700 hover:bg-amber-200";
+                return (
                   <div
-                    className={`flex items-center justify-between px-3 py-2.5 rounded-lg border cursor-pointer hover:opacity-80 transition-opacity ${
-                      item.severity === "critical"
-                        ? "bg-red-50 border-red-200"
-                        : item.severity === "warning"
-                        ? "bg-amber-50 border-amber-200"
-                        : "bg-blue-50 border-blue-200"
-                    }`}
+                    key={item.id}
+                    className={`flex items-center justify-between px-3 py-2.5 rounded-lg border ${rowBg}`}
                   >
-                    <div className="flex items-center gap-2">
-                      <AlertTriangle
-                        className={`w-3.5 h-3.5 shrink-0 ${
-                          item.severity === "critical"
-                            ? "text-red-500"
-                            : item.severity === "warning"
-                            ? "text-amber-500"
-                            : "text-blue-500"
-                        }`}
-                      />
-                      <span className="text-sm">{item.label}</span>
+                    <div className="flex items-start gap-2 flex-1 min-w-0">
+                      <AlertTriangle className={`w-3.5 h-3.5 shrink-0 mt-0.5 ${iconColor}`} />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium leading-snug">{item.title}</p>
+                        {item.description && (
+                          <p className="text-xs text-muted-foreground mt-0.5 truncate">{item.description}</p>
+                        )}
+                        {item.detail && (
+                          <p className="text-xs text-muted-foreground/70 mt-0.5">{item.detail}</p>
+                        )}
+                      </div>
                     </div>
-                    <ArrowRight className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                    <Link
+                      href={item.action_href}
+                      className={`ml-3 shrink-0 px-2.5 py-1 rounded text-xs font-medium transition-colors ${btnColor}`}
+                    >
+                      {item.action_label}
+                    </Link>
                   </div>
-                </Link>
-              ))}
+                );
+              })}
             </div>
           </CardContent>
         </Card>

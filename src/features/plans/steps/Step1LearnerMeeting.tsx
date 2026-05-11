@@ -1,6 +1,6 @@
 "use client";
 
-import type { Dispatch, RefObject, SetStateAction } from "react";
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { ChevronDown, ChevronUp, Plus, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -12,15 +12,10 @@ import type { IepTeamMember } from "../types";
 import { Field, BlockCard, EmptyHint, type StudentOption } from "./shared";
 
 export interface Step1Props {
-  // Student picker
+  // Student picker — value is controlled from parent (form state)
   students: StudentOption[];
-  studentSearch: string;
-  setStudentSearch: (v: string) => void;
   studentId: string;
   setStudentId: (v: string) => void;
-  studentDropOpen: boolean;
-  setStudentDropOpen: (v: boolean) => void;
-  studentDropRef: RefObject<HTMLDivElement | null>;
   isEditing: boolean;
   // Plan title
   title: string;
@@ -39,7 +34,7 @@ export interface Step1Props {
   homeAddress: string; setHomeAddress: (v: string) => void;
   parentWorkplace: string; setParentWorkplace: (v: string) => void;
   parentNotes: string; setParentNotes: (v: string) => void;
-  // DepEd classification collapsible
+  // DepEd classification collapsible (persisted in parent to survive step navigation)
   step1LegendOpen: boolean;
   setStep1LegendOpen: (v: boolean) => void;
   region: string; setRegion: (v: string) => void;
@@ -61,8 +56,7 @@ export interface Step1Props {
 }
 
 export function Step1LearnerMeeting({
-  students, studentSearch, setStudentSearch, studentId, setStudentId,
-  studentDropOpen, setStudentDropOpen, studentDropRef, isEditing,
+  students, studentId, setStudentId, isEditing,
   title, setTitle,
   learnerLrn, setLearnerLrn, learnerBirthDate, setLearnerBirthDate,
   learnerSex, setLearnerSex, learnerGrade, setLearnerGrade,
@@ -79,6 +73,32 @@ export function Step1LearnerMeeting({
   teamMembers, setTeamMembers, addTeamMember,
   canEdit,
 }: Step1Props) {
+
+  // ── Student picker UI state (local — doesn't affect form/recovery) ─────────
+  const [studentSearch, setStudentSearch] = useState("");
+  const [dropOpen, setDropOpen] = useState(false);
+  const dropRef = useRef<HTMLDivElement>(null);
+
+  // Sync display text with the selected student value from parent
+  useEffect(() => {
+    if (dropOpen) return;
+    const found = students.find((s) => s.id === studentId);
+    if (found) setStudentSearch(found.full_name);
+    else if (!studentId) setStudentSearch("");
+  }, [studentId, students, dropOpen]);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (!dropOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (dropRef.current && !dropRef.current.contains(e.target as Node)) {
+        setDropOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [dropOpen]);
+
   return (
     <div className="space-y-5">
 
@@ -95,15 +115,15 @@ export function Step1LearnerMeeting({
               placeholder="e.g. IEP Plan — SY 2025-2026" disabled={!canEdit} />
           </Field>
           <Field label="Learner" required>
-            <div className="relative" ref={studentDropRef}>
+            <div className="relative" ref={dropRef}>
               <Input
                 value={studentSearch}
                 onChange={(e) => {
                   setStudentSearch(e.target.value);
-                  setStudentDropOpen(true);
+                  setDropOpen(true);
                   if (!e.target.value) setStudentId("");
                 }}
-                onFocus={() => { if (canEdit && !isEditing) setStudentDropOpen(true); }}
+                onFocus={() => { if (canEdit && !isEditing) setDropOpen(true); }}
                 placeholder="Search learner…"
                 disabled={!canEdit || isEditing}
                 className="pr-7"
@@ -111,14 +131,14 @@ export function Step1LearnerMeeting({
               {studentId && canEdit && !isEditing && (
                 <button
                   type="button"
-                  onClick={() => { setStudentId(""); setStudentSearch(""); setStudentDropOpen(false); }}
+                  onClick={() => { setStudentId(""); setStudentSearch(""); setDropOpen(false); }}
                   className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                   tabIndex={-1}
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
               )}
-              {studentDropOpen && canEdit && !isEditing && (
+              {dropOpen && canEdit && !isEditing && (
                 <div className="absolute z-30 top-full left-0 right-0 mt-1 bg-card border border-border rounded-lg shadow-lg max-h-52 overflow-y-auto [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full">
                   {students
                     .filter((s) => s.full_name.toLowerCase().includes(studentSearch.toLowerCase()))
@@ -129,7 +149,7 @@ export function Step1LearnerMeeting({
                         onClick={() => {
                           setStudentId(s.id);
                           setStudentSearch(s.full_name);
-                          setStudentDropOpen(false);
+                          setDropOpen(false);
                         }}
                         className="flex items-center justify-between w-full px-3 py-2.5 text-sm hover:bg-muted text-left"
                       >

@@ -122,12 +122,12 @@ export function Step2NeedsStrengths({
             <Sparkles className="w-4 h-4 text-primary mt-0.5 shrink-0" />
             <div className="flex-1 min-w-0">
               <p className="text-xs font-medium">Need help getting started?</p>
-              <p className="text-xs text-muted-foreground mt-0.5">Use the latest progress report to draft strengths, needs, and evaluation summaries.</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Use a progress report, uploaded file, or image to draft strengths, needs, and evaluation summaries.</p>
             </div>
             <button type="button" onClick={handleAssistantClick} disabled={saving || !isEditing}
               title={!isEditing ? "Save the plan first to enable AI suggestions" : undefined}
               className="text-xs font-medium text-primary hover:text-primary/80 shrink-0 whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed">
-              Use Progress Report →
+              Evidence Assistant →
             </button>
           </div>
         )}
