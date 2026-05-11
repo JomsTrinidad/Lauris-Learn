@@ -1189,6 +1189,8 @@ export type Database = {
           applied_text: string | null;
           reviewed_by: string | null;
           reviewed_at: string | null;
+          source_document_title: string | null;
+          extraction_method: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -1207,6 +1209,8 @@ export type Database = {
           applied_text?: string | null;
           reviewed_by?: string | null;
           reviewed_at?: string | null;
+          source_document_title?: string | null;
+          extraction_method?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -1225,6 +1229,8 @@ export type Database = {
           applied_text?: string | null;
           reviewed_by?: string | null;
           reviewed_at?: string | null;
+          source_document_title?: string | null;
+          extraction_method?: string | null;
           created_at?: string;
           updated_at?: string;
         };

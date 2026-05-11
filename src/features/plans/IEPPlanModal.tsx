@@ -8,14 +8,15 @@
  *   2. Needs & Strengths   — difficulties, medical, present levels
  *   3. Supports            — assistive devices, barriers/accommodations
  *   4. Goals & Interventions — DepEd annual goals with linked strategies
- *   5. Progress & Review   — progress entries + review/signature block
- *   6. Attachments         — reference uploaded child_documents
+ *   5. Discussion & Recommendations — team discussion points and recommendations
+ *   6. Progress, Agreements & Review — progress entries, agreements, review/signature block
+ *   7. Attachments         — reference uploaded child_documents
  *
  * Print: "Print IEP" in the overflow menu opens a DepEd-style HTML document
  * via a hidden iframe — no server-side PDF generation required.
  *
  * Architecture: this file is the orchestration layer only.
- *   - Step rendering   → steps/Step1–Step6
+ *   - Step rendering   → steps/Step1–Step7
  *   - Header shell     → IepModalHeader (owns overflow-menu state)
  *   - Footer shell     → IepModalFooter
  *   - Recovery hook    → useIepRecovery<IepFormState>
@@ -25,14 +26,17 @@
  *   - Print renderer   → iep-print.ts (printIEP)
  */
 
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { Modal } from "@/components/ui/modal";
 import { ErrorAlert } from "@/components/ui/spinner";
-import { Lock } from "lucide-react";
+import { Lock, HelpCircle, User, Heart, Shield, Target, MessageSquare, TrendingUp, Handshake, Paperclip } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { getPlan, savePlan, setPlanStatus, createRevision } from "./queries";
 import type { PlanFull, PlanStatus, IepWorkflowMode } from "./types";
 import { EvidenceAssistant } from "./iep-assistant/EvidenceAssistant";
+import { getAppliedSuggestionsForPlan } from "./iep-assistant/queries";
+import type { ProvenanceMap, AppliedSuggestionMeta, TargetField } from "./iep-assistant/types";
 import { useIepRecovery } from "@/lib/iep-recovery/useIepRecovery";
 import { IepStepHelp } from "./IepStepHelp";
 import { format } from "date-fns";
@@ -42,7 +46,9 @@ import { Step1LearnerMeeting } from "./steps/Step1LearnerMeeting";
 import { Step2NeedsStrengths } from "./steps/Step2NeedsStrengths";
 import { Step3Supports } from "./steps/Step3Supports";
 import { Step4GoalsInterventions } from "./steps/Step4GoalsInterventions";
+import { Step5Discussion } from "./steps/Step5Discussion";
 import { Step5ProgressReview } from "./steps/Step5ProgressReview";
+import { Step7Agreements } from "./steps/Step7Agreements";
 import { Step6Attachments } from "./steps/Step6Attachments";
 import type { GoalRow, InterventionRow, ProgressRow, StudentOption, DocOption } from "./steps/shared";
 import type { IepTeamMember, IepAssistiveDevice, IepBarrier } from "./types";
@@ -50,7 +56,7 @@ import { type IepFormState, emptyFormState } from "./iep-form-state";
 import { planToFormState } from "./iep-hydration";
 import { buildIepDetails, nn } from "./iep-payload";
 import { printIEP } from "./iep-print";
-import type { WizardStep } from "./constants";
+import { PHASES, WIZARD_STEPS, getPhaseForStep, type WizardStep } from "./constants";
 
 // Re-export WizardStep so existing importers of this module don't break.
 export type { WizardStep } from "./constants";
@@ -60,7 +66,8 @@ export type { WizardStep } from "./constants";
 export interface IEPPlanModalProps {
   open: boolean;
   onClose: () => void;
-  onSaved: (planId: string) => void;
+  /** keepOpen=true when a draft save should keep the modal open (show toast instead). */
+  onSaved: (planId: string, keepOpen?: boolean) => void;
   planId: string | null;
   schoolId: string;
   schoolName?: string;
@@ -96,13 +103,11 @@ export function IEPPlanModal({
   const [step1LegendOpen, setStep1LegendOpen] = useState(false);
   const [step3BarriersLegendOpen, setStep3BarriersLegendOpen] = useState(false);
   const [assistantOpen, setAssistantOpen] = useState(false);
+  const [provenanceMap, setProvenanceMap] = useState<ProvenanceMap>({});
   const [showSaveDraftPrompt, setShowSaveDraftPrompt] = useState(false);
   const [expandedGoalTracking, setExpandedGoalTracking] = useState<Set<string>>(new Set());
   const [showReviewDetails, setShowReviewDetails] = useState(false);
   const [stepHelpOpen, setStepHelpOpen] = useState(false);
-
-  // Close step help panel when switching steps
-  useEffect(() => { setStepHelpOpen(false); }, [activeStep]);
 
   // ── Head / metadata (not persisted in IepFormState) ─────────────────────
   const [createdAt, setCreatedAt]       = useState<string | null>(null);
@@ -343,11 +348,33 @@ export function IEPPlanModal({
     return () => { cancelled = true; };
   }, [open, studentId, schoolId, supabase]);
 
-  // Mark changes on major field edits (title, studentId)
+  // Load provenance map from applied suggestions when a plan opens
+  useEffect(() => {
+    if (!open || !stableId) { setProvenanceMap({}); return; }
+    getAppliedSuggestionsForPlan(supabase, stableId)
+      .then((metas) => {
+        const map: ProvenanceMap = {};
+        for (const meta of metas) {
+          if (meta.targetField === "goal" || meta.targetField === "barrier") continue;
+          const field = meta.targetField;
+          if (!map[field]) map[field] = meta;
+        }
+        setProvenanceMap(map);
+      })
+      .catch(() => setProvenanceMap({}));
+  }, [open, stableId, supabase]);
+
+  // Keep a stable ref to markChanged so the effect below doesn't re-run on
+  // every render (the recovery object reference changes each render).
+  const markChangedRef = useRef(recovery.markChanged);
+  markChangedRef.current = recovery.markChanged;
+
+  // Mark changes only when the fields we care about actually change.
   useEffect(() => {
     if (!isEditing || !stableId) return;
-    recovery.markChanged();
-  }, [title, studentId, recovery, isEditing, stableId]);
+    markChangedRef.current();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [title, studentId, isEditing, stableId]);
 
   // Auto-populate region/division/district from school settings (only when fields are empty)
   useEffect(() => {
@@ -489,7 +516,12 @@ export function IEPPlanModal({
       });
       recovery.clearOnSave();
       setStatus(targetStatus);
-      onSaved(stableId);
+      if (targetStatus === "draft") {
+        onSaved(stableId, true);
+        showSavedToast();
+      } else {
+        onSaved(stableId);
+      }
       return true;
     } catch (err) {
       const msg =
@@ -561,6 +593,11 @@ export function IEPPlanModal({
 
   // ── Revision creation ─────────────────────────────────────────────────────
   const [creatingRevision, setCreatingRevision] = useState(false);
+  const [savedToast, setSavedToast] = useState(false);
+  function showSavedToast() {
+    setSavedToast(true);
+    setTimeout(() => setSavedToast(false), 3000);
+  }
 
   const handleCreateRevision = useCallback(async () => {
     if (!stableId) return;
@@ -611,6 +648,13 @@ export function IEPPlanModal({
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
+
+  // Icon per wizard step for the sidebar nav
+  const STEP_ICONS: Record<number, React.ElementType> = {
+    1: User, 2: Heart, 3: Shield, 4: Target,
+    5: MessageSquare, 6: TrendingUp, 7: Handshake, 8: Paperclip,
+  };
+
   const studentName = students.find((s) => s.id === studentId)?.full_name ?? "—";
   const canEdit = isStaff && status !== "approved" && status !== "archived" && status !== "finalized";
   const isReadOnly = status === "finalized" || status === "approved";
@@ -626,7 +670,7 @@ export function IEPPlanModal({
       onClose={onClose}
       title={isEditing ? `IEP Plan — ${title || studentName}` : "New IEP Plan"}
       align="top"
-      className="max-w-5xl max-h-[90vh]"
+      className="max-w-[1100px] max-h-[90vh]"
     >
       <IepModalHeader
         showRecoveryPrompt={recovery.showRecoveryPrompt}
@@ -649,12 +693,17 @@ export function IEPPlanModal({
         onDismissSaveDraftPrompt={() => setShowSaveDraftPrompt(false)}
         activeStep={activeStep}
         onStepChange={setActiveStep}
-        stepHelpOpen={stepHelpOpen}
-        onToggleStepHelp={() => setStepHelpOpen((v) => !v)}
         isReadOnly={isReadOnly}
       />
 
       {error && <div className="pt-4"><ErrorAlert message={error} /></div>}
+
+      {savedToast && (
+        <div className="mt-4 flex items-center gap-2 px-4 py-2.5 text-sm rounded-lg bg-green-50 border border-green-200 text-green-800 dark:bg-green-950/20 dark:border-green-700/60 dark:text-green-200">
+          <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" />
+          Draft saved.
+        </div>
+      )}
       {loading && <div className="py-8 text-center text-sm text-muted-foreground">Loading plan…</div>}
 
       {/* Read-only notice for finalized / approved plans */}
@@ -670,123 +719,204 @@ export function IEPPlanModal({
 
       {!loading && (
         <fieldset disabled={isReadOnly} className="contents">
-        <div className="py-4 space-y-5">
 
-          {stepHelpOpen && (
-            <IepStepHelp step={activeStep} onClose={() => setStepHelpOpen(false)} />
-          )}
+          <div className="flex -mx-6">
 
-          {activeStep === 1 && (
-            <Step1LearnerMeeting
-              students={students}
-              studentId={studentId} setStudentId={setStudentId}
-              isEditing={isEditing}
-              title={title} setTitle={setTitle}
-              learnerLrn={learnerLrn} setLearnerLrn={setLearnerLrn}
-              learnerBirthDate={learnerBirthDate} setLearnerBirthDate={setLearnerBirthDate}
-              learnerSex={learnerSex} setLearnerSex={setLearnerSex}
-              learnerGrade={learnerGrade} setLearnerGrade={setLearnerGrade}
-              religion={religion} setReligion={setReligion}
-              motherTongue={motherTongue} setMotherTongue={setMotherTongue}
-              caregiverName={caregiverName} setCaregiverName={setCaregiverName}
-              caregiverContact={caregiverContact} setCaregiverContact={setCaregiverContact}
-              caregiverEmail={caregiverEmail} setCaregiverEmail={setCaregiverEmail}
-              homeAddress={homeAddress} setHomeAddress={setHomeAddress}
-              parentWorkplace={parentWorkplace} setParentWorkplace={setParentWorkplace}
-              parentNotes={parentNotes} setParentNotes={setParentNotes}
-              step1LegendOpen={step1LegendOpen} setStep1LegendOpen={setStep1LegendOpen}
-              region={region} setRegion={setRegion}
-              division={division} setDivision={setDivision}
-              district={district} setDistrict={setDistrict}
-              meetingPurpose={meetingPurpose} setMeetingPurpose={setMeetingPurpose}
-              meetingDate={meetingDate} setMeetingDate={setMeetingDate}
-              lastIepDate={lastIepDate} setLastIepDate={setLastIepDate}
-              revisionDate={revisionDate} setRevisionDate={setRevisionDate}
-              iepReviewDate={iepReviewDate} setIepReviewDate={setIepReviewDate}
-              recommendations={recommendations} setRecommendations={setRecommendations}
-              agreements={agreements} setAgreements={setAgreements}
-              teamMembers={teamMembers} setTeamMembers={setTeamMembers}
-              addTeamMember={addTeamMember}
-              canEdit={canEdit}
-            />
-          )}
+            {/* ── Sidebar section nav (all phases) ── */}
+            <nav className="w-52 shrink-0 border-r border-border/40 px-3 py-5 sticky self-start space-y-5" style={{ top: '116px' }}>
+              {PHASES.map((phase) => (
+                <div key={phase.id}>
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 px-2 mb-1.5">
+                    {phase.label}
+                  </p>
+                  {phase.steps.map((stepId) => {
+                    const step = WIZARD_STEPS.find((s) => s.id === stepId)!;
+                    const isActive = activeStep === stepId;
+                    const isGuideActive = isActive && stepHelpOpen;
+                    const Icon = STEP_ICONS[stepId];
+                    return (
+                      <div key={stepId} className="group relative flex items-center mb-0.5">
+                        <button
+                          type="button"
+                          onClick={() => setActiveStep(stepId)}
+                          className={cn(
+                            "flex-1 text-left flex items-center gap-2 pl-2.5 pr-7 py-1.5 text-xs rounded-md transition-colors border-l-2",
+                            isActive
+                              ? "bg-primary/10 text-primary font-medium border-primary"
+                              : "text-muted-foreground hover:text-foreground hover:bg-muted/50 border-transparent",
+                          )}
+                        >
+                          <Icon className={cn("w-3.5 h-3.5 shrink-0", isActive ? "text-primary" : "text-muted-foreground/50")} />
+                          {step.label}
+                        </button>
+                        <button
+                          type="button"
+                          title={`${step.label} guide`}
+                          onClick={() => {
+                            if (!isActive) {
+                              setActiveStep(stepId);
+                              setStepHelpOpen(true);
+                            } else {
+                              setStepHelpOpen((v) => !v);
+                            }
+                          }}
+                          className={cn(
+                            "absolute right-1 w-5 h-5 flex items-center justify-center rounded transition-colors",
+                            isGuideActive
+                              ? "text-primary"
+                              : isActive
+                                ? "text-muted-foreground/40 hover:text-primary"
+                                : "text-transparent group-hover:text-muted-foreground/40 hover:!text-primary",
+                          )}
+                        >
+                          <HelpCircle className="w-3 h-3" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </nav>
 
-          {activeStep === 2 && (
-            <Step2NeedsStrengths
-              diffSeeing={diffSeeing} setDiffSeeing={setDiffSeeing}
-              diffHearing={diffHearing} setDiffHearing={setDiffHearing}
-              diffCommunicating={diffCommunicating} setDiffCommunicating={setDiffCommunicating}
-              diffMoving={diffMoving} setDiffMoving={setDiffMoving}
-              diffConcentrating={diffConcentrating} setDiffConcentrating={setDiffConcentrating}
-              diffRemembering={diffRemembering} setDiffRemembering={setDiffRemembering}
-              diffOther={diffOther} setDiffOther={setDiffOther}
-              diffOtherDesc={diffOtherDesc} setDiffOtherDesc={setDiffOtherDesc}
-              hasMedical={hasMedical} setHasMedical={setHasMedical}
-              medicalDiagnosis={medicalDiagnosis} setMedicalDiagnosis={setMedicalDiagnosis}
-              diagnosis={diagnosis} setDiagnosis={setDiagnosis}
-              evaluationResults={evaluationResults} setEvaluationResults={setEvaluationResults}
-              presentStrengths={presentStrengths} setPresentStrengths={setPresentStrengths}
-              presentNeeds={presentNeeds} setPresentNeeds={setPresentNeeds}
-              parentConcerns={parentConcerns} setParentConcerns={setParentConcerns}
-              disabilityImpact={disabilityImpact} setDisabilityImpact={setDisabilityImpact}
-              backgroundNotes={backgroundNotes} setBackgroundNotes={setBackgroundNotes}
-              isStaff={isStaff} isEditing={isEditing} saving={saving}
-              handleAssistantClick={handleAssistantClick}
-              canEdit={canEdit}
-            />
-          )}
+            {/* ── Step content ── */}
+            <div className="flex-1 min-w-0 px-6 py-5">
 
-          {activeStep === 3 && (
-            <Step3Supports
-              assistiveDevices={assistiveDevices} setAssistiveDevices={setAssistiveDevices} addDevice={addDevice}
-              barriers={barriers} setBarriers={setBarriers} addBarrier={addBarrier}
-              step3BarriersLegendOpen={step3BarriersLegendOpen} setStep3BarriersLegendOpen={setStep3BarriersLegendOpen}
-              isStaff={isStaff} isEditing={isEditing} saving={saving}
-              handleAssistantClick={handleAssistantClick} canEdit={canEdit}
-            />
-          )}
+              {stepHelpOpen && (
+                <div className="mb-5">
+                  <IepStepHelp step={activeStep} onClose={() => setStepHelpOpen(false)} />
+                </div>
+              )}
 
-          {activeStep === 4 && (
-            <Step4GoalsInterventions
-              goals={goals} setGoals={setGoals} addGoal={addGoal}
-              interventions={interventions} setInterventions={setInterventions} addIntervention={addIntervention}
-              expandedGoalTracking={expandedGoalTracking} setExpandedGoalTracking={setExpandedGoalTracking}
-              isStaff={isStaff} isEditing={isEditing} saving={saving}
-              handleAssistantClick={handleAssistantClick} canEdit={canEdit}
-            />
-          )}
+              <div className="space-y-5">
 
-          {activeStep === 5 && (
-            <Step5ProgressReview
-              progress={progress} setProgress={setProgress} addProgress={addProgress}
-              goals={goals}
-              showReviewDetails={showReviewDetails} setShowReviewDetails={setShowReviewDetails}
-              preparedBy={preparedBy} setPreparedBy={setPreparedBy}
-              preparedDate={preparedDate} setPreparedDate={setPreparedDate}
-              checkedReviewedBy={checkedReviewedBy} setCheckedReviewedBy={setCheckedReviewedBy}
-              checkedReviewedDate={checkedReviewedDate} setCheckedReviewedDate={setCheckedReviewedDate}
-              reviewDate={reviewDate} setReviewDate={setReviewDate}
-              reviewedByTeacherId={reviewedByTeacherId} setReviewedByTeacherId={setReviewedByTeacherId}
-              reviewedByAdminId={reviewedByAdminId} setReviewedByAdminId={setReviewedByAdminId}
-              homeSupportNotes={homeSupportNotes} setHomeSupportNotes={setHomeSupportNotes}
-              parentAcknowledged={parentAcknowledged} setParentAcknowledged={setParentAcknowledged}
-              status={status} schoolId={schoolId} canEdit={canEdit}
-            />
-          )}
+                {activeStep === 1 && (
+                  <Step1LearnerMeeting
+                    students={students}
+                    studentId={studentId} setStudentId={setStudentId}
+                    isEditing={isEditing}
+                    title={title} setTitle={setTitle}
+                    learnerLrn={learnerLrn} setLearnerLrn={setLearnerLrn}
+                    learnerBirthDate={learnerBirthDate} setLearnerBirthDate={setLearnerBirthDate}
+                    learnerSex={learnerSex} setLearnerSex={setLearnerSex}
+                    learnerGrade={learnerGrade} setLearnerGrade={setLearnerGrade}
+                    religion={religion} setReligion={setReligion}
+                    motherTongue={motherTongue} setMotherTongue={setMotherTongue}
+                    caregiverName={caregiverName} setCaregiverName={setCaregiverName}
+                    caregiverContact={caregiverContact} setCaregiverContact={setCaregiverContact}
+                    caregiverEmail={caregiverEmail} setCaregiverEmail={setCaregiverEmail}
+                    homeAddress={homeAddress} setHomeAddress={setHomeAddress}
+                    parentWorkplace={parentWorkplace} setParentWorkplace={setParentWorkplace}
+                    parentNotes={parentNotes} setParentNotes={setParentNotes}
+                    step1LegendOpen={step1LegendOpen} setStep1LegendOpen={setStep1LegendOpen}
+                    region={region} setRegion={setRegion}
+                    division={division} setDivision={setDivision}
+                    district={district} setDistrict={setDistrict}
+                    meetingPurpose={meetingPurpose} setMeetingPurpose={setMeetingPurpose}
+                    meetingDate={meetingDate} setMeetingDate={setMeetingDate}
+                    lastIepDate={lastIepDate} setLastIepDate={setLastIepDate}
+                    revisionDate={revisionDate} setRevisionDate={setRevisionDate}
+                    iepReviewDate={iepReviewDate} setIepReviewDate={setIepReviewDate}
+                    teamMembers={teamMembers} setTeamMembers={setTeamMembers}
+                    addTeamMember={addTeamMember}
+                    canEdit={canEdit}
+                  />
+                )}
 
-          {activeStep === 6 && (
-            <Step6Attachments
-              studentId={studentId} studentDocs={studentDocs}
-              attachmentIds={attachmentIds} setAttachmentIds={setAttachmentIds}
-              isStaff={isStaff} isEditing={isEditing} saving={saving}
-              handleAssistantClick={handleAssistantClick} canEdit={canEdit}
-              isSimpleReview={isSimpleReview} status={status}
-              meetingDate={meetingDate} iepReviewDate={iepReviewDate}
-              goals={goals} teamMembers={teamMembers}
-            />
-          )}
+                {activeStep === 2 && (
+                  <Step2NeedsStrengths
+                    diffSeeing={diffSeeing} setDiffSeeing={setDiffSeeing}
+                    diffHearing={diffHearing} setDiffHearing={setDiffHearing}
+                    diffCommunicating={diffCommunicating} setDiffCommunicating={setDiffCommunicating}
+                    diffMoving={diffMoving} setDiffMoving={setDiffMoving}
+                    diffConcentrating={diffConcentrating} setDiffConcentrating={setDiffConcentrating}
+                    diffRemembering={diffRemembering} setDiffRemembering={setDiffRemembering}
+                    diffOther={diffOther} setDiffOther={setDiffOther}
+                    diffOtherDesc={diffOtherDesc} setDiffOtherDesc={setDiffOtherDesc}
+                    hasMedical={hasMedical} setHasMedical={setHasMedical}
+                    medicalDiagnosis={medicalDiagnosis} setMedicalDiagnosis={setMedicalDiagnosis}
+                    diagnosis={diagnosis} setDiagnosis={setDiagnosis}
+                    evaluationResults={evaluationResults} setEvaluationResults={setEvaluationResults}
+                    presentStrengths={presentStrengths} setPresentStrengths={setPresentStrengths}
+                    presentNeeds={presentNeeds} setPresentNeeds={setPresentNeeds}
+                    parentConcerns={parentConcerns} setParentConcerns={setParentConcerns}
+                    disabilityImpact={disabilityImpact} setDisabilityImpact={setDisabilityImpact}
+                    backgroundNotes={backgroundNotes} setBackgroundNotes={setBackgroundNotes}
+                    isStaff={isStaff} isEditing={isEditing} saving={saving}
+                    handleAssistantClick={handleAssistantClick}
+                    canEdit={canEdit}
+                    provenanceMap={provenanceMap}
+                  />
+                )}
 
-        </div>
+                {activeStep === 3 && (
+                  <Step3Supports
+                    assistiveDevices={assistiveDevices} setAssistiveDevices={setAssistiveDevices} addDevice={addDevice}
+                    barriers={barriers} setBarriers={setBarriers} addBarrier={addBarrier}
+                    step3BarriersLegendOpen={step3BarriersLegendOpen} setStep3BarriersLegendOpen={setStep3BarriersLegendOpen}
+                    isStaff={isStaff} isEditing={isEditing} saving={saving}
+                    handleAssistantClick={handleAssistantClick} canEdit={canEdit}
+                  />
+                )}
+
+                {activeStep === 4 && (
+                  <Step4GoalsInterventions
+                    goals={goals} setGoals={setGoals} addGoal={addGoal}
+                    interventions={interventions} setInterventions={setInterventions} addIntervention={addIntervention}
+                    expandedGoalTracking={expandedGoalTracking} setExpandedGoalTracking={setExpandedGoalTracking}
+                    isStaff={isStaff} isEditing={isEditing} saving={saving}
+                    handleAssistantClick={handleAssistantClick} canEdit={canEdit}
+                  />
+                )}
+
+                {activeStep === 5 && (
+                  <Step5Discussion
+                    recommendations={recommendations} setRecommendations={setRecommendations}
+                    canEdit={canEdit}
+                  />
+                )}
+
+                {activeStep === 6 && (
+                  <Step5ProgressReview
+                    progress={progress} setProgress={setProgress} addProgress={addProgress}
+                    goals={goals}
+                    showReviewDetails={showReviewDetails} setShowReviewDetails={setShowReviewDetails}
+                    preparedBy={preparedBy} setPreparedBy={setPreparedBy}
+                    preparedDate={preparedDate} setPreparedDate={setPreparedDate}
+                    checkedReviewedBy={checkedReviewedBy} setCheckedReviewedBy={setCheckedReviewedBy}
+                    checkedReviewedDate={checkedReviewedDate} setCheckedReviewedDate={setCheckedReviewedDate}
+                    reviewDate={reviewDate} setReviewDate={setReviewDate}
+                    reviewedByTeacherId={reviewedByTeacherId} setReviewedByTeacherId={setReviewedByTeacherId}
+                    reviewedByAdminId={reviewedByAdminId} setReviewedByAdminId={setReviewedByAdminId}
+                    status={status} schoolId={schoolId} canEdit={canEdit}
+                  />
+                )}
+
+                {activeStep === 7 && (
+                  <Step7Agreements
+                    agreements={agreements} setAgreements={setAgreements}
+                    homeSupportNotes={homeSupportNotes} setHomeSupportNotes={setHomeSupportNotes}
+                    parentAcknowledged={parentAcknowledged} setParentAcknowledged={setParentAcknowledged}
+                    canEdit={canEdit}
+                  />
+                )}
+
+                {activeStep === 8 && (
+                  <Step6Attachments
+                    studentId={studentId} studentDocs={studentDocs}
+                    attachmentIds={attachmentIds} setAttachmentIds={setAttachmentIds}
+                    isStaff={isStaff} isEditing={isEditing} saving={saving}
+                    handleAssistantClick={handleAssistantClick} canEdit={canEdit}
+                    isSimpleReview={isSimpleReview} status={status}
+                    meetingDate={meetingDate} iepReviewDate={iepReviewDate}
+                    goals={goals} teamMembers={teamMembers}
+                    planId={stableId}
+                  />
+                )}
+
+              </div>
+            </div>
+
+          </div>
         </fieldset>
       )}
 
@@ -831,8 +961,9 @@ export function IEPPlanModal({
           setDisabilityImpact={setDisabilityImpact}
           setGoals={setGoals}
           setBarriers={setBarriers}
-          onSectionApplied={(_label) => {
-            // Placeholder: show brief inline feedback in a future iteration
+          onSectionApplied={(field: TargetField, meta: AppliedSuggestionMeta) => {
+            if (field === "goal" || field === "barrier") return;
+            setProvenanceMap((prev) => ({ ...prev, [field]: meta }));
           }}
         />
       )}

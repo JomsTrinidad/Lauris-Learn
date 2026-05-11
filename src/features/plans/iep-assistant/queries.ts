@@ -5,7 +5,9 @@
 
 import { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/types/database";
-import type { ReportDoc, SuggestionRow } from "./types";
+import type { ReportDoc, SuggestionRow, AppliedSuggestionMeta, EvidenceHistoryEntry, TargetField, ConfidenceLabel } from "./types";
+
+const LOW_TRUST_METHODS = new Set(["image_ocr", "pdf_scanned"]);
 
 type DbClient = SupabaseClient<Database>;
 
@@ -100,6 +102,103 @@ export async function markSuggestionReviewed(
     .eq("id", suggestionId);
 
   if (error) throw error;
+}
+
+/**
+ * Fetch applied/edited suggestions for a plan.
+ * Used to rebuild ProvenanceMap on plan load.
+ */
+export async function getAppliedSuggestionsForPlan(
+  supabase: DbClient,
+  planId: string,
+): Promise<AppliedSuggestionMeta[]> {
+  const { data, error } = await supabase
+    .from("iep_ai_suggestions")
+    .select(
+      "id, target_field, source_document_title, extraction_method, reviewed_by, reviewed_at, suggested_text, applied_text, status, source_excerpt, confidence_label",
+    )
+    .eq("plan_id", planId)
+    .in("status", ["applied", "edited"])
+    .order("reviewed_at", { ascending: false });
+
+  if (error) throw error;
+
+  const rows = (data || []) as Array<{
+    id: string;
+    target_field: string;
+    source_document_title: string | null;
+    extraction_method: string | null;
+    reviewed_by: string | null;
+    reviewed_at: string | null;
+    suggested_text: string;
+    applied_text: string | null;
+    status: string;
+    source_excerpt: string | null;
+    confidence_label: string;
+  }>;
+
+  return rows.map((r) => ({
+    suggestionId: r.id,
+    targetField: r.target_field as TargetField,
+    sourceDocumentTitle: r.source_document_title,
+    extractionMethod: r.extraction_method,
+    isLowTrust: LOW_TRUST_METHODS.has(r.extraction_method ?? ""),
+    reviewedBy: r.reviewed_by,
+    appliedAt: r.reviewed_at,
+    originalText: r.suggested_text,
+    appliedText: r.applied_text ?? r.suggested_text,
+    wasEdited: r.status === "edited",
+    sourceExcerpt: r.source_excerpt,
+    confidenceLabel: r.confidence_label as ConfidenceLabel,
+  }));
+}
+
+/**
+ * Fetch evidence history for a plan, grouped by summary.
+ * Used in the Step6 Evidence History panel.
+ */
+export async function getEvidenceHistoryForPlan(
+  supabase: DbClient,
+  planId: string,
+): Promise<EvidenceHistoryEntry[]> {
+  const { data, error } = await supabase
+    .from("iep_ai_suggestions")
+    .select("summary_id, source_document_title, extraction_method, reviewed_at, status")
+    .eq("plan_id", planId)
+    .in("status", ["applied", "edited"])
+    .order("reviewed_at", { ascending: false });
+
+  if (error) throw error;
+
+  const rows = (data || []) as Array<{
+    summary_id: string;
+    source_document_title: string | null;
+    extraction_method: string | null;
+    reviewed_at: string | null;
+    status: string;
+  }>;
+
+  const grouped = new Map<string, EvidenceHistoryEntry>();
+  for (const r of rows) {
+    const existing = grouped.get(r.summary_id);
+    if (existing) {
+      existing.appliedCount += 1;
+      if (r.reviewed_at && (!existing.lastAppliedAt || r.reviewed_at > existing.lastAppliedAt)) {
+        existing.lastAppliedAt = r.reviewed_at;
+      }
+    } else {
+      grouped.set(r.summary_id, {
+        summaryId: r.summary_id,
+        sourceDocumentTitle: r.source_document_title,
+        extractionMethod: r.extraction_method,
+        isLowTrust: LOW_TRUST_METHODS.has(r.extraction_method ?? ""),
+        appliedCount: 1,
+        lastAppliedAt: r.reviewed_at,
+      });
+    }
+  }
+
+  return Array.from(grouped.values());
 }
 
 /**

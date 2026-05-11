@@ -19,7 +19,7 @@ import { ModalCancelButton } from "@/components/ui/modal";
 import type { WizardStep } from "./constants";
 import type { PlanStatus } from "./types";
 
-const LAST_STEP: WizardStep = 6;
+const LAST_STEP: WizardStep = 8;
 
 export interface IepModalFooterProps {
   activeStep: WizardStep;

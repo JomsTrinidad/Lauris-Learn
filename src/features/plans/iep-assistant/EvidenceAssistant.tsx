@@ -53,7 +53,11 @@ import type {
   SuggestionRow,
   TargetField,
   EvidenceSourceMode,
+  AppliedSuggestionMeta,
+  ConfidenceLabel,
 } from "./types";
+
+const LOW_TRUST_METHODS = new Set(["image_ocr", "pdf_scanned"]);
 import { DOCUMENT_TYPE_LABELS } from "@/features/documents/constants";
 
 type Step = "select" | "extracting" | "extracted" | "summarizing" | "review";
@@ -73,7 +77,7 @@ interface EvidenceAssistantProps {
   setDisabilityImpact: (v: string) => void;
   setGoals: React.Dispatch<React.SetStateAction<any[]>>;
   setBarriers: React.Dispatch<React.SetStateAction<any[]>>;
-  onSectionApplied: (label: string) => void;
+  onSectionApplied: (field: TargetField, meta: AppliedSuggestionMeta) => void;
 }
 
 const FIELD_TO_LABEL: Record<TargetField, string> = {
@@ -393,7 +397,22 @@ export function EvidenceAssistant({
         }
 
         setAppliedIds((prev) => new Set([...prev, suggestion.id]));
-        onSectionApplied(FIELD_TO_LABEL[suggestion.target_field]);
+
+        const meta: AppliedSuggestionMeta = {
+          suggestionId: suggestion.id,
+          targetField: suggestion.target_field,
+          sourceDocumentTitle: (suggestion.source_document_title ?? selectedSourceTitle) || null,
+          extractionMethod: suggestion.extraction_method ?? null,
+          isLowTrust: (LOW_TRUST_METHODS.has(suggestion.extraction_method ?? "")) || !!lowTrustWarning,
+          reviewedBy: userId,
+          appliedAt: new Date().toISOString(),
+          originalText: suggestion.suggested_text,
+          appliedText: text,
+          wasEdited: !!editedText,
+          sourceExcerpt: suggestion.source_excerpt,
+          confidenceLabel: suggestion.confidence_label as ConfidenceLabel,
+        };
+        onSectionApplied(suggestion.target_field, meta);
 
         if (editingId === suggestion.id) {
           setEditingId(null);
@@ -403,7 +422,7 @@ export function EvidenceAssistant({
         setError(err instanceof Error ? err.message : "Failed to apply");
       }
     },
-    [planId, setEvaluationResults, setPresentStrengths, setPresentNeeds, setParentConcerns, setDisabilityImpact, setGoals, setBarriers, onSectionApplied, editingId],
+    [planId, userId, selectedSourceTitle, lowTrustWarning, setEvaluationResults, setPresentStrengths, setPresentNeeds, setParentConcerns, setDisabilityImpact, setGoals, setBarriers, onSectionApplied, editingId],
   );
 
   // ─── Reject suggestion ──────────────────────────────────────────────────
@@ -734,9 +753,23 @@ export function EvidenceAssistant({
                     {isApplied && <CheckCircle2 className="w-4 h-4 text-green-600" />}
                   </div>
 
-                  <div className="flex items-center gap-1 mb-2 text-xs text-muted-foreground">
-                    <MessageCircle className="w-3 h-3" />
-                    <span>Confidence: {sugg.confidence_label}</span>
+                  <div className="flex flex-wrap items-center gap-2 mb-2 text-xs text-muted-foreground">
+                    <span className="flex items-center gap-1">
+                      <MessageCircle className="w-3 h-3" />
+                      Confidence: {sugg.confidence_label}
+                    </span>
+                    {sugg.source_document_title && (
+                      <span className="flex items-center gap-1">
+                        <FileText className="w-3 h-3" />
+                        {sugg.source_document_title}
+                      </span>
+                    )}
+                    {sugg.extraction_method && LOW_TRUST_METHODS.has(sugg.extraction_method) && (
+                      <span className="flex items-center gap-1 text-amber-600">
+                        <ShieldAlert className="w-3 h-3" />
+                        OCR — review carefully
+                      </span>
+                    )}
                   </div>
 
                   {sugg.source_excerpt && (

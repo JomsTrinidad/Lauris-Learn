@@ -10,7 +10,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSel
         className={cn(
           "w-full px-3 py-2 pr-9",
           "bg-[var(--input-background)] border-2 border-border rounded-lg",
-          "text-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-ring",
+          "text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-ring",
           "disabled:opacity-50 disabled:cursor-not-allowed appearance-none",
           "hover:border-ring/60 transition-colors cursor-pointer",
         )}

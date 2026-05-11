@@ -75,6 +75,36 @@ export interface SuggestionRow {
   applied_text: string | null;
   reviewed_at: string | null;
   source_document_id: string;
+  source_document_title: string | null;
+  extraction_method: string | null;
+}
+
+// ─── Provenance tracking ──────────────────────────────────────────────
+
+export interface AppliedSuggestionMeta {
+  suggestionId: string;
+  targetField: TargetField;
+  sourceDocumentTitle: string | null;
+  extractionMethod: string | null;
+  isLowTrust: boolean;
+  reviewedBy: string | null;
+  appliedAt: string | null;
+  originalText: string;
+  appliedText: string;
+  wasEdited: boolean;
+  sourceExcerpt: string | null;
+  confidenceLabel: ConfidenceLabel;
+}
+
+export type ProvenanceMap = Partial<Record<Exclude<TargetField, "goal" | "barrier">, AppliedSuggestionMeta>>;
+
+export interface EvidenceHistoryEntry {
+  summaryId: string;
+  sourceDocumentTitle: string | null;
+  extractionMethod: string | null;
+  isLowTrust: boolean;
+  appliedCount: number;
+  lastAppliedAt: string | null;
 }
 
 // ─── API request/response contracts ──────────────────────────────────

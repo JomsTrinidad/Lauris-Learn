@@ -6,6 +6,7 @@ import { DOCUMENT_TYPE_LABELS } from "@/features/documents/constants";
 import type { IepWorkflowMode, PlanStatus } from "../types";
 import type { GoalRow, DocOption } from "./shared";
 import type { IepTeamMember } from "../types";
+import { EvidenceHistoryPanel } from "@/features/plans/iep-assistant/EvidenceHistoryPanel";
 
 export interface Step6Props {
   studentId: string;
@@ -24,6 +25,7 @@ export interface Step6Props {
   iepReviewDate: string;
   goals: GoalRow[];
   teamMembers: IepTeamMember[];
+  planId?: string | null;
 }
 
 const DOC_GROUPS: { label: string; types: string[] }[] = [
@@ -38,6 +40,7 @@ export function Step6Attachments({
   studentId, studentDocs, attachmentIds, setAttachmentIds,
   isStaff, isEditing, saving, handleAssistantClick, canEdit,
   isSimpleReview, status, meetingDate, iepReviewDate, goals, teamMembers,
+  planId,
 }: Step6Props) {
   const grouped = DOC_GROUPS
     .map((g) => ({ ...g, docs: studentDocs.filter((d) => g.types.includes(d.document_type)) }))
@@ -59,13 +62,13 @@ export function Step6Attachments({
 
         {!studentId && (
           <div className="rounded-lg border border-dashed border-border bg-card/60 p-5 text-center">
-            <p className="text-sm text-muted-foreground">Select a learner on the first step to see their available documents.</p>
+            <p className="text-xs text-muted-foreground">Select a learner on the first step to see their available documents.</p>
           </div>
         )}
 
         {studentId && studentDocs.length === 0 && (
           <div className="rounded-lg border border-dashed border-border bg-card/60 p-5 text-center space-y-2">
-            <p className="text-sm font-medium text-foreground">No documents uploaded yet</p>
+            <p className="text-xs font-medium text-foreground">No documents uploaded yet</p>
             <p className="text-xs text-muted-foreground">Go to the <strong>Documents</strong> section to upload reports, assessments, and other supporting materials for this learner, then come back to link them here.</p>
           </div>
         )}
@@ -88,7 +91,7 @@ export function Step6Attachments({
                             }} />
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
-                              <span className="text-sm font-medium truncate">{d.title}</span>
+                              <span className="text-xs font-medium truncate">{d.title}</span>
                               {checked && <Paperclip className="w-3 h-3 text-primary shrink-0" />}
                             </div>
                             <div className="text-xs text-muted-foreground">
@@ -127,12 +130,15 @@ export function Step6Attachments({
         )}
       </div>
 
+      {/* ── Evidence history ── */}
+      {planId && <EvidenceHistoryPanel planId={planId} />}
+
       {/* ── Submission guidance ── */}
       {isStaff && canEdit && status === "draft" && (
         <div className="rounded-xl border border-border/50 bg-card p-5 space-y-2">
           {isSimpleReview ? (
             <>
-              <p className="text-sm font-medium text-foreground">Ready to finalize?</p>
+              <p className="text-xs font-medium text-foreground">Ready to finalize?</p>
               <p className="text-xs text-muted-foreground">When the plan is complete, use the <strong>Finalize IEP</strong> button below to lock it. A finalized plan cannot be edited.</p>
               {(!meetingDate || !iepReviewDate || goals.length === 0 || teamMembers.length === 0) && (
                 <div className="mt-2 space-y-1">
@@ -148,7 +154,7 @@ export function Step6Attachments({
             </>
           ) : (
             <>
-              <p className="text-sm font-medium text-foreground">Ready to submit?</p>
+              <p className="text-xs font-medium text-foreground">Ready to submit?</p>
               <p className="text-xs text-muted-foreground">When the plan is complete, use the <strong>Submit For Review</strong> button below to send it to an admin for approval. You can continue editing until it&apos;s approved.</p>
             </>
           )}

@@ -7,22 +7,28 @@
  *   1. Recovery prompt bar (amber, dismissible)
  *   2. Metadata + action row (status badge, student name, Save button, overflow menu)
  *   3. Save-draft prompt bar (shown when user tries AI on unsaved plan)
- *   4. Wizard stepper (step tabs + step guide toggle)
+ *   4. Phase navigation — 3 workflow phases (Preparation / Planning / Review)
+ *   5. Section sub-nav — sections within the active phase + step guide toggle
  *
  * The overflow menu (Print IEP / Archive plan) manages its own open/close
  * state and outside-click handler internally.
+ *
+ * Phase ↔ step derivation:
+ *   getPhaseForStep() maps the flat WizardStep (1–7) to a PhaseId (1–3).
+ *   activePhase and currentPhase are derived; the underlying activeStep state
+ *   in IEPPlanModal is unchanged — no recovery or payload impact.
  */
 
 import { useEffect, useRef, useState } from "react";
 import {
   Save, Loader2, AlertCircle, MoreHorizontal,
-  Printer, Archive, HelpCircle, X,
+  Printer, Archive, X, ChevronRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
-import { PLAN_STATUS_LABELS, WIZARD_STEPS, type WizardStep } from "./constants";
+import { PLAN_STATUS_LABELS, PHASES, getPhaseForStep, type WizardStep } from "./constants";
 import type { PlanStatus } from "./types";
 
 export interface IepModalHeaderProps {
@@ -52,9 +58,6 @@ export interface IepModalHeaderProps {
   // Wizard stepper
   activeStep: WizardStep;
   onStepChange: (step: WizardStep) => void;
-  // Step guide panel toggle (controlled by parent — affects content area)
-  stepHelpOpen: boolean;
-  onToggleStepHelp: () => void;
   /** When true: hides the Save button and suppresses recovery/save-draft prompts. */
   isReadOnly?: boolean;
 }
@@ -66,11 +69,13 @@ export function IepModalHeader({
   onPrint, canPrint, isAdmin, isArchived, onArchive,
   showSaveDraftPrompt, onDismissSaveDraftPrompt,
   activeStep, onStepChange,
-  stepHelpOpen, onToggleStepHelp,
   isReadOnly = false,
 }: IepModalHeaderProps) {
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const moreMenuRef = useRef<HTMLDivElement>(null);
+
+  // Derive phase from flat step number — no additional state needed.
+  const activePhase = getPhaseForStep(activeStep);;
 
   useEffect(() => {
     if (!showMoreMenu) return;
@@ -200,65 +205,56 @@ export function IepModalHeader({
         </div>
       )}
 
-      {/* Wizard stepper */}
-      <div className="px-4 border-t border-border/40">
-        <div className="flex items-center gap-0.5 overflow-x-auto py-2 [&::-webkit-scrollbar]:h-0">
-          {WIZARD_STEPS.map((step, i) => {
-            const isActive = activeStep === step.id;
-            const isPast = activeStep > step.id;
+      {/* ── Phase-based navigation ── */}
+      <div className="border-t border-border/40 bg-muted/20">
+        <div className="flex items-center px-6 py-3 gap-1">
+
+          {PHASES.map((phase, idx) => {
+            const isActivePhase = activePhase === phase.id;
+            const isPastPhase = activePhase > phase.id;
             return (
-              <div key={step.id} className="flex items-center shrink-0">
-                {i > 0 && <div className="w-3 h-px bg-border mx-0.5" />}
+              <div key={phase.id} className="flex items-center gap-1 flex-1 min-w-0">
                 <button
                   type="button"
-                  onClick={() => onStepChange(step.id)}
+                  onClick={() => onStepChange(phase.steps[0])}
                   className={cn(
-                    "flex items-center gap-1.5 px-2 py-1 rounded-md text-xs whitespace-nowrap transition-colors",
-                    isActive
-                      ? "bg-primary text-primary-foreground font-medium"
-                      : isPast
-                        ? "text-foreground hover:bg-muted"
-                        : "text-muted-foreground hover:text-foreground",
+                    "flex items-center gap-3 px-3 py-2 rounded-lg transition-colors w-full min-w-0",
+                    isActivePhase
+                      ? "bg-primary/10"
+                      : "hover:bg-muted/60",
                   )}
                 >
                   <span
                     className={cn(
-                      "w-4 h-4 rounded-full text-[10px] flex items-center justify-center font-semibold shrink-0",
-                      isActive
-                        ? "bg-white/20 text-primary-foreground"
-                        : isPast
-                          ? "bg-primary/15 text-primary"
-                          : "bg-muted-foreground/20 text-muted-foreground",
+                      "w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 border-2 transition-colors",
+                      isActivePhase
+                        ? "border-primary bg-primary text-primary-foreground"
+                        : isPastPhase
+                          ? "border-primary/50 bg-primary/10 text-primary"
+                          : "border-border bg-card text-muted-foreground",
                     )}
                   >
-                    {isPast ? "✓" : step.id}
+                    {isPastPhase ? "✓" : phase.id}
                   </span>
-                  <span className="hidden md:inline">{step.label}</span>
-                  <span className="md:hidden">{step.shortLabel}</span>
+                  <div className="text-left min-w-0">
+                    <div className={cn(
+                      "text-sm font-semibold leading-tight",
+                      isActivePhase ? "text-primary" : isPastPhase ? "text-foreground/70" : "text-muted-foreground",
+                    )}>
+                      {phase.label}
+                    </div>
+                    <div className="text-[11px] text-muted-foreground leading-tight mt-0.5 whitespace-nowrap">
+                      {phase.description}
+                    </div>
+                  </div>
                 </button>
+                {idx < PHASES.length - 1 && (
+                  <ChevronRight className="w-4 h-4 text-border/80 shrink-0" />
+                )}
               </div>
             );
           })}
 
-          {/* Step guide toggle */}
-          <div className="ml-auto pl-2 shrink-0">
-            <button
-              type="button"
-              onClick={onToggleStepHelp}
-              title={stepHelpOpen ? "Close step guide" : "What belongs in this step?"}
-              className={cn(
-                "inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs transition-colors",
-                stepHelpOpen
-                  ? "bg-primary/10 text-primary"
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted",
-              )}
-            >
-              <HelpCircle className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">
-                {stepHelpOpen ? "Close guide" : "Step guide"}
-              </span>
-            </button>
-          </div>
         </div>
       </div>
     </div>

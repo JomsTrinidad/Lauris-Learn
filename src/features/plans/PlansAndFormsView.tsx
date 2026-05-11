@@ -299,8 +299,8 @@ export function PlansAndFormsView({
       <IEPPlanModal
         open={modalOpen}
         onClose={() => setModalOpen(false)}
-        onSaved={() => {
-          setModalOpen(false);
+        onSaved={(_planId, keepOpen) => {
+          if (!keepOpen) setModalOpen(false);
           void loadPlans();
           void reloadPendingCount();
         }}

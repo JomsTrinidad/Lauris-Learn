@@ -8,6 +8,15 @@ import { Button } from "@/components/ui/button";
 import { BARRIERS_LEGEND } from "../constants";
 import type { IepAssistiveDevice, IepBarrier } from "../types";
 import { Field, BlockCard } from "./shared";
+import { StarterIdeasPanel } from "@/features/plans/authoring-assist/StarterIdeasPanel";
+import {
+  BARRIER_DIFFICULTY_STARTERS,
+  LEARNING_BARRIER_STARTERS,
+  LEARNING_FACILITATOR_STARTERS,
+  ACCOMMODATION_STARTERS,
+} from "@/features/plans/authoring-assist/starters";
+
+const ACCOMMODATION_TEXTS = ACCOMMODATION_STARTERS.map((a) => `[${a.category}] ${a.text}`);
 
 export interface Step3Props {
   // Assistive devices
@@ -164,12 +173,18 @@ export function Step3Supports({
           <div className="space-y-3">
             {barriers.map((b, idx) => (
               <BlockCard key={b.id} index={idx}
-                onRemove={canEdit ? () => setBarriers((p) => p.filter((x) => x.id !== b.id)) : undefined}>
+                onRemove={canEdit ? () => setBarriers((p) => p.filter((x) => x.id !== b.id)) : undefined}
+                onDuplicate={canEdit ? () => setBarriers((p) => [...p, { ...b, id: crypto.randomUUID() }]) : undefined}>
                 <Field label="Area or difficulty">
                   <Input value={b.difficulty}
                     onChange={(e) => setBarriers((p) => p.map((x) => x.id === b.id ? { ...x, difficulty: e.target.value } : x))}
                     disabled={!canEdit}
                     placeholder="e.g. difficulty sustaining attention during group activities" />
+                  <StarterIdeasPanel
+                    items={[...BARRIER_DIFFICULTY_STARTERS]}
+                    onInsert={(text) => setBarriers((p) => p.map((x) => x.id === b.id ? { ...x, difficulty: text } : x))}
+                    disabled={!canEdit}
+                  />
                 </Field>
                 <div className="grid md:grid-cols-3 gap-3">
                   <Field label="What makes it harder?">
@@ -177,18 +192,34 @@ export function Step3Supports({
                       onChange={(e) => setBarriers((p) => p.map((x) => x.id === b.id ? { ...x, learning_barriers: e.target.value } : x))}
                       disabled={!canEdit}
                       placeholder="What situations or conditions make participation more difficult?" />
+                    <StarterIdeasPanel
+                      items={[...LEARNING_BARRIER_STARTERS]}
+                      onInsert={(text) => setBarriers((p) => p.map((x) => x.id === b.id ? { ...x, learning_barriers: x.learning_barriers ? `${x.learning_barriers}\n\n${text}` : text } : x))}
+                      disabled={!canEdit}
+                    />
                   </Field>
                   <Field label="What helps the learner?">
                     <Textarea rows={2} value={b.learning_facilitators}
                       onChange={(e) => setBarriers((p) => p.map((x) => x.id === b.id ? { ...x, learning_facilitators: e.target.value } : x))}
                       disabled={!canEdit}
                       placeholder="What strategies, routines, or supports help the learner succeed?" />
+                    <StarterIdeasPanel
+                      items={[...LEARNING_FACILITATOR_STARTERS]}
+                      onInsert={(text) => setBarriers((p) => p.map((x) => x.id === b.id ? { ...x, learning_facilitators: x.learning_facilitators ? `${x.learning_facilitators}\n\n${text}` : text } : x))}
+                      disabled={!canEdit}
+                    />
                   </Field>
                   <Field label="Classroom accommodations">
                     <Textarea rows={2} value={b.accommodations}
                       onChange={(e) => setBarriers((p) => p.map((x) => x.id === b.id ? { ...x, accommodations: e.target.value } : x))}
                       disabled={!canEdit}
                       placeholder="What consistent adjustments should be provided in the classroom?" />
+                    <StarterIdeasPanel
+                      items={ACCOMMODATION_TEXTS}
+                      onInsert={(text) => setBarriers((p) => p.map((x) => x.id === b.id ? { ...x, accommodations: x.accommodations ? `${x.accommodations}\n\n${text}` : text } : x))}
+                      disabled={!canEdit}
+                      searchable
+                    />
                   </Field>
                 </div>
               </BlockCard>

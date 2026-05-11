@@ -81,6 +81,7 @@ export default function SuperAdminLayout({ children }: { children: React.ReactNo
               width={36}
               height={36}
               className="object-contain flex-shrink-0"
+              style={{ width: 36, height: 36 }}
             />
             <div>
               <h2 className="text-sm font-semibold text-sidebar-foreground leading-tight">Lauris Learn</h2>

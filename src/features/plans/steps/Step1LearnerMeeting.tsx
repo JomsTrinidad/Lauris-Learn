@@ -46,8 +46,6 @@ export interface Step1Props {
   meetingPurpose: string; setMeetingPurpose: (v: string) => void;
   revisionDate: string; setRevisionDate: (v: string) => void;
   iepReviewDate: string; setIepReviewDate: (v: string) => void;
-  recommendations: string; setRecommendations: (v: string) => void;
-  agreements: string; setAgreements: (v: string) => void;
   // Team
   teamMembers: IepTeamMember[];
   setTeamMembers: Dispatch<SetStateAction<IepTeamMember[]>>;
@@ -68,8 +66,7 @@ export function Step1LearnerMeeting({
   region, setRegion, division, setDivision, district, setDistrict,
   meetingDate, setMeetingDate, lastIepDate, setLastIepDate,
   meetingPurpose, setMeetingPurpose, revisionDate, setRevisionDate,
-  iepReviewDate, setIepReviewDate, recommendations, setRecommendations,
-  agreements, setAgreements,
+  iepReviewDate, setIepReviewDate,
   teamMembers, setTeamMembers, addTeamMember,
   canEdit,
 }: Step1Props) {
@@ -151,7 +148,7 @@ export function Step1LearnerMeeting({
                           setStudentSearch(s.full_name);
                           setDropOpen(false);
                         }}
-                        className="flex items-center justify-between w-full px-3 py-2.5 text-sm hover:bg-muted text-left"
+                        className="flex items-center justify-between w-full px-3 py-2.5 text-xs hover:bg-muted text-left"
                       >
                         <span>{s.full_name}</span>
                         {s.student_code && (
@@ -160,7 +157,7 @@ export function Step1LearnerMeeting({
                       </button>
                     ))}
                   {students.filter((s) => s.full_name.toLowerCase().includes(studentSearch.toLowerCase())).length === 0 && (
-                    <div className="px-3 py-2.5 text-sm text-muted-foreground">No learners found.</div>
+                    <div className="px-3 py-2.5 text-xs text-muted-foreground">No learners found.</div>
                   )}
                 </div>
               )}
@@ -287,15 +284,6 @@ export function Step1LearnerMeeting({
           </Field>
         </div>
 
-        <div className="border-t border-border/40 pt-3 space-y-1.5">
-          <p className="text-xs font-medium text-foreground">Recommendations</p>
-          <Textarea value={recommendations} onChange={(e) => setRecommendations(e.target.value)} disabled={!canEdit} rows={3} placeholder="Enter recommendations from the IEP team…" />
-        </div>
-
-        <div className="border-t border-border/40 pt-3 space-y-1.5">
-          <p className="text-xs font-medium text-foreground">Agreements</p>
-          <Textarea value={agreements} onChange={(e) => setAgreements(e.target.value)} disabled={!canEdit} rows={3} placeholder="Enter agreements reached during the IEP meeting…" />
-        </div>
       </div>
 
       {/* ── Panel 3: IEP Team ── */}
@@ -326,7 +314,7 @@ export function Step1LearnerMeeting({
                 </Select>
               </Field>
             </div>
-            <label className="inline-flex items-center gap-2 text-sm">
+            <label className="inline-flex items-center gap-2 text-xs">
               <input type="checkbox" checked={m.requires_ack} disabled={!canEdit}
                 onChange={(e) => setTeamMembers((p) => p.map((x) => x.id === m.id ? { ...x, requires_ack: e.target.checked } : x))} />
               Requires acknowledgement

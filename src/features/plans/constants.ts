@@ -96,13 +96,40 @@ export const TEAM_FOOTNOTE =
 // ─── Wizard ────────────────────────────────────────────────────────────────
 
 /** Numeric step identifier for the IEP plan wizard. */
-export type WizardStep = 1 | 2 | 3 | 4 | 5 | 6;
+export type WizardStep = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
 export const WIZARD_STEPS: { id: WizardStep; label: string; shortLabel: string }[] = [
-  { id: 1, label: "Learner & Meeting",      shortLabel: "Learner"  },
-  { id: 2, label: "Needs & Strengths",     shortLabel: "Needs"    },
-  { id: 3, label: "Supports",              shortLabel: "Supports" },
-  { id: 4, label: "Goals & Interventions", shortLabel: "Goals"    },
-  { id: 5, label: "Progress & Review",     shortLabel: "Progress" },
-  { id: 6, label: "Attachments",           shortLabel: "Attach"   },
+  { id: 1, label: "Learner",       shortLabel: "Learner"  },
+  { id: 2, label: "Needs",         shortLabel: "Needs"    },
+  { id: 3, label: "Supports",      shortLabel: "Supports" },
+  { id: 4, label: "Goals",         shortLabel: "Goals"    },
+  { id: 5, label: "Discussion",    shortLabel: "Discuss"  },
+  { id: 6, label: "Progress",      shortLabel: "Progress" },
+  { id: 7, label: "Agreements",    shortLabel: "Agree"    },
+  { id: 8, label: "Attachments",   shortLabel: "Attach"   },
 ];
+
+// ─── Phase structure ────────────────────────────────────────────────────────
+
+export type PhaseId = 1 | 2 | 3;
+
+export interface PhaseDefinition {
+  id: PhaseId;
+  label: string;
+  description: string;
+  steps: WizardStep[];
+}
+
+/** Three workflow phases that group the 8 IEP sections. */
+export const PHASES: PhaseDefinition[] = [
+  { id: 1, label: "Preparation", description: "Understand the learner",       steps: [1, 2] },
+  { id: 2, label: "Planning",    description: "Build the educational plan",    steps: [3, 4, 5] },
+  { id: 3, label: "Review",      description: "Review, agree, and finalize",   steps: [6, 7, 8] },
+];
+
+/** Derives the active phase from the current wizard step. */
+export function getPhaseForStep(step: WizardStep): PhaseId {
+  if (step <= 2) return 1;
+  if (step <= 5) return 2;
+  return 3;
+}

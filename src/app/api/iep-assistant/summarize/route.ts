@@ -63,7 +63,7 @@ export async function POST(req: NextRequest) {
   // ─── Step 3: Fetch extraction row ────────────────────────────────
   const { data: extractionRaw, error: extractErr } = await serverClient
     .from("iep_report_extractions")
-    .select("id, plan_id, student_id, school_id, document_id, status, extracted_text")
+    .select("id, plan_id, student_id, school_id, document_id, status, extracted_text, extraction_method")
     .eq("id", extraction_id)
     .maybeSingle();
 
@@ -76,6 +76,7 @@ export async function POST(req: NextRequest) {
     document_id: string;
     status: string;
     extracted_text: string | null;
+    extraction_method: string | null;
   } | null;
 
   if (extractErr || !extraction) {
@@ -90,7 +91,18 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // ─── Step 3.5: Daily rate-limit checks ───────────────────────────
+  // ─── Step 3.5: Fetch source document title for provenance ────────
+  let sourceDocumentTitle: string | null = null;
+  {
+    const { data: docTitleRaw } = await serverClient
+      .from("child_documents")
+      .select("title")
+      .eq("id", extraction.document_id)
+      .maybeSingle();
+    sourceDocumentTitle = (docTitleRaw as { title: string | null } | null)?.title ?? null;
+  }
+
+  // ─── Step 3.6: Daily rate-limit checks ───────────────────────────
   // Use adminClient so counts are accurate across all school users, not just
   // the caller's RLS-visible subset.
   const adminClient = createAdminClient();
@@ -191,6 +203,8 @@ export async function POST(req: NextRequest) {
             applied_text: null,
             reviewed_by: null,
             reviewed_at: null,
+            source_document_title: sourceDocumentTitle,
+            extraction_method: extraction.extraction_method,
           })) as any,
         );
 

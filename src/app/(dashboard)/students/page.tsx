@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Search, Plus, Pencil, ChevronDown, ChevronUp,
@@ -235,22 +236,26 @@ async function upsertStudentLrn(
     const first = (args.firstName ?? "").trim();
     const last = (args.lastName ?? "").trim();
     const display = `${first} ${last}`.trim() || "Unknown";
-    const { data: cpRow, error: cpErr } = await supabase
+    // Pre-mint the UUID client-side so we avoid INSERT...RETURNING.
+    // The SELECT policy on child_profiles requires the row to be linked to a
+    // student before it's visible — a RETURNING select on an unlinked row is
+    // blocked by RLS. Same workaround as UploadDocumentModal (D7).
+    const newCpId = crypto.randomUUID();
+    const { error: cpErr } = await supabase
       .from("child_profiles")
       .insert({
+        id: newCpId,
         display_name: display,
         first_name: first || null,
         last_name: last || null,
         preferred_name: (args.preferredName ?? "").trim() || null,
         date_of_birth: args.dateOfBirth || null,
         created_in_app: "lauris_learn",
-      } as never)
-      .select("id")
-      .single();
-    if (cpErr || !cpRow) {
-      return { ok: false, error: cpErr?.message ?? "Failed to create child profile." };
+      } as never);
+    if (cpErr) {
+      return { ok: false, error: cpErr.message };
     }
-    cpid = (cpRow as { id: string }).id;
+    cpid = newCpId;
 
     const { error: linkErr } = await supabase
       .from("students")
@@ -1622,14 +1627,14 @@ export default function StudentsPage() {
                             <button onClick={() => setSelectedStudent(student)} className="text-primary text-sm hover:underline">
                               View
                             </button>
-                            <a
+                            <Link
                               href={`/documents?student=${student.id}`}
                               className="text-muted-foreground hover:text-foreground transition-colors"
                               title="Documents"
                               onClick={(e) => e.stopPropagation()}
                             >
                               <FileText className="w-4 h-4" />
-                            </a>
+                            </Link>
                             {userRole === "school_admin" && student.childProfileId && (
                               <button
                                 type="button"

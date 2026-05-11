@@ -4,6 +4,16 @@ import { Sparkles } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Field } from "./shared";
+import { ProvenanceChip } from "@/features/plans/iep-assistant/ProvenanceChip";
+import type { ProvenanceMap } from "@/features/plans/iep-assistant/types";
+import { StarterIdeasPanel } from "@/features/plans/authoring-assist/StarterIdeasPanel";
+import {
+  EVALUATION_STARTERS,
+  STRENGTHS_STARTERS,
+  NEEDS_STARTERS,
+  PARENT_CONCERNS_STARTERS,
+  DISABILITY_IMPACT_STARTERS,
+} from "@/features/plans/authoring-assist/starters";
 
 export interface Step2Props {
   // Reported difficulties
@@ -32,6 +42,7 @@ export interface Step2Props {
   saving: boolean;
   handleAssistantClick: () => void;
   canEdit: boolean;
+  provenanceMap?: ProvenanceMap;
 }
 
 export function Step2NeedsStrengths({
@@ -48,6 +59,7 @@ export function Step2NeedsStrengths({
   disabilityImpact, setDisabilityImpact,
   backgroundNotes, setBackgroundNotes,
   isStaff, isEditing, saving, handleAssistantClick, canEdit,
+  provenanceMap,
 }: Step2Props) {
   return (
     <div className="space-y-5">
@@ -68,13 +80,13 @@ export function Step2NeedsStrengths({
             ["diff_concentrating", "Concentrating / Paying Attention", diffConcentrating, setDiffConcentrating],
             ["diff_remembering",   "Remembering / Understanding",      diffRemembering,   setDiffRemembering],
           ] as [string, string, boolean, (v: boolean) => void][]).map(([key, lbl, val, setter]) => (
-            <label key={key} className="inline-flex items-center gap-2 text-sm cursor-pointer">
+            <label key={key} className="inline-flex items-center gap-2 text-xs cursor-pointer">
               <input type="checkbox" checked={val} disabled={!canEdit}
                 onChange={(e) => setter(e.target.checked)} />
               {lbl}
             </label>
           ))}
-          <label className="inline-flex items-center gap-2 text-sm cursor-pointer">
+          <label className="inline-flex items-center gap-2 text-xs cursor-pointer">
             <input type="checkbox" checked={diffOther} disabled={!canEdit}
               onChange={(e) => setDiffOther(e.target.checked)} />
             Other
@@ -88,7 +100,7 @@ export function Step2NeedsStrengths({
         )}
 
         <div className="border-t border-border/40 pt-3 space-y-3">
-          <label className="inline-flex items-center gap-2 text-sm cursor-pointer">
+          <label className="inline-flex items-center gap-2 text-xs cursor-pointer">
             <input type="checkbox" checked={hasMedical} disabled={!canEdit}
               onChange={(e) => setHasMedical(e.target.checked)} />
             Medical assessment or diagnosis information available
@@ -141,17 +153,41 @@ export function Step2NeedsStrengths({
           <Textarea value={evaluationResults} onChange={(e) => setEvaluationResults(e.target.value)}
             disabled={!canEdit} rows={2}
             placeholder="Summarize the key findings from the most recent evaluation or assessment." />
+          {provenanceMap?.evaluation_results && (
+            <ProvenanceChip meta={provenanceMap.evaluation_results} />
+          )}
+          <StarterIdeasPanel
+            items={[...EVALUATION_STARTERS]}
+            onInsert={(text) => setEvaluationResults(evaluationResults ? `${evaluationResults}\n\n${text}` : text)}
+            disabled={!canEdit}
+          />
         </Field>
         <div className="grid md:grid-cols-2 gap-3">
           <Field label="Academic / Functional Strengths">
             <Textarea value={presentStrengths} onChange={(e) => setPresentStrengths(e.target.value)}
               disabled={!canEdit} rows={3}
               placeholder="What skills, interests, or learning behaviors are currently working well?" />
+            {provenanceMap?.present_academic_strengths && (
+              <ProvenanceChip meta={provenanceMap.present_academic_strengths} />
+            )}
+            <StarterIdeasPanel
+              items={[...STRENGTHS_STARTERS]}
+              onInsert={(text) => setPresentStrengths(presentStrengths ? `${presentStrengths}\n\n${text}` : text)}
+              disabled={!canEdit}
+            />
           </Field>
           <Field label="Academic / Functional Needs">
             <Textarea value={presentNeeds} onChange={(e) => setPresentNeeds(e.target.value)}
               disabled={!canEdit} rows={3}
               placeholder="What areas currently require support or intervention?" />
+            {provenanceMap?.present_academic_needs && (
+              <ProvenanceChip meta={provenanceMap.present_academic_needs} />
+            )}
+            <StarterIdeasPanel
+              items={[...NEEDS_STARTERS]}
+              onInsert={(text) => setPresentNeeds(presentNeeds ? `${presentNeeds}\n\n${text}` : text)}
+              disabled={!canEdit}
+            />
           </Field>
         </div>
         <Field label="Parent / Guardian Concerns"
@@ -159,11 +195,27 @@ export function Step2NeedsStrengths({
           <Textarea value={parentConcerns} onChange={(e) => setParentConcerns(e.target.value)}
             disabled={!canEdit} rows={2}
             placeholder="What specific concerns did the parent or guardian raise about their child's education?" />
+          {provenanceMap?.parent_concerns && (
+            <ProvenanceChip meta={provenanceMap.parent_concerns} />
+          )}
+          <StarterIdeasPanel
+            items={[...PARENT_CONCERNS_STARTERS]}
+            onInsert={(text) => setParentConcerns(parentConcerns ? `${parentConcerns}\n\n${text}` : text)}
+            disabled={!canEdit}
+          />
         </Field>
         <Field label="Impact on General Education Curriculum">
           <Textarea value={disabilityImpact} onChange={(e) => setDisabilityImpact(e.target.value)}
             disabled={!canEdit} rows={2}
             placeholder="How does the learner's condition affect their participation and progress in the general education curriculum?" />
+          {provenanceMap?.disability_impact && (
+            <ProvenanceChip meta={provenanceMap.disability_impact} />
+          )}
+          <StarterIdeasPanel
+            items={[...DISABILITY_IMPACT_STARTERS]}
+            onInsert={(text) => setDisabilityImpact(disabilityImpact ? `${disabilityImpact}\n\n${text}` : text)}
+            disabled={!canEdit}
+          />
         </Field>
       </div>
 

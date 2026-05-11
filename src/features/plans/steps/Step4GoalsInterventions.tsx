@@ -8,6 +8,16 @@ import { Textarea } from "@/components/ui/textarea";
 import { DatePicker } from "@/components/ui/datepicker";
 import { GOAL_DOMAIN_SUGGESTIONS } from "../constants";
 import { Field, BlockCard, updateGoal, updateIntervention, type GoalRow, type InterventionRow } from "./shared";
+import { StarterIdeasPanel } from "@/features/plans/authoring-assist/StarterIdeasPanel";
+import { GOAL_STARTERS, GOAL_STARTERS_GENERAL, STRATEGY_STARTERS } from "@/features/plans/authoring-assist/starters";
+
+function getGoalStarters(domain: string | null | undefined): string[] {
+  if (!domain) return [...GOAL_STARTERS_GENERAL];
+  const key = GOAL_DOMAIN_SUGGESTIONS.find(
+    (d) => d.toLowerCase() === domain.toLowerCase()
+  );
+  return key ? [...(GOAL_STARTERS[key] ?? GOAL_STARTERS_GENERAL)] : [...GOAL_STARTERS_GENERAL];
+}
 
 export interface Step4Props {
   goals: GoalRow[];
@@ -58,7 +68,7 @@ export function Step4GoalsInterventions({
 
         {goals.length === 0 && (
           <div className="rounded-lg border border-dashed border-border bg-card/60 p-5 text-center space-y-3">
-            <p className="text-sm font-medium text-foreground">No goals yet</p>
+            <p className="text-xs font-medium text-foreground">No goals yet</p>
             <p className="text-xs text-muted-foreground">Examples of annual goals:</p>
             <div className="flex flex-wrap justify-center gap-2">
               {[
@@ -84,15 +94,27 @@ export function Step4GoalsInterventions({
         {goals.map((g, idx) => {
           const isTrackingExpanded = expandedGoalTracking.has(g.id);
           const hasAdvancedData = !!(g.baseline || g.measurement_method || g.success_criteria || g.remarks);
+          const showMeasurabilityHint = g.description.length > 5 && !/\d/.test(g.description);
           return (
             <BlockCard key={g.id} index={idx}
-              onRemove={canEdit ? () => setGoals((p) => p.filter((x) => x.id !== g.id)) : undefined}>
+              onRemove={canEdit ? () => setGoals((p) => p.filter((x) => x.id !== g.id)) : undefined}
+              onDuplicate={canEdit ? () => setGoals((p) => [...p, { ...g, id: crypto.randomUUID(), sort_order: p.length }]) : undefined}>
 
               <Field label="Annual goal" required>
                 <Textarea rows={2} value={g.description}
                   onChange={(e) => updateGoal(setGoals, g.id, { description: e.target.value })}
                   disabled={!canEdit}
                   placeholder="By the end of the school year, the learner will…" />
+                {showMeasurabilityHint && (
+                  <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
+                    Tip: consider adding a measurable target (e.g., a number, percentage, or frequency) to make progress easier to track.
+                  </p>
+                )}
+                <StarterIdeasPanel
+                  items={getGoalStarters(g.domain)}
+                  onInsert={(text) => updateGoal(setGoals, g.id, { description: g.description ? `${g.description}\n\n${text}` : text })}
+                  disabled={!canEdit}
+                />
               </Field>
               <div className="grid md:grid-cols-2 gap-3">
                 <Field label="Domain / Area">
@@ -121,11 +143,17 @@ export function Step4GoalsInterventions({
                   <Input value={g.timeline ?? ""}
                     onChange={(e) => updateGoal(setGoals, g.id, { timeline: e.target.value || null })}
                     disabled={!canEdit} placeholder="e.g. 3x/week, 30 mins" />
+                  {canEdit && !g.timeline && (
+                    <p className="text-xs text-muted-foreground mt-0.5">How frequently will this be worked on?</p>
+                  )}
                 </Field>
                 <Field label="Who is responsible">
                   <Input value={g.responsible_person ?? ""}
                     onChange={(e) => updateGoal(setGoals, g.id, { responsible_person: e.target.value || null })}
                     disabled={!canEdit} placeholder="e.g. SPED Teacher, OT" />
+                  {canEdit && !g.responsible_person && (
+                    <p className="text-xs text-muted-foreground mt-0.5">Who will lead implementation?</p>
+                  )}
                 </Field>
               </div>
 
@@ -180,11 +208,16 @@ export function Step4GoalsInterventions({
         })}
 
         {goals.length > 0 && canEdit && (
-          <button type="button" onClick={addGoal}
-            className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:text-primary/80">
-            <Plus className="w-3.5 h-3.5" />
-            Add another goal
-          </button>
+          <div className="flex items-center gap-3">
+            <button type="button" onClick={addGoal}
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:text-primary/80">
+              <Plus className="w-3.5 h-3.5" />
+              Add another goal
+            </button>
+            {goals.length === 1 && (
+              <span className="text-xs text-muted-foreground">Most IEPs include 3–5 annual goals.</span>
+            )}
+          </div>
         )}
       </div>
 
@@ -206,7 +239,7 @@ export function Step4GoalsInterventions({
 
         {interventions.length === 0 && (
           <div className="rounded-lg border border-dashed border-border bg-card/60 p-5 text-center space-y-3">
-            <p className="text-sm font-medium text-foreground">No strategies yet</p>
+            <p className="text-xs font-medium text-foreground">No strategies yet</p>
             <p className="text-xs text-muted-foreground max-w-sm mx-auto">Support strategies describe HOW the team helps the learner reach their goals — the activities, routines, and methods used in class and at home.</p>
             {canEdit && (
               <button type="button" onClick={() => addIntervention()}
@@ -220,7 +253,8 @@ export function Step4GoalsInterventions({
 
         {interventions.map((iv, idx) => (
           <BlockCard key={iv.id} index={idx}
-            onRemove={canEdit ? () => setInterventions((p) => p.filter((x) => x.id !== iv.id)) : undefined}>
+            onRemove={canEdit ? () => setInterventions((p) => p.filter((x) => x.id !== iv.id)) : undefined}
+            onDuplicate={canEdit ? () => setInterventions((p) => [...p, { ...iv, id: crypto.randomUUID(), sort_order: p.length }]) : undefined}>
 
             {goals.length === 0 ? (
               <div className="rounded-md border border-border/50 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
@@ -246,6 +280,11 @@ export function Step4GoalsInterventions({
                 onChange={(e) => updateIntervention(setInterventions, iv.id, { strategy: e.target.value })}
                 disabled={!canEdit}
                 placeholder="e.g. Visual schedule review at the start of each class period, using task cards and verbal prompts." />
+              <StarterIdeasPanel
+                items={[...STRATEGY_STARTERS]}
+                onInsert={(text) => updateIntervention(setInterventions, iv.id, { strategy: iv.strategy ? `${iv.strategy}\n\n${text}` : text })}
+                disabled={!canEdit}
+              />
             </Field>
             <div className="grid md:grid-cols-3 gap-3">
               <Field label="Frequency / schedule">

@@ -6,9 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { DatePicker } from "@/components/ui/datepicker";
-import { PLAN_STATUS_LABELS } from "../constants";
 import type { PlanStatus } from "../types";
-import { cn } from "@/lib/utils";
 import { Field, BlockCard, StaffPicker, updateProgress, type GoalRow, type ProgressRow } from "./shared";
 
 export interface Step5Props {
@@ -27,9 +25,6 @@ export interface Step5Props {
   reviewDate: string; setReviewDate: (v: string) => void;
   reviewedByTeacherId: string; setReviewedByTeacherId: (v: string) => void;
   reviewedByAdminId: string; setReviewedByAdminId: (v: string) => void;
-  // Family acknowledgement
-  homeSupportNotes: string; setHomeSupportNotes: (v: string) => void;
-  parentAcknowledged: boolean; setParentAcknowledged: (v: boolean) => void;
   // Status display
   status: PlanStatus;
   schoolId: string;
@@ -43,8 +38,6 @@ export function Step5ProgressReview({
   checkedReviewedBy, setCheckedReviewedBy, checkedReviewedDate, setCheckedReviewedDate,
   reviewDate, setReviewDate, reviewedByTeacherId, setReviewedByTeacherId,
   reviewedByAdminId, setReviewedByAdminId,
-  homeSupportNotes, setHomeSupportNotes,
-  parentAcknowledged, setParentAcknowledged,
   status, schoolId, canEdit,
 }: Step5Props) {
   return (
@@ -68,7 +61,7 @@ export function Step5ProgressReview({
 
         {progress.length === 0 && (
           <div className="rounded-lg border border-dashed border-border bg-card/60 p-5 text-center space-y-3">
-            <p className="text-sm font-medium text-foreground">No observations recorded yet</p>
+            <p className="text-xs font-medium text-foreground">No observations recorded yet</p>
             <p className="text-xs text-muted-foreground max-w-sm mx-auto">Add an entry whenever you observe meaningful progress, a challenge, or a change worth noting. Each entry becomes part of the learner&apos;s growth story.</p>
             {canEdit && (
               <button type="button" onClick={addProgress}
@@ -180,50 +173,8 @@ export function Step5ProgressReview({
               </div>
             </div>
 
-            {/* Status pipeline */}
-            <div className="border-t border-border/40 pt-4">
-              <p className="text-xs font-medium text-muted-foreground mb-2">Plan status</p>
-              <div className="flex flex-wrap items-center gap-1.5">
-                {(["draft", "submitted", "in_review", "approved", "archived"] as PlanStatus[]).map((s, i, arr) => (
-                  <span key={s} className="flex items-center gap-1.5">
-                    <span className={cn(
-                      "inline-block rounded-full px-2.5 py-0.5 text-xs font-medium",
-                      status === s
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-muted text-muted-foreground",
-                    )}>
-                      {PLAN_STATUS_LABELS[s]}
-                    </span>
-                    {i < arr.length - 1 && <span className="text-muted-foreground/50 text-xs">→</span>}
-                  </span>
-                ))}
-              </div>
-              <p className="text-xs text-muted-foreground mt-2">Use <em>Save Draft</em> to keep editing. Use <em>Submit For Review</em> when ready for admin approval.</p>
-            </div>
           </div>
         )}
-      </div>
-
-      {/* ── Panel C: Family Review & Acknowledgement ── */}
-      <div className="rounded-xl border border-border/50 bg-muted/60 p-5 space-y-4">
-        <div>
-          <h3 className="text-sm font-semibold text-foreground">Family Review &amp; Acknowledgement</h3>
-          <p className="text-xs text-muted-foreground mt-0.5">Notes from home and confirmation that the family has reviewed this plan.</p>
-        </div>
-        <Field label="Home support notes" hint="Any strategies, routines, or supports the family is implementing at home.">
-          <Textarea value={homeSupportNotes} onChange={(e) => setHomeSupportNotes(e.target.value)} disabled={!canEdit} rows={2}
-            placeholder="e.g. The family reads together nightly, uses a visual schedule at home…" />
-        </Field>
-        <div className="rounded-lg border border-border/50 bg-card p-3">
-          <label className="flex items-start gap-3 cursor-pointer">
-            <input type="checkbox" className="mt-0.5" checked={parentAcknowledged}
-              onChange={(e) => setParentAcknowledged(e.target.checked)} disabled={!canEdit} />
-            <div>
-              <p className="text-sm font-medium text-foreground">Parent / guardian has reviewed and acknowledged this plan</p>
-              <p className="text-xs text-muted-foreground mt-0.5">Checking this confirms the family has been involved in the IEP process and agrees with the plan.</p>
-            </div>
-          </label>
-        </div>
       </div>
 
     </div>

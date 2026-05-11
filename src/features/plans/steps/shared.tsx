@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Copy, Plus, Trash2 } from "lucide-react";
 import type { Dispatch, SetStateAction, ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
@@ -35,7 +35,7 @@ export function Field({ label, hint, required, children }: {
 }) {
   return (
     <div className="space-y-1">
-      <label className="text-sm font-medium text-foreground">
+      <label className="text-xs font-medium text-foreground">
         {label}{required && <span className="text-red-600 ml-0.5">*</span>}
       </label>
       {children}
@@ -62,22 +62,34 @@ export function SectionHeader({ title, hint, onAdd, addLabel }: {
   );
 }
 
-export function BlockCard({ index, onRemove, children }: {
-  index: number; onRemove?: () => void; children: ReactNode;
+export function BlockCard({ index, onRemove, onDuplicate, children }: {
+  index: number; onRemove?: () => void; onDuplicate?: () => void; children: ReactNode;
 }) {
   return (
     <div className="border border-border rounded-lg p-3 space-y-3 bg-muted/20">
       <div className="flex items-center justify-between">
         <span className="text-xs font-medium text-muted-foreground">#{index + 1}</span>
-        {onRemove && (
-          <button
-            type="button"
-            onClick={onRemove}
-            className="text-muted-foreground hover:text-red-600 transition-colors"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
-        )}
+        <div className="flex items-center gap-1.5">
+          {onDuplicate && (
+            <button
+              type="button"
+              onClick={onDuplicate}
+              title="Duplicate this entry"
+              className="text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <Copy className="w-3.5 h-3.5" />
+            </button>
+          )}
+          {onRemove && (
+            <button
+              type="button"
+              onClick={onRemove}
+              className="text-muted-foreground hover:text-red-600 transition-colors"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          )}
+        </div>
       </div>
       {children}
     </div>
@@ -85,7 +97,7 @@ export function BlockCard({ index, onRemove, children }: {
 }
 
 export function EmptyHint({ children }: { children: ReactNode }) {
-  return <div className="text-sm text-muted-foreground italic">{children}</div>;
+  return <div className="text-xs text-muted-foreground italic">{children}</div>;
 }
 
 // ── Sub-row update helpers ─────────────────────────────────────────────────
