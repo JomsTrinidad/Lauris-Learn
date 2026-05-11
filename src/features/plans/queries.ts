@@ -46,11 +46,15 @@ export async function listPlans(
   supabase: Client,
   f: ListPlansFilters,
 ): Promise<PlanListItem[]> {
-  let q = supabase
-    .from("student_plans")
-    .select("*")
-    .eq("school_id", f.schoolId)
-    .order("updated_at", { ascending: f.sortAscending ?? false });
+  let q = supabase.from("student_plans").select("*").eq("school_id", f.schoolId);
+
+  // Queue mode (sortAscending) orders by submitted_at oldest-first so the most urgent
+  // items surface at the top; legacy rows with null submitted_at sort last.
+  if (f.sortAscending) {
+    q = q.order("submitted_at", { ascending: true, nullsFirst: false });
+  } else {
+    q = q.order("updated_at", { ascending: false });
+  }
 
   if (f.planType)  q = q.eq("plan_type",  f.planType);
   if (f.studentId) q = q.eq("student_id", f.studentId);
@@ -66,10 +70,14 @@ export async function listPlans(
   const plans = (data ?? []) as StudentPlanRow[];
   if (plans.length === 0) return [];
 
-  // ── Enrich with student / school year / created_by ────────────────
+  // ── Enrich with student / school year / created_by / submitted_by ─
   const studentIds    = Array.from(new Set(plans.map((p) => p.student_id)));
   const schoolYearIds = Array.from(new Set(plans.map((p) => p.school_year_id).filter((x): x is string => !!x)));
-  const profileIds    = Array.from(new Set(plans.map((p) => p.created_by).filter((x): x is string => !!x)));
+  // Batch both created_by and submitted_by in a single profiles query.
+  const profileIds    = Array.from(new Set([
+    ...plans.map((p) => p.created_by),
+    ...plans.map((p) => p.submitted_by),
+  ].filter((x): x is string => !!x)));
 
   const [studentsRes, yearsRes, profilesRes] = await Promise.all([
     studentIds.length
@@ -99,9 +107,10 @@ export async function listPlans(
 
   return plans.map((p) => ({
     ...p,
-    student:            studentMap.get(p.student_id) ?? null,
-    school_year:        p.school_year_id ? yearMap.get(p.school_year_id) ?? null : null,
-    created_by_profile: p.created_by    ? profileMap.get(p.created_by)    ?? null : null,
+    student:              studentMap.get(p.student_id) ?? null,
+    school_year:          p.school_year_id ? yearMap.get(p.school_year_id) ?? null : null,
+    created_by_profile:   p.created_by   ? profileMap.get(p.created_by)   ?? null : null,
+    submitted_by_profile: p.submitted_by ? profileMap.get(p.submitted_by) ?? null : null,
   }));
 }
 
@@ -248,7 +257,17 @@ export interface PlanSaveInput {
 }
 
 export async function savePlan(supabase: Client, input: PlanSaveInput): Promise<void> {
-  // 1. UPSERT head
+  const isFinalizing = input.status === "finalized";
+
+  // 1. UPSERT head content.
+  //
+  //    When finalizing, the head is written with status='draft' temporarily so
+  //    that sub-rows can be saved against a non-finalized parent (the sub-row
+  //    RLS USING clauses only allow writes when parent status is draft /
+  //    submitted / in_review — never finalized). After sub-rows are committed
+  //    the head is flipped to 'finalized' in step 3. This keeps the edit window
+  //    to zero: there is never a moment where the head is finalized but sub-rows
+  //    can still be modified through RLS.
   const headPayload = {
     id:                                 input.id,
     school_id:                          input.schoolId,
@@ -256,7 +275,7 @@ export async function savePlan(supabase: Client, input: PlanSaveInput): Promise<
     school_year_id:                     input.schoolYearId,
     plan_type:                          input.planType,
     title:                              input.title,
-    status:                             input.status,
+    status:                             isFinalizing ? "draft" : input.status,
     diagnosis:                          input.diagnosis,
     strengths:                          input.strengths,
     areas_of_need:                      input.areasOfNeed,
@@ -270,6 +289,11 @@ export async function savePlan(supabase: Client, input: PlanSaveInput): Promise<
     parent_acknowledged_at:             input.parentAcknowledged ? new Date().toISOString() : null,
     iep_details:                        input.iepDetails as Record<string, unknown> | null,
     ...(input.isNew ? { created_by: input.currentUserId } : {}),
+    // Stamp submission audit fields on every transition to "submitted".
+    ...(input.status === "submitted" ? {
+      submitted_at: new Date().toISOString(),
+      submitted_by: input.currentUserId ?? null,
+    } : {}),
   };
 
   const { error: headErr } = await supabase
@@ -277,11 +301,30 @@ export async function savePlan(supabase: Client, input: PlanSaveInput): Promise<
     .upsert(headPayload as Database["public"]["Tables"]["student_plans"]["Insert"], { onConflict: "id" });
   if (headErr) throw headErr;
 
-  // 2. Sub-rows — diff save
+  // 2. Sub-rows — diff save.
+  //    Head status is 'draft' at this point, so the sub-row teacher_write
+  //    policies (USING: parent status IN ('draft','submitted','in_review')) are
+  //    satisfied without needing 'finalized' in their USING clause.
   await diffSaveGoals(supabase, input.id, input.goals);
   await diffSaveInterventions(supabase, input.id, input.interventions);
   await diffSaveProgress(supabase, input.id, input.progress, input.currentUserId);
   await diffSaveAttachments(supabase, input.id, input.attachmentDocumentIds, input.currentUserId);
+
+  // 3. Finalization flip — update head status to 'finalized' + audit stamps.
+  //    After this point the plan is locked: the head USING clause blocks any
+  //    further teacher UPDATE on the head, and sub-row USING clauses (which
+  //    never include 'finalized') block any direct sub-row modification.
+  if (isFinalizing) {
+    const { error: finalErr } = await supabase
+      .from("student_plans")
+      .update({
+        status:       "finalized",
+        finalized_at: new Date().toISOString(),
+        finalized_by: input.currentUserId ?? null,
+      })
+      .eq("id", input.id);
+    if (finalErr) throw finalErr;
+  }
 }
 
 async function diffSaveGoals(
@@ -426,12 +469,16 @@ export async function setPlanStatus(
   supabase: Client,
   planId: string,
   next: PlanStatus,
-  approverProfileId?: string | null,
+  actorProfileId?: string | null,
 ): Promise<void> {
   const update: Database["public"]["Tables"]["student_plans"]["Update"] = { status: next };
   if (next === "approved") {
     update.approved_at = new Date().toISOString();
-    if (approverProfileId) update.approved_by = approverProfileId;
+    if (actorProfileId) update.approved_by = actorProfileId;
+  }
+  if (next === "finalized") {
+    update.finalized_at = new Date().toISOString();
+    if (actorProfileId) update.finalized_by = actorProfileId;
   }
   if (next === "archived") {
     update.archived_at = new Date().toISOString();

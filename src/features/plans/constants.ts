@@ -18,6 +18,7 @@ export const PLAN_STATUS_LABELS: Record<PlanStatus, string> = {
   in_review: "In Review",
   approved:  "Approved",
   archived:  "Archived",
+  finalized: "Finalized",
 };
 
 /** Common goal-domain suggestions (free text, not enforced). */

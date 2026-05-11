@@ -70,6 +70,7 @@ export const GetStartedGuide: React.FC<GetStartedGuideProps> = ({
           <p className="text-xs text-muted-foreground">Follow this sequence to set up a new school and school year:</p>
           <div className="space-y-1.5 mt-3 text-xs bg-muted/50 rounded-lg p-3">
             <div>1. School Profile</div>
+            <div>1b. Policies &amp; Workflows (optional)</div>
             <div>2. School Year</div>
             <div>3. Academic Terms</div>
             <div>4. Class Levels</div>
@@ -92,7 +93,7 @@ export const GetStartedGuide: React.FC<GetStartedGuideProps> = ({
       icon: Lock,
       title: "Step 1: Confirm School Profile",
       stepNumber: 1,
-      searchText: "school profile name branch address logo contact details branding",
+      searchText: "school profile name branch address logo contact details branding policies workflows iep enrollment",
       body: (
         <div className="space-y-2">
           <p className="text-xs text-muted-foreground">Go to <strong className="text-foreground">Settings → School Information</strong> and confirm the following details are correct. This keeps the system branded and accurate for your school.</p>
@@ -106,6 +107,7 @@ export const GetStartedGuide: React.FC<GetStartedGuideProps> = ({
               <li>• Contact phone number and email</li>
             </ul>
           </div>
+          <Note>Operational policies are in a separate section: <strong>Settings → Policies &amp; Workflows</strong>. Configure the IEP workflow mode (Simple Review or Admin Approval Required) and enrollment balance rules there — these are optional but worth setting before you go live.</Note>
         </div>
       ),
     },

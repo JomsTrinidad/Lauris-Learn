@@ -92,7 +92,7 @@ function getClassTimeStatus(startTime: string, endTime: string): "upcoming" | "i
 }
 
 export default function DashboardPage() {
-  const { schoolId, activeYear, userRole, userId } = useSchoolContext();
+  const { schoolId, activeYear, userRole, userId, iepWorkflowMode } = useSchoolContext();
   const supabase = createClient();
   const { day, date } = useTodayLabel();
 
@@ -102,9 +102,9 @@ export default function DashboardPage() {
   // Use the cached billing summary hook (Batch B1.6.1)
   const billingSummaryQuery = useBillingSummary(schoolId, activeYear?.id || null);
 
-  // Pending IEP review count — school_admin only
+  // Pending IEP review count — school_admin + admin_approval_required mode only
   const { count: pendingIepCount } = usePendingReviewCount(
-    userRole === "school_admin" ? schoolId : null,
+    userRole === "school_admin" && iepWorkflowMode === "admin_approval_required" ? schoolId : null,
   );
 
   const [stats, setStats] = useState<DashboardStats | null>(null);

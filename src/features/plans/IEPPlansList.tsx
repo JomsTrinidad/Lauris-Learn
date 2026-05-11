@@ -23,6 +23,7 @@ const STATUS_VARIANT: Record<PlanStatus, "draft" | "scheduled" | "waitlisted" | 
   submitted: "scheduled",
   in_review: "waitlisted",
   approved:  "active",
+  finalized: "active",
   archived:  "archived",
 };
 
@@ -88,10 +89,18 @@ export function IEPPlansList({
                 >
                   <td className="px-5 py-3">
                     <div className="font-medium text-foreground">{p.title}</div>
-                    {p.created_by_profile && (
-                      <div className="text-xs text-muted-foreground">
-                        {queueMode ? "Submitted by" : "Created by"} {p.created_by_profile.full_name}
-                      </div>
+                    {queueMode ? (
+                      (p.submitted_by_profile?.full_name ?? p.created_by_profile?.full_name) && (
+                        <div className="text-xs text-muted-foreground">
+                          Submitted by {p.submitted_by_profile?.full_name ?? p.created_by_profile?.full_name}
+                        </div>
+                      )
+                    ) : (
+                      p.created_by_profile && (
+                        <div className="text-xs text-muted-foreground">
+                          Created by {p.created_by_profile.full_name}
+                        </div>
+                      )
                     )}
                   </td>
                   <td className="px-5 py-3">{studentDisplay(p.student)}</td>
@@ -107,7 +116,8 @@ export function IEPPlansList({
                     {queueMode && isPending(p.status) ? (
                       <div className="flex items-center gap-1.5">
                         <Clock className="w-3 h-3 shrink-0" />
-                        <span>{formatDistanceToNowStrict(parseISO(p.updated_at))} ago</span>
+                        {/* Use submitted_at when available; fall back to updated_at for legacy rows */}
+                        <span>{formatDistanceToNowStrict(parseISO(p.submitted_at ?? p.updated_at))} ago</span>
                       </div>
                     ) : (
                       format(parseISO(p.updated_at), "MMM d, yyyy")

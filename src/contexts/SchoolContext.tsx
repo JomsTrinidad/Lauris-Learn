@@ -32,6 +32,8 @@ export interface BrandingConfig {
   spacingScale: "compact" | "default" | "relaxed";
 }
 
+export type IepWorkflowMode = "simple_review" | "admin_approval_required";
+
 export interface SchoolContextValue {
   schoolId: string | null;
   schoolName: string;
@@ -51,6 +53,7 @@ export interface SchoolContextValue {
   allSchoolYears: ActiveYear[];
   viewingYear: ActiveYear | null;
   isHistoricalView: boolean;
+  iepWorkflowMode: IepWorkflowMode;
   loading: boolean;
   refresh: () => void;
   /** Update only the branding slice without triggering a full context reload. */
@@ -75,6 +78,7 @@ const SchoolContext = createContext<SchoolContextValue>({
   allSchoolYears: [],
   viewingYear: null,
   isHistoricalView: false,
+  iepWorkflowMode: "simple_review",
   userId: null,
   userRole: null,
   userName: "",
@@ -109,6 +113,7 @@ export function SchoolProvider({ children }: { children: ReactNode }) {
     activeYear: null,
     allSchoolYears: [],
     viewingYear: null,
+    iepWorkflowMode: "simple_review",
     userId: null,
     userRole: null,
     userName: "",
@@ -167,7 +172,7 @@ export function SchoolProvider({ children }: { children: ReactNode }) {
     const [{ data: school }, { data: schoolYears }] = await Promise.all([
       supabase
         .from("schools")
-        .select("name, trial_start_date, trial_end_date, trial_status, subscription_status, is_demo, logo_url, primary_color, accent_color, text_size_scale, spacing_scale")
+        .select("name, trial_start_date, trial_end_date, trial_status, subscription_status, is_demo, logo_url, primary_color, accent_color, text_size_scale, spacing_scale, iep_workflow_mode")
         .eq("id", effectiveSchoolId)
         .single(),
       supabase
@@ -225,6 +230,7 @@ export function SchoolProvider({ children }: { children: ReactNode }) {
         isDemo,
         isReadOnly: isHardBlocked && !isImpersonating,
         isImpersonating,
+        iepWorkflowMode: (((school as any)?.iep_workflow_mode ?? "simple_review") as IepWorkflowMode),
         branding: {
           logoUrl: (school as any)?.logo_url ?? null,
           primaryColor: (school as any)?.primary_color ?? null,

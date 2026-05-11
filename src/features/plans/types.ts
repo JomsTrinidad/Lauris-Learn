@@ -12,8 +12,10 @@
 
 import type { Database } from "@/lib/types/database";
 
-export type PlanType   = "iep" | "support" | "behavior" | "other";
-export type PlanStatus = "draft" | "submitted" | "in_review" | "approved" | "archived";
+export type PlanType        = "iep" | "support" | "behavior" | "other";
+export type PlanStatus      = "draft" | "submitted" | "in_review" | "approved" | "archived" | "finalized";
+/** Governance model for IEP workflow transitions. Stored on the school row. */
+export type IepWorkflowMode = "simple_review" | "admin_approval_required";
 
 type Tables = Database["public"]["Tables"];
 
@@ -25,9 +27,10 @@ export type StudentPlanAttachmentRow       = Tables["student_plan_attachments"][
 
 /** View-model used by the IEP plans list. */
 export interface PlanListItem extends StudentPlanRow {
-  student:     { id: string; first_name: string; last_name: string } | null;
-  school_year: { id: string; name: string } | null;
-  created_by_profile: { id: string; full_name: string } | null;
+  student:              { id: string; first_name: string; last_name: string } | null;
+  school_year:          { id: string; name: string } | null;
+  created_by_profile:   { id: string; full_name: string } | null;
+  submitted_by_profile: { id: string; full_name: string } | null;
 }
 
 /** Full plan payload returned by getPlan — head plus all sub-rows. */

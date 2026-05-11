@@ -73,7 +73,7 @@ interface ResolvedStudent {
 }
 
 export default function DocumentsPage() {
-  const { schoolId, schoolName, userId, userRole, activeYear, loading: ctxLoading } = useSchoolContext();
+  const { schoolId, schoolName, userId, userRole, activeYear, loading: ctxLoading, iepWorkflowMode } = useSchoolContext();
   const supabase = useMemo(() => createClient(), []);
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -115,7 +115,9 @@ export default function DocumentsPage() {
   const canRequest = userRole === "school_admin" || userRole === "teacher";
   const isAdmin    = userRole === "school_admin";
 
-  const { count: pendingReviewCount } = usePendingReviewCount(isAdmin ? schoolId : null);
+  const { count: pendingReviewCount } = usePendingReviewCount(
+    isAdmin && iepWorkflowMode === "admin_approval_required" ? schoolId : null,
+  );
 
   // ── Resolve student filter from query param ─────────────────────────────
   const studentParam = searchParams.get("student");
@@ -380,6 +382,7 @@ export default function DocumentsPage() {
           userId={userId ?? ""}
           userRole={userRole}
           defaultStudentId={studentFilter?.id ?? null}
+          workflowMode={iepWorkflowMode}
         />
       ) : viewMode === "documents" ? (
         <>
@@ -895,18 +898,41 @@ function DocumentsHelpDrawer({
     {
       id: "iep-revision-workflow",
       icon: CheckCircle2,
-      title: "Draft, Review, and Approval",
-      searchText: "draft submit review approve archive status workflow revision cycle finalize",
+      title: "Draft, Review, and Finalization",
+      searchText: "draft submit review approve archive status workflow revision cycle finalize simple admin approval",
       body: (
         <div className="space-y-2">
-          <p>IEP Plans in Lauris follow a clear lifecycle:</p>
-          <div className="space-y-1.5 mt-1">
-            <Step n={1} text={<><strong>Draft</strong> — the plan is being authored. Staff can edit freely; no formal review has occurred.</>} />
-            <Step n={2} text={<><strong>Submit for Review</strong> — signals the plan is ready for admin consideration. Available from Step 6 (Attachments).</>} />
-            <Step n={3} text={<><strong>Approve</strong> — school admin finalizes the IEP. Once approved, the plan is official. Editing is restricted.</>} />
-            <Step n={4} text={<><strong>Archive</strong> — plan is retired (superseded or end of year). Archived plans remain readable for audit.</>} />
+          <p>The IEP lifecycle depends on your school&apos;s <strong>IEP Workflow Mode</strong>, configured in <strong>Settings → Policies &amp; Workflows</strong>.</p>
+          <div className="mt-2 space-y-3">
+            <div>
+              <p className="text-xs font-semibold text-foreground mb-1">Simple Review (default)</p>
+              <div className="space-y-1">
+                <Step n={1} text={<><strong>Draft</strong> — being authored; freely editable.</>} />
+                <Step n={2} text={<><strong>Finalized</strong> — teacher marks complete on Step 6. Plan is locked for editing. No admin step required.</>} />
+                <Step n={3} text={<><strong>Archived</strong> — retired at year-end or when superseded.</>} />
+              </div>
+            </div>
+            <div>
+              <p className="text-xs font-semibold text-foreground mb-1">Admin Approval Required</p>
+              <div className="space-y-1">
+                <Step n={1} text={<><strong>Draft</strong> — being authored.</>} />
+                <Step n={2} text={<><strong>Submitted</strong> — teacher flags for admin review.</>} />
+                <Step n={3} text={<><strong>In Review</strong> — admin has opened the plan for consideration.</>} />
+                <Step n={4} text={<><strong>Approved</strong> — school admin finalizes. Editing locked.</>} />
+                <Step n={5} text={<><strong>Archived</strong> — plan retired.</>} />
+              </div>
+            </div>
           </div>
-          <Note>The parent acknowledgment in Step 5 does not change the plan&apos;s status — it records that the family has reviewed the plan, separate from the school&apos;s approval workflow.</Note>
+          <div className="mt-3 space-y-1 text-xs text-muted-foreground">
+            <p className="font-semibold text-foreground">Archiving a plan</p>
+            <p>Archive is available to <strong>school admins only</strong>, from the <strong>··· menu</strong> inside any open plan — regardless of its current status. Use it when a plan is superseded or no longer active.</p>
+            <ul className="space-y-0.5 mt-1 ml-2">
+              <li>• The plan becomes permanently read-only.</li>
+              <li>• It stays visible in the list (filter by Archived to find it).</li>
+              <li>• Archiving cannot be undone from the UI.</li>
+            </ul>
+          </div>
+          <Note>The parent acknowledgment in Step 5 does not change the plan&apos;s status — it records that the family has reviewed the plan, separate from the finalization workflow.</Note>
         </div>
       ),
     },

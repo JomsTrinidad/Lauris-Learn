@@ -79,7 +79,7 @@ const CLASS_LEVEL_KINDS: { value: ClassLevelKind; label: string; hint: string }[
   { value: "other",       label: "Other",       hint: "Anything else" },
 ];
 
-const SECTIONS = ["School Information", "School Year & Terms", "Holidays", "Teachers", "Class Levels", "Student IDs", "Grading", "Branding & Accessibility"] as const;
+const SECTIONS = ["School Information", "Policies & Workflows", "School Year & Terms", "Holidays", "Teachers", "Class Levels", "Student IDs", "Grading", "Branding & Accessibility"] as const;
 type Section = (typeof SECTIONS)[number];
 
 const SESSION_KEY = "settings_active_section";
@@ -256,6 +256,7 @@ export default function SettingsPage() {
 
   // Enrollment balance policy
   const [balancePolicy, setBalancePolicy] = useState<"warn" | "block" | "allow">("warn");
+  const [iepWorkflowMode, setIepWorkflowMode] = useState<"simple_review" | "admin_approval_required">("simple_review");
 
   // Academic Periods
   const [academicPeriods, setAcademicPeriods] = useState<AcademicPeriod[]>([]);
@@ -328,7 +329,7 @@ export default function SettingsPage() {
     const sb = supabase as any;
     const [{ data: school }, { data: branches }, { data: years }, { data: hols }, { data: periods }, { data: teacherRows }, { data: codeRow }, { data: scaleRows }, { data: scaleSetRows }, { data: levelRows }, { data: levelUsage }] =
       await Promise.all([
-        supabase.from("schools").select("name, enrollment_balance_policy, region, schools_division, district").eq("id", schoolId).single(),
+        supabase.from("schools").select("name, enrollment_balance_policy, iep_workflow_mode, region, schools_division, district").eq("id", schoolId).single(),
         supabase.from("branches").select("name, address, phone").eq("school_id", schoolId).limit(1).maybeSingle(),
         supabase.from("school_years").select("id, name, start_date, end_date, status").eq("school_id", schoolId).order("start_date", { ascending: false }),
         supabase.from("holidays").select("id, name, date, applies_to_all, is_no_class, notes").eq("school_id", schoolId).order("date"),
@@ -352,6 +353,7 @@ export default function SettingsPage() {
       district: (school as any)?.district ?? "",
     });
     setBalancePolicy(((school as any)?.enrollment_balance_policy ?? "warn") as "warn" | "block" | "allow");
+    setIepWorkflowMode(((school as any)?.iep_workflow_mode ?? "simple_review") as "simple_review" | "admin_approval_required");
 
     setSchoolYears(
       (years ?? [])
@@ -502,7 +504,6 @@ export default function SettingsPage() {
       .from("schools")
       .update({
         name: schoolInfo.schoolName,
-        enrollment_balance_policy: balancePolicy,
         region: schoolInfo.region || null,
         schools_division: schoolInfo.schoolsDivision || null,
         district: schoolInfo.district || null,
@@ -515,6 +516,20 @@ export default function SettingsPage() {
       await supabase.from("branches").insert({ school_id: schoolId, name: schoolInfo.branchName, address: schoolInfo.address, phone: schoolInfo.phone || null });
     }
     if (e1) { setError(e1.message); } else { refreshCtx(); }
+    setSaving(false);
+  }
+
+  async function savePolicies() {
+    if (!schoolId) return;
+    setSaving(true);
+    const { error } = await supabase
+      .from("schools")
+      .update({
+        enrollment_balance_policy: balancePolicy,
+        iep_workflow_mode: iepWorkflowMode,
+      })
+      .eq("id", schoolId);
+    if (error) { setError(error.message); } else { refreshCtx(); }
     setSaving(false);
   }
 
@@ -1239,17 +1254,6 @@ export default function SettingsPage() {
                     <Input value={schoolInfo.district} onChange={(e) => setSchoolInfo({ ...schoolInfo, district: e.target.value })} placeholder="e.g. Calamba District I" />
                   </div>
                 </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1">Prior-Year Balance Policy</label>
-                  <p className="text-xs text-muted-foreground mb-2">
-                    When enrolling a returning student who has an unpaid balance from a closed school year:
-                  </p>
-                  <Select value={balancePolicy} onChange={(e) => setBalancePolicy(e.target.value as "warn" | "block" | "allow")}>
-                    <option value="warn">Show warning but allow enrollment (recommended)</option>
-                    <option value="block">Block enrollment until prior balance is paid</option>
-                    <option value="allow">Allow enrollment silently</option>
-                  </Select>
-                </div>
                 <div className="flex justify-end pt-2">
                   <Button onClick={saveSchoolInfo} disabled={saving}>{saving ? "Saving…" : "Save Changes"}</Button>
                 </div>
@@ -1285,6 +1289,71 @@ export default function SettingsPage() {
                 )}
               </CardContent>
             </Card>
+          )}
+
+          {/* ── Policies & Workflows ── */}
+          {activeSection === "Policies & Workflows" && (
+            <div className="space-y-6">
+              {/* Enrollment Policies */}
+              <Card>
+                <CardHeader>
+                  <h2>Enrollment Policies</h2>
+                  <p className="text-sm text-muted-foreground mt-0.5">Rules that govern how students are enrolled and re-enrolled.</p>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Prior-Year Balance Policy</label>
+                    <p className="text-xs text-muted-foreground mb-2">
+                      What happens when a returning student has an unpaid balance from a previous school year.
+                    </p>
+                    <Select value={balancePolicy} onChange={(e) => setBalancePolicy(e.target.value as "warn" | "block" | "allow")}>
+                      <option value="warn">Show warning but allow enrollment (recommended)</option>
+                      <option value="block">Block enrollment until prior balance is paid</option>
+                      <option value="allow">Allow enrollment silently</option>
+                    </Select>
+                  </div>
+                  <div className="flex justify-end pt-2">
+                    <Button onClick={savePolicies} disabled={saving}>{saving ? "Saving…" : "Save Changes"}</Button>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* IEP Workflow */}
+              <Card>
+                <CardHeader>
+                  <h2>IEP Workflow</h2>
+                  <p className="text-sm text-muted-foreground mt-0.5">Choose how your school reviews and finalizes IEP plans.</p>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Review Mode</label>
+                    <p className="text-xs text-muted-foreground mb-2">
+                      Changing this affects new plans only — plans already in progress retain their current status.
+                    </p>
+                    <Select value={iepWorkflowMode} onChange={(e) => setIepWorkflowMode(e.target.value as "simple_review" | "admin_approval_required")}>
+                      <option value="simple_review">Simple — teachers finalize directly, no approval queue</option>
+                      <option value="admin_approval_required">Admin approval — teachers submit, an admin reviews and approves</option>
+                    </Select>
+                  </div>
+                  <div className="flex justify-end pt-2">
+                    <Button onClick={savePolicies} disabled={saving}>{saving ? "Saving…" : "Save Changes"}</Button>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Future workflow areas — placeholder only */}
+              <Card className="opacity-60">
+                <CardContent className="p-5">
+                  <h3 className="text-sm font-semibold mb-3">Coming Later</h3>
+                  <div className="grid sm:grid-cols-2 gap-x-6 gap-y-1.5 text-xs text-muted-foreground">
+                    <span>Parent acknowledgment rules</span>
+                    <span>Attendance escalation thresholds</span>
+                    <span>Grade approval workflow</span>
+                    <span>Notification behavior</span>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
           )}
 
           {/* ── School Year & Terms ── */}
@@ -2121,16 +2190,41 @@ export default function SettingsPage() {
                     id: "school-info",
                     icon: Plus,
                     title: "School Information — update name, address, phone",
-                    searchText: "school information name branch address phone save info",
+                    searchText: "school information name branch address phone save info identity",
                     body: (
                       <div className="space-y-2">
-                        <p>This section holds your school's basic details that appear on billing statements and other printed documents.</p>
+                        <p>This section holds your school's identity details — the fields that appear on billing statements, printed documents, and the parent portal.</p>
                         <div className="space-y-2 mt-2">
                           <Step n={1} text={<span>Click <strong>School Information</strong> in the left nav.</span>} />
                           <Step n={2} text={<span>Update fields: <strong>School Name</strong>, <strong>Branch Name</strong>, <strong>Address</strong>, and <strong>Telephone Number</strong>.</span>} />
                           <Step n={3} text={<span>Click <strong>Save Changes</strong> at the bottom of the card.</span>} />
                         </div>
-                        <Note>The school name shown in the header and parent portal is pulled from the database and refreshes after you save. If it doesn't update immediately, refresh the page.</Note>
+                        <Note>Operational policies (enrollment balance rules, IEP workflow mode) are in <strong>Policies &amp; Workflows</strong>, not here. School Information is identity-only.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "policies-workflows",
+                    icon: Plus,
+                    title: "Policies & Workflows — enrollment and IEP settings",
+                    searchText: "policies workflows iep finalize approve enrollment balance prior year simple review admin approval mode",
+                    body: (
+                      <div className="space-y-2">
+                        <p>This section controls how your school handles two key operational decisions. Each policy is saved independently.</p>
+                        <div className="space-y-3 mt-2">
+                          <div>
+                            <p className="text-xs font-semibold text-foreground">Enrollment Balance Policy</p>
+                            <p className="text-xs text-muted-foreground mt-0.5">Controls whether prior-year unpaid balances block re-enrollment. Choose <strong>Allow enrollment regardless</strong> or <strong>Require prior balance cleared</strong>.</p>
+                          </div>
+                          <div>
+                            <p className="text-xs font-semibold text-foreground">IEP Workflow Mode</p>
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              <strong>Simple Review</strong> — Teachers finalize IEP plans directly on Step 6. No admin approval step. Best for smaller teams.<br />
+                              <strong>Admin Approval Required</strong> — Teachers submit for review; the school admin approves. Enables the review queue on the dashboard and Documents page.
+                            </p>
+                          </div>
+                        </div>
+                        <Note>Changing the IEP workflow mode only affects new status transitions. Plans already approved or finalized keep their current status.</Note>
                       </div>
                     ),
                   },

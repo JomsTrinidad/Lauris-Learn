@@ -41,7 +41,7 @@ import { getPendingReviewCount, PENDING_REVIEW_STATUSES } from "./review-queue";
 import { IEPPlansList } from "./IEPPlansList";
 import { IEPPlanModal } from "./IEPPlanModal";
 import { PLAN_STATUS_LABELS } from "./constants";
-import type { PlanListItem, PlanStatus } from "./types";
+import type { PlanListItem, PlanStatus, IepWorkflowMode } from "./types";
 import { cn } from "@/lib/utils";
 
 type Category = "iep" | "support" | "behavior" | "other" | "templates";
@@ -78,7 +78,8 @@ const PLACEHOLDER_CARDS: Array<{
   },
 ];
 
-const STATUS_OPTIONS: PlanStatus[] = ["draft", "submitted", "in_review", "approved", "archived"];
+const ADMIN_APPROVAL_STATUS_OPTIONS: PlanStatus[] = ["draft", "submitted", "in_review", "approved", "archived"];
+const SIMPLE_REVIEW_STATUS_OPTIONS: PlanStatus[]   = ["draft", "finalized", "archived"];
 
 export function PlansAndFormsView({
   schoolId,
@@ -88,6 +89,7 @@ export function PlansAndFormsView({
   userId,
   userRole,
   defaultStudentId = null,
+  workflowMode = "simple_review",
 }: {
   schoolId: string;
   schoolName?: string;
@@ -96,12 +98,15 @@ export function PlansAndFormsView({
   userId: string;
   userRole: "school_admin" | "teacher" | "parent" | "super_admin" | null;
   defaultStudentId?: string | null;
+  workflowMode?: IepWorkflowMode;
 }) {
   const supabase = useMemo(() => createClient(), []);
 
   // ── Role gates ────────────────────────────────────────────────────────
   const canCreate   = userRole === "school_admin" || userRole === "teacher";
   const isReviewer  = userRole === "school_admin" || userRole === "super_admin";
+  const isAdminApproval = workflowMode === "admin_approval_required";
+  const statusOptions = isAdminApproval ? ADMIN_APPROVAL_STATUS_OPTIONS : SIMPLE_REVIEW_STATUS_OPTIONS;
 
   // ── Plan list state ───────────────────────────────────────────────────
   const [plans, setPlans]     = useState<PlanListItem[]>([]);
@@ -119,14 +124,14 @@ export function PlansAndFormsView({
 
   // ── Load pending count ────────────────────────────────────────────────
   const reloadPendingCount = useCallback(async () => {
-    if (!isReviewer || !schoolId) return;
+    if (!isReviewer || !schoolId || !isAdminApproval) { setPendingCount(0); return; }
     try {
       const n = await getPendingReviewCount(supabase, schoolId);
       setPendingCount(n);
     } catch {
       // Non-fatal — badge just stays at its previous value
     }
-  }, [supabase, schoolId, isReviewer]);
+  }, [supabase, schoolId, isReviewer, isAdminApproval]);
 
   useEffect(() => { void reloadPendingCount(); }, [reloadPendingCount]);
 
@@ -212,9 +217,8 @@ export function PlansAndFormsView({
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {/* Review Queue toggle — reviewers only, visible when there are pending
-              plans OR when the queue is already active */}
-          {isReviewer && (pendingCount > 0 || reviewQueueActive) && (
+          {/* Review Queue toggle — admin_approval_required mode only */}
+          {isAdminApproval && isReviewer && (pendingCount > 0 || reviewQueueActive) && (
             <button
               type="button"
               onClick={toggleReviewQueue}
@@ -248,7 +252,7 @@ export function PlansAndFormsView({
               className="w-44"
             >
               <option value="">All statuses</option>
-              {STATUS_OPTIONS.map((s) => (
+              {statusOptions.map((s) => (
                 <option key={s} value={s}>{PLAN_STATUS_LABELS[s]}</option>
               ))}
             </Select>
@@ -308,6 +312,7 @@ export function PlansAndFormsView({
         userId={userId}
         userRole={userRole}
         defaultStudentId={defaultStudentId}
+        workflowMode={workflowMode}
       />
     </div>
   );

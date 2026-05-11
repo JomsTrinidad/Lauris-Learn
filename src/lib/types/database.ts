@@ -26,11 +26,12 @@ export type Database = {
           region: string | null;
           schools_division: string | null;
           district: string | null;
+          iep_workflow_mode: "simple_review" | "admin_approval_required";
           created_at: string;
           updated_at: string;
         };
-        Insert: { id?: string; name: string; trial_start_date?: string | null; trial_end_date?: string | null; trial_status?: "active" | "expired" | "converted"; logo_url?: string | null; primary_color?: string | null; accent_color?: string | null; report_footer_text?: string | null; text_size_scale?: "default" | "large" | "extra_large"; spacing_scale?: "compact" | "default" | "relaxed"; enrollment_balance_policy?: "warn" | "block" | "allow"; region?: string | null; schools_division?: string | null; district?: string | null; created_at?: string; updated_at?: string };
-        Update: { id?: string; name?: string; trial_start_date?: string | null; trial_end_date?: string | null; trial_status?: "active" | "expired" | "converted"; logo_url?: string | null; primary_color?: string | null; accent_color?: string | null; report_footer_text?: string | null; text_size_scale?: "default" | "large" | "extra_large"; spacing_scale?: "compact" | "default" | "relaxed"; enrollment_balance_policy?: "warn" | "block" | "allow"; region?: string | null; schools_division?: string | null; district?: string | null; updated_at?: string };
+        Insert: { id?: string; name: string; trial_start_date?: string | null; trial_end_date?: string | null; trial_status?: "active" | "expired" | "converted"; logo_url?: string | null; primary_color?: string | null; accent_color?: string | null; report_footer_text?: string | null; text_size_scale?: "default" | "large" | "extra_large"; spacing_scale?: "compact" | "default" | "relaxed"; enrollment_balance_policy?: "warn" | "block" | "allow"; region?: string | null; schools_division?: string | null; district?: string | null; iep_workflow_mode?: "simple_review" | "admin_approval_required"; created_at?: string; updated_at?: string };
+        Update: { id?: string; name?: string; trial_start_date?: string | null; trial_end_date?: string | null; trial_status?: "active" | "expired" | "converted"; logo_url?: string | null; primary_color?: string | null; accent_color?: string | null; report_footer_text?: string | null; text_size_scale?: "default" | "large" | "extra_large"; spacing_scale?: "compact" | "default" | "relaxed"; enrollment_balance_policy?: "warn" | "block" | "allow"; region?: string | null; schools_division?: string | null; district?: string | null; iep_workflow_mode?: "simple_review" | "admin_approval_required"; updated_at?: string };
         Relationships: [];
       };
       branches: {
@@ -907,7 +908,7 @@ export type Database = {
           school_year_id: string | null;
           plan_type: "iep" | "support" | "behavior" | "other";
           title: string;
-          status: "draft" | "submitted" | "in_review" | "approved" | "archived";
+          status: "draft" | "submitted" | "in_review" | "approved" | "archived" | "finalized";
           diagnosis: string | null;
           strengths: string | null;
           areas_of_need: string | null;
@@ -928,9 +929,13 @@ export type Database = {
           created_by: string | null;
           created_at: string;
           updated_at: string;
+          submitted_at: string | null;
+          submitted_by: string | null;
+          finalized_at: string | null;
+          finalized_by: string | null;
         };
-        Insert: { id?: string; school_id: string; student_id: string; school_year_id?: string | null; plan_type?: "iep" | "support" | "behavior" | "other"; title: string; status?: "draft" | "submitted" | "in_review" | "approved" | "archived"; diagnosis?: string | null; strengths?: string | null; areas_of_need?: string | null; background_notes?: string | null; parent_notes?: string | null; parent_concerns?: string | null; home_support_notes?: string | null; review_date?: string | null; reviewed_by_teacher_id?: string | null; reviewed_by_admin_id?: string | null; parent_acknowledged_at?: string | null; parent_acknowledged_by_guardian_id?: string | null; approved_at?: string | null; approved_by?: string | null; archived_at?: string | null; archive_reason?: string | null; iep_details?: Record<string, unknown> | null; created_by?: string | null; created_at?: string; updated_at?: string };
-        Update: { id?: string; school_id?: string; student_id?: string; school_year_id?: string | null; plan_type?: "iep" | "support" | "behavior" | "other"; title?: string; status?: "draft" | "submitted" | "in_review" | "approved" | "archived"; diagnosis?: string | null; strengths?: string | null; areas_of_need?: string | null; background_notes?: string | null; parent_notes?: string | null; parent_concerns?: string | null; home_support_notes?: string | null; review_date?: string | null; reviewed_by_teacher_id?: string | null; reviewed_by_admin_id?: string | null; parent_acknowledged_at?: string | null; parent_acknowledged_by_guardian_id?: string | null; approved_at?: string | null; approved_by?: string | null; archived_at?: string | null; archive_reason?: string | null; iep_details?: Record<string, unknown> | null; created_by?: string | null; updated_at?: string };
+        Insert: { id?: string; school_id: string; student_id: string; school_year_id?: string | null; plan_type?: "iep" | "support" | "behavior" | "other"; title: string; status?: "draft" | "submitted" | "in_review" | "approved" | "archived" | "finalized"; diagnosis?: string | null; strengths?: string | null; areas_of_need?: string | null; background_notes?: string | null; parent_notes?: string | null; parent_concerns?: string | null; home_support_notes?: string | null; review_date?: string | null; reviewed_by_teacher_id?: string | null; reviewed_by_admin_id?: string | null; parent_acknowledged_at?: string | null; parent_acknowledged_by_guardian_id?: string | null; approved_at?: string | null; approved_by?: string | null; archived_at?: string | null; archive_reason?: string | null; iep_details?: Record<string, unknown> | null; created_by?: string | null; created_at?: string; updated_at?: string; submitted_at?: string | null; submitted_by?: string | null; finalized_at?: string | null; finalized_by?: string | null };
+        Update: { id?: string; school_id?: string; student_id?: string; school_year_id?: string | null; plan_type?: "iep" | "support" | "behavior" | "other"; title?: string; status?: "draft" | "submitted" | "in_review" | "approved" | "archived" | "finalized"; diagnosis?: string | null; strengths?: string | null; areas_of_need?: string | null; background_notes?: string | null; parent_notes?: string | null; parent_concerns?: string | null; home_support_notes?: string | null; review_date?: string | null; reviewed_by_teacher_id?: string | null; reviewed_by_admin_id?: string | null; parent_acknowledged_at?: string | null; parent_acknowledged_by_guardian_id?: string | null; approved_at?: string | null; approved_by?: string | null; archived_at?: string | null; archive_reason?: string | null; iep_details?: Record<string, unknown> | null; created_by?: string | null; updated_at?: string; submitted_at?: string | null; submitted_by?: string | null; finalized_at?: string | null; finalized_by?: string | null };
         Relationships: [
           { foreignKeyName: "student_plans_school_id_fkey"; columns: ["school_id"]; isOneToOne: false; referencedRelation: "schools"; referencedColumns: ["id"] },
           { foreignKeyName: "student_plans_student_id_fkey"; columns: ["student_id"]; isOneToOne: false; referencedRelation: "students"; referencedColumns: ["id"] },
@@ -939,7 +944,9 @@ export type Database = {
           { foreignKeyName: "student_plans_reviewed_by_admin_id_fkey"; columns: ["reviewed_by_admin_id"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] },
           { foreignKeyName: "student_plans_parent_acknowledged_by_guardian_id_fkey"; columns: ["parent_acknowledged_by_guardian_id"]; isOneToOne: false; referencedRelation: "guardians"; referencedColumns: ["id"] },
           { foreignKeyName: "student_plans_approved_by_fkey"; columns: ["approved_by"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] },
-          { foreignKeyName: "student_plans_created_by_fkey"; columns: ["created_by"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] }
+          { foreignKeyName: "student_plans_created_by_fkey"; columns: ["created_by"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] },
+          { foreignKeyName: "student_plans_submitted_by_fkey"; columns: ["submitted_by"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] },
+          { foreignKeyName: "student_plans_finalized_by_fkey"; columns: ["finalized_by"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] }
         ];
       };
       student_plan_goals: {

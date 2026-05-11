@@ -121,7 +121,7 @@ const STEP_HELP: Record<WizardStep, StepHelp> = {
       "Learner met 2 of 4 annual goals. Communication goals showed 80% progress; reading goals continue into next term.",
     ],
     avoid: [
-      "Leaving reviewer details blank before submission — approvers need this information",
+      "Leaving reviewer details blank — approvers and auditors need this information before the plan is finalized",
       "Mixing progress notes with goal content — progress belongs here, goals belong in Step 4",
     ],
   },
