@@ -995,6 +995,87 @@ function DocumentsHelpDrawer({
         </div>
       ),
     },
+    {
+      id: "iep-completion-dots",
+      icon: CheckCircle2,
+      title: "Step Completion Indicators",
+      searchText: "completion dot green amber sidebar step status indicator complete partial empty progress tracker",
+      body: (
+        <div className="space-y-2">
+          <p>Each step in the IEP sidebar shows a small dot to indicate how complete that section is:</p>
+          <ul className="space-y-1.5 text-xs mt-1">
+            <li className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-green-500 shrink-0" /> <strong>Green</strong> — all required fields for that step are filled.</li>
+            <li className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" /> <strong>Amber</strong> — some fields are filled but the step isn&apos;t complete yet.</li>
+            <li className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-border shrink-0 border border-border" /> <strong>No dot</strong> — the step is empty.</li>
+          </ul>
+          <p className="text-xs mt-1">Each step&apos;s minimum for green:</p>
+          <ul className="space-y-0.5 text-xs mt-0.5">
+            <li>· <strong>Step 1 Learner</strong> — student selected + plan title</li>
+            <li>· <strong>Step 2 Meeting</strong> — purpose + date (or TBD) + at least 2 team members</li>
+            <li>· <strong>Step 3 Needs</strong> — present levels of need filled</li>
+            <li>· <strong>Step 4 Supports</strong> — at least one device or barrier, or marked N/A</li>
+            <li>· <strong>Step 5 Goals</strong> — at least one goal added, or marked N/A</li>
+            <li>· <strong>Step 7 Team Review</strong> — recommendations and discussion notes (or each marked N/A)</li>
+            <li>· <strong>Step 8 Progress</strong> — at least one progress entry, or marked N/A</li>
+            <li>· <strong>Step 9 Agreements</strong> — agreements, concerns, and next-review commitments (or each marked N/A)</li>
+          </ul>
+          <Note>Steps 6 (Draft Notes) and 10 (Attachments) are always optional — they go green when any content is added but leaving them empty never blocks saving or sharing.</Note>
+        </div>
+      ),
+    },
+    {
+      id: "iep-na-toggles",
+      icon: Eye,
+      title: "Not Applicable (N/A) Toggles",
+      searchText: "not applicable na toggle waive skip section requirement mark n/a optional section exempt",
+      body: (
+        <div className="space-y-2">
+          <p>Some IEP sections have a <strong>Not applicable</strong> toggle in their header. Use it when a section genuinely doesn&apos;t apply for this meeting cycle — for example, a progress review section when no prior goals exist yet.</p>
+          <p>When a section is marked N/A:</p>
+          <ul className="space-y-1 text-xs mt-1">
+            <li>· The section&apos;s fields are hidden and disabled.</li>
+            <li>· The completeness requirement for that section is waived — the step can still go green.</li>
+            <li>· The N/A flag is saved with the plan so reviewers can see it was intentionally skipped.</li>
+          </ul>
+          <p className="text-xs mt-1">Sections with N/A toggles:</p>
+          <ul className="space-y-0.5 text-xs mt-0.5">
+            <li>· Step 4 — Supports &amp; Barriers</li>
+            <li>· Step 5 — Annual Goals</li>
+            <li>· Step 7 — Team Recommendations (separate toggle per sub-section)</li>
+            <li>· Step 7 — Discussion Notes</li>
+            <li>· Step 8 — Progress Entries</li>
+            <li>· Step 9 — Agreements, Unresolved Concerns, Next Review Commitments (each has its own toggle)</li>
+          </ul>
+          <Tip>Use N/A toggles sparingly and only when the section is genuinely not needed. Reviewers will see these flags when they check the plan.</Tip>
+        </div>
+      ),
+    },
+    {
+      id: "iep-save-gates",
+      icon: ShieldCheck,
+      title: "What's Required to Share or Finalize",
+      searchText: "save draft share finalize approve submit validation required fields gate block missing complete before saving",
+      body: (
+        <div className="space-y-2">
+          <p>Saving as a draft never blocks — you can save an incomplete plan at any time. Advancing the plan requires progressively more content:</p>
+          <div className="space-y-3 mt-2 text-xs">
+            <div className="rounded-lg border border-border bg-card p-3 space-y-1">
+              <p className="font-semibold text-foreground">Save Draft — always allowed</p>
+              <p className="text-muted-foreground">No fields are required. Use it to save work in progress at any point.</p>
+            </div>
+            <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800 p-3 space-y-1">
+              <p className="font-semibold text-foreground">Save &amp; Share (Submit for Review)</p>
+              <p className="text-muted-foreground">Requires the planning minimum: student, meeting purpose, meeting date (or TBD), present levels of need, at least one goal or N/A, and at least one support/barrier or N/A.</p>
+            </div>
+            <div className="rounded-lg border border-green-200 bg-green-50 dark:bg-green-950/20 dark:border-green-800 p-3 space-y-1">
+              <p className="font-semibold text-foreground">Approve / Finalize</p>
+              <p className="text-muted-foreground">Requires everything above, plus team recommendations (or N/A), discussion notes (or N/A), progress entries (or N/A), agreements, unresolved concerns, and next-review commitments (each or N/A).</p>
+            </div>
+          </div>
+          <Note>If a required field is missing when you click Share or Approve, the modal will scroll to the first incomplete step and list exactly what needs to be filled.</Note>
+        </div>
+      ),
+    },
   ];
 
   const q = search.trim().toLowerCase();

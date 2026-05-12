@@ -105,9 +105,10 @@ export function getStepCompletionStatus(s: IepFormState): Record<number, StepSta
   }
 
   // Step 2 — Meeting Setup
-  const hasPurpose = !!s.meetingPurpose?.trim();
-  const hasDate    = !!(s.meetingDate?.trim() || s.meetingTbs);
-  if (hasPurpose && hasDate) {
+  const hasPurpose    = !!s.meetingPurpose?.trim();
+  const hasDate       = !!(s.meetingDate?.trim() || s.meetingTbs);
+  const hasEnoughTeam = s.teamMembers.length >= 2;
+  if (hasPurpose && hasDate && hasEnoughTeam) {
     result[2] = "complete";
   } else if (hasPurpose || hasDate || !!s.meetingLocation?.trim() || s.teamMembers.length > 0) {
     result[2] = "partial";
