@@ -3,11 +3,17 @@
  *
  * Two main responsibilities:
  *   1. summarizeExtraction() — parse extracted text into structured sections using AI
- *   2. mapToIepSuggestions() — deterministically map summary sections to IEP fields
+ *   2. mapToIepSuggestions()  — deterministically map summary sections to IEP fields
  *
- * Summary is optional (checks IEP_AI_PROVIDER env var).
+ * Default provider: OpenAI Chat Completions with Structured Outputs.
+ * Backward compat: IEP_AI_PROVIDER=openai_gpt4 is treated as openai.
+ * Model: OPENAI_IEP_SUMMARY_MODEL env var, defaults to gpt-4.1-mini.
+ *
+ * Summary is optional (checks IEP_AI_PROVIDER and REPORT_AI_SUMMARY_ENABLED).
  * Mapping is deterministic and always runs (no AI needed).
  * Contract: never return fake sections or suggestions.
+ * All AI output is framed as draft educational planning support requiring human review.
+ * The model must not produce medical diagnoses, clinical conclusions, or legal determinations.
  */
 
 import type {
@@ -18,13 +24,75 @@ import type {
 import { getExtractionConfig } from "@/lib/extraction-guardrails/config";
 
 /**
+ * JSON schema for OpenAI Structured Outputs.
+ *
+ * strict: true guarantees every field in `required` is always present in the response.
+ * All 7 fields are type "string" — use empty string when not applicable (not null),
+ * since this is compatible with the existing SummarySection type (string | null | undefined)
+ * and mapToIepSuggestions() already handles empty/falsy values correctly.
+ */
+const IEP_SUMMARY_SCHEMA = {
+  type: "json_schema",
+  json_schema: {
+    name: "iep_summary",
+    strict: true,
+    schema: {
+      type: "object",
+      properties: {
+        therapy_focus: {
+          type: "string",
+          description: "The reported focus of therapy or intervention. Empty string if not mentioned.",
+        },
+        strengths: {
+          type: "string",
+          description:
+            "Observed strengths or positive progress — educational observations only, no diagnoses. Empty string if not mentioned.",
+        },
+        areas_of_need: {
+          type: "string",
+          description:
+            "Areas needing additional educational support — use 'appears to', 'may benefit from'. Empty string if not mentioned.",
+        },
+        progress_since_last: {
+          type: "string",
+          description: "Progress noted since the previous report. Empty string if not mentioned.",
+        },
+        recommended_supports: {
+          type: "string",
+          description:
+            "Educational supports or accommodations suggested by the report. Use 'consider', 'team should review'. Empty string if none.",
+        },
+        suggested_goals: {
+          type: "string",
+          description:
+            "Educational goals to consider — one per line, use 'consider' framing. Empty string if none. NOT clinical targets.",
+        },
+        followup_notes: {
+          type: "string",
+          description: "Notes for the educational team to follow up on. Empty string if none.",
+        },
+      },
+      required: [
+        "therapy_focus",
+        "strengths",
+        "areas_of_need",
+        "progress_since_last",
+        "recommended_supports",
+        "suggested_goals",
+        "followup_notes",
+      ],
+      additionalProperties: false,
+    },
+  },
+} as const;
+
+/**
  * Summarize extracted text into 7 structured sections.
  *
- * Checks IEP_AI_PROVIDER environment variable. If not set,
- * returns status='not_configured' without attempting any AI call.
+ * Checks IEP_AI_PROVIDER and REPORT_AI_SUMMARY_ENABLED. Returns
+ * status='not_configured' without an AI call when either is unset.
  *
  * @param extractedText - Raw text extracted from the document
- * @returns Summary with structured sections or not_configured status
  */
 export async function summarizeExtraction(
   extractedText: string,
@@ -44,74 +112,67 @@ export async function summarizeExtraction(
     };
   }
 
-  // Check for configured AI provider
-  const provider = process.env.IEP_AI_PROVIDER?.trim();
+  // Normalize provider aliases
+  const rawProvider = process.env.IEP_AI_PROVIDER?.trim();
+  const provider = rawProvider === "openai_gpt4" ? "openai" : rawProvider;
 
   if (!provider || provider === "none") {
     return {
       status: "not_configured",
       message:
         "AI summary provider not configured. " +
-        "To generate IEP suggestions automatically, set IEP_AI_PROVIDER " +
-        "in environment variables (e.g., 'openai_gpt4').",
+        "Set IEP_AI_PROVIDER=openai and OPENAI_API_KEY to generate IEP suggestions automatically.",
     };
   }
 
-  // ─────────────────────────────────────────────────────────────────
-  // Provider implementations
-  // ─────────────────────────────────────────────────────────────────
-
-  if (provider === "openai_gpt4") {
+  if (provider === "openai") {
     return summarizeWithOpenAI(extractedText);
   }
 
-  if (provider === "anthropic_claude_3_5_sonnet") {
-    return {
-      status: "not_configured",
-      message: "Anthropic API integration not yet implemented.",
-    };
-  }
-
-  // Default: unknown provider
   return {
     status: "not_configured",
-    message: `Unknown AI provider: ${provider}. ` +
-      "Check IEP_AI_PROVIDER configuration.",
+    message: `Unknown AI provider: ${provider}. Check IEP_AI_PROVIDER configuration (expected: openai).`,
   };
 }
 
 /**
- * Summarize extracted text using OpenAI GPT-4.
+ * Summarize extracted text using OpenAI Chat Completions with Structured Outputs.
+ *
+ * Uses IEP_SUMMARY_SCHEMA with strict: true to guarantee all 7 fields are present.
+ * Model: OPENAI_IEP_SUMMARY_MODEL (default: gpt-4.1-mini).
+ * Temperature: 0.2 for consistent structured output.
+ *
+ * Safety contract:
+ * - All output is framed as draft educational observations
+ * - No medical diagnoses, clinical conclusions, or legal determinations
+ * - Human review required before applying any suggestion
  */
 async function summarizeWithOpenAI(
   extractedText: string,
 ): Promise<SummaryResult> {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
-
   if (!apiKey) {
     return {
       status: "not_configured",
-      message: "OPENAI_API_KEY not set in environment variables.",
+      message: "OPENAI_API_KEY not set. Configure it to enable AI summarization.",
     };
   }
 
-  const prompt = `You are an expert in special education and IEP planning.
-Analyze the following therapy/progress report and extract key information into these 7 sections.
-Return a JSON object with these exact fields (use null if not applicable):
-{
-  "therapy_focus": "What is the main focus of therapy?",
-  "strengths": "What are the student's strengths or positive progress?",
-  "areas_of_need": "What areas need improvement or intervention?",
-  "progress_since_last": "What progress has been made since the last report?",
-  "recommended_supports": "What supports or accommodations are recommended?",
-  "suggested_goals": "What goals should be set? (one per line if multiple)",
-  "followup_notes": "Any notes for follow-up or parent communication?"
-}
+  const model = process.env.OPENAI_IEP_SUMMARY_MODEL?.trim() || "gpt-4.1-mini";
 
-REPORT TEXT:
-${extractedText}
+  const systemPrompt =
+    "You are a special education support tool that helps educators draft IEP content. " +
+    "You extract key observations from therapy and progress reports into structured sections. " +
+    "All output must be draft educational planning observations only — " +
+    "NOT medical diagnoses, clinical conclusions, or legal determinations. " +
+    "Use language such as 'may benefit from', 'appears to', 'consider', " +
+    "'team should review', 'based on this report'. " +
+    "When a section is not addressed in the report, return an empty string for that field. " +
+    "Human review by a qualified educator is required before any suggestion is applied.";
 
-Return ONLY valid JSON, no markdown or extra text.`;
+  const userPrompt =
+    "Analyze the following therapy or progress report and extract key observations " +
+    "into the 7 required fields.\n\nREPORT TEXT:\n" + extractedText;
 
   try {
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -121,34 +182,46 @@ Return ONLY valid JSON, no markdown or extra text.`;
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: "gpt-4-turbo",
+        model,
         messages: [
-          {
-            role: "user",
-            content: prompt,
-          },
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
         ],
-        temperature: 0.7,
+        temperature: 0.2,
         max_tokens: 2048,
+        response_format: IEP_SUMMARY_SCHEMA,
       }),
     });
 
     if (!response.ok) {
-      const error = await response.json();
+      const errBody = await response.json().catch(() => ({}));
+      const openaiMessage = (errBody as any)?.error?.message ?? response.statusText;
+      console.error("[iep-summary] OpenAI API error", {
+        provider: "openai",
+        model,
+        httpStatus: response.status,
+        openaiMessage,
+      });
       return {
         status: "not_configured",
-        message: `OpenAI API error: ${error.error?.message || "Unknown error"}`,
+        message: `OpenAI API error: ${openaiMessage}`,
       };
     }
 
     const data = await response.json();
-    const content = data.choices?.[0]?.message?.content || "";
+    const content: string = data.choices?.[0]?.message?.content ?? "";
 
-    // Parse the JSON response
+    // Structured Outputs with strict: true always produces valid JSON,
+    // but we still guard the parse for belt-and-suspenders safety.
     let summary: SummarySection;
     try {
       summary = JSON.parse(content);
     } catch {
+      console.error("[iep-summary] Failed to parse OpenAI JSON response", {
+        provider: "openai",
+        model,
+        contentSnippet: content.substring(0, 200),
+      });
       return {
         status: "not_configured",
         message: "Failed to parse AI response as JSON.",
@@ -160,6 +233,11 @@ Return ONLY valid JSON, no markdown or extra text.`;
       sections: summary,
     };
   } catch (err) {
+    console.error("[iep-summary] Fetch failed", {
+      provider: "openai",
+      model,
+      error: err instanceof Error ? err.message : String(err),
+    });
     return {
       status: "not_configured",
       message: `Summarization failed: ${err instanceof Error ? err.message : "Unknown error"}`,
@@ -170,13 +248,11 @@ Return ONLY valid JSON, no markdown or extra text.`;
 /**
  * Map summarized content to IEP field suggestions.
  *
- * This is deterministic mapping (no AI needed). It converts the 7
- * summary sections into concrete IEP field suggestions. Always runs,
- * regardless of whether the summary came from AI or manual input.
+ * Deterministic (no AI). Converts the 7 summary sections into concrete IEP
+ * field suggestions. Always runs regardless of whether AI produced the summary.
  *
- * @param summary - Structured summary sections
- * @param sourceDocumentId - Document ID for audit trail
- * @returns Array of suggestions ready to insert into DB
+ * @param summary          - Structured summary sections
+ * @param sourceDocumentId - Document ID (used by the caller for the audit trail)
  */
 export function mapToIepSuggestions(
   summary: SummarySection,
@@ -266,12 +342,6 @@ export function mapToIepSuggestions(
   return suggestions;
 }
 
-/**
- * Truncate text to a maximum length with ellipsis.
- * @param text - Text to truncate
- * @param maxLength - Maximum length before truncation
- * @returns Truncated text with "…" if over limit
- */
 function truncate(text: string, maxLength: number): string {
   if (text.length <= maxLength) return text;
   return text.substring(0, maxLength).trim() + "…";

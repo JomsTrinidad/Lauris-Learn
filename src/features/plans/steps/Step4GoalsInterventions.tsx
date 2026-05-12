@@ -7,7 +7,7 @@ import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { DatePicker } from "@/components/ui/datepicker";
 import { GOAL_DOMAIN_SUGGESTIONS } from "../constants";
-import { Field, BlockCard, updateGoal, updateIntervention, type GoalRow, type InterventionRow } from "./shared";
+import { Field, BlockCard, NaToggle, updateGoal, updateIntervention, type GoalRow, type InterventionRow } from "./shared";
 import { StarterIdeasPanel } from "@/features/plans/authoring-assist/StarterIdeasPanel";
 import { GOAL_STARTERS, GOAL_STARTERS_GENERAL, STRATEGY_STARTERS } from "@/features/plans/authoring-assist/starters";
 
@@ -28,6 +28,7 @@ export interface Step4Props {
   addIntervention: (goalId?: string) => void;
   expandedGoalTracking: Set<string>;
   setExpandedGoalTracking: Dispatch<SetStateAction<Set<string>>>;
+  goalsNa: boolean; setGoalsNa: (v: boolean) => void;
   isStaff: boolean;
   isEditing: boolean;
   saving: boolean;
@@ -39,6 +40,7 @@ export function Step4GoalsInterventions({
   goals, setGoals, addGoal,
   interventions, setInterventions, addIntervention,
   expandedGoalTracking, setExpandedGoalTracking,
+  goalsNa, setGoalsNa,
   isStaff, isEditing, saving, handleAssistantClick, canEdit,
 }: Step4Props) {
   return (
@@ -46,12 +48,17 @@ export function Step4GoalsInterventions({
 
       {/* ── Panel A: Annual Goals ── */}
       <div className="rounded-xl border border-border/50 bg-muted/60 p-5 space-y-4">
-        <div>
-          <h3 className="text-sm font-semibold text-foreground">Annual Goals</h3>
-          <p className="text-xs text-muted-foreground mt-0.5">Set specific, observable goals for the school year. Each goal should describe what the learner will achieve.</p>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-foreground">Annual Goals</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">Set specific, observable goals for the school year. Each goal should describe what the learner will achieve.</p>
+          </div>
+          {canEdit && <NaToggle checked={goalsNa} onChange={setGoalsNa} label="Not applicable" disabled={!canEdit} />}
         </div>
 
-        {isStaff && (
+        {goalsNa ? (
+          <p className="text-xs text-muted-foreground italic">Goals marked as not applicable for this review cycle.</p>
+        ) : isStaff && (
           <div className="rounded-lg border border-border/60 bg-card p-3 flex items-start gap-3">
             <Sparkles className="w-4 h-4 text-primary mt-0.5 shrink-0" />
             <div className="flex-1 min-w-0">
@@ -66,7 +73,7 @@ export function Step4GoalsInterventions({
           </div>
         )}
 
-        {goals.length === 0 && (
+        {!goalsNa && goals.length === 0 && (
           <div className="rounded-lg border border-dashed border-border bg-card/60 p-5 text-center space-y-3">
             <p className="text-xs font-medium text-foreground">No goals yet</p>
             <p className="text-xs text-muted-foreground">Examples of annual goals:</p>
@@ -91,7 +98,7 @@ export function Step4GoalsInterventions({
           </div>
         )}
 
-        {goals.map((g, idx) => {
+        {!goalsNa && goals.map((g, idx) => {
           const isTrackingExpanded = expandedGoalTracking.has(g.id);
           const hasAdvancedData = !!(g.baseline || g.measurement_method || g.success_criteria || g.remarks);
           const showMeasurabilityHint = g.description.length > 5 && !/\d/.test(g.description);
@@ -118,13 +125,12 @@ export function Step4GoalsInterventions({
               </Field>
               <div className="grid md:grid-cols-2 gap-3">
                 <Field label="Domain / Area">
-                  <Input list={`goal-domains-${g.id}`} value={g.domain ?? ""}
-                    onChange={(e) => updateGoal(setGoals, g.id, { domain: e.target.value })}
-                    disabled={!canEdit}
-                    placeholder="e.g. Communication, Literacy, Social Skills" />
-                  <datalist id={`goal-domains-${g.id}`}>
-                    {GOAL_DOMAIN_SUGGESTIONS.map((d) => <option key={d} value={d} />)}
-                  </datalist>
+                  <Select value={g.domain ?? ""}
+                    onChange={(e) => updateGoal(setGoals, g.id, { domain: e.target.value || null })}
+                    disabled={!canEdit}>
+                    <option value="">— Select domain —</option>
+                    {GOAL_DOMAIN_SUGGESTIONS.map((d) => <option key={d} value={d}>{d}</option>)}
+                  </Select>
                 </Field>
                 <Field label="Target date">
                   <DatePicker value={g.target_date ?? ""}
@@ -207,7 +213,7 @@ export function Step4GoalsInterventions({
           );
         })}
 
-        {goals.length > 0 && canEdit && (
+        {!goalsNa && goals.length > 0 && canEdit && (
           <div className="flex items-center gap-3">
             <button type="button" onClick={addGoal}
               className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:text-primary/80">

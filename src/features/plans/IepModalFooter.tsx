@@ -11,6 +11,10 @@
  *   simple_review:          Finalize IEP (last step, staff, canEdit)
  *   admin_approval_required: Approve (step ≥5, admin, submitted/in_review)
  *                            Submit For Review (last step, staff, canEdit, not submitted)
+ *
+ * Draft handoff step (step 6, status=draft):
+ *   Footer collapses to Back + Close only.
+ *   All workflow decisions live in the in-content "Initial Draft Ready" card.
  */
 
 import { ChevronLeft, ChevronRight, CheckCircle2, Send, GitBranch, Loader2 } from "lucide-react";
@@ -19,7 +23,7 @@ import { ModalCancelButton } from "@/components/ui/modal";
 import type { WizardStep } from "./constants";
 import type { PlanStatus } from "./types";
 
-const LAST_STEP: WizardStep = 8;
+const LAST_STEP: WizardStep = 10;
 
 export interface IepModalFooterProps {
   activeStep: WizardStep;
@@ -40,6 +44,9 @@ export interface IepModalFooterProps {
   canCreateRevision?: boolean;
   creating?: boolean;
   onCreateRevision?: () => void;
+  // Draft handoff flag (step 6 — suppresses Next and all workflow buttons;
+  // all decisions move to the in-content "Initial Draft Ready" card)
+  showDraftHandoff?: boolean;
 }
 
 export function IepModalFooter({
@@ -47,6 +54,7 @@ export function IepModalFooter({
   isSimpleReview, status, isStaff, isAdmin, canEdit, saving,
   onFinalize, onApprove, onSubmitForReview,
   isReadOnly = false, canCreateRevision = false, creating = false, onCreateRevision,
+  showDraftHandoff = false,
 }: IepModalFooterProps) {
   return (
     <div className="flex items-center justify-between gap-2 pt-4 border-t border-border -mx-6 px-6">
@@ -61,7 +69,9 @@ export function IepModalFooter({
       <div className="flex gap-2 items-center">
         <ModalCancelButton label="Close" size="sm" />
 
-        {isReadOnly ? (
+        {/* Draft handoff step: footer collapses to Back + Close only.
+            All workflow decisions live in the in-content card. */}
+        {!showDraftHandoff && (isReadOnly ? (
           /* Read-only mode (finalized / approved) — only show Create Revision */
           canCreateRevision && (
             <Button type="button" onClick={onCreateRevision} disabled={creating}>
@@ -88,13 +98,13 @@ export function IepModalFooter({
             )}
             {activeStep === LAST_STEP && isStaff && canEdit && status !== "submitted" && (
               <Button type="button" onClick={onSubmitForReview} disabled={saving}>
-                <Send className="w-4 h-4 mr-1.5" />Submit For Review
+                <Send className="w-4 h-4 mr-1.5" />Share for Team Input
               </Button>
             )}
           </>
-        )}
+        ))}
 
-        {activeStep < LAST_STEP && (
+        {activeStep < LAST_STEP && !showDraftHandoff && (
           <Button type="button" size="sm" onClick={onNext}>
             Next<ChevronRight className="w-4 h-4 ml-1" />
           </Button>

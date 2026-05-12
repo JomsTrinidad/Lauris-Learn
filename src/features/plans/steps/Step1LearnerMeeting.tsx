@@ -1,18 +1,16 @@
 "use client";
 
-import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
-import { ChevronDown, ChevronUp, Plus, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ChevronDown, ChevronUp, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { Button } from "@/components/ui/button";
 import { DatePicker } from "@/components/ui/datepicker";
-import { MEETING_PURPOSE_OPTIONS, DEFAULT_TEAM_ROLES, TEAM_FOOTNOTE } from "../constants";
-import type { IepTeamMember } from "../types";
-import { Field, BlockCard, EmptyHint, type StudentOption } from "./shared";
+import { Field } from "./shared";
+import type { StudentOption } from "./shared";
 
 export interface Step1Props {
-  // Student picker — value is controlled from parent (form state)
+  // Student picker
   students: StudentOption[];
   studentId: string;
   setStudentId: (v: string) => void;
@@ -34,22 +32,12 @@ export interface Step1Props {
   homeAddress: string; setHomeAddress: (v: string) => void;
   parentWorkplace: string; setParentWorkplace: (v: string) => void;
   parentNotes: string; setParentNotes: (v: string) => void;
-  // DepEd classification collapsible (persisted in parent to survive step navigation)
+  // DepEd classification collapsible
   step1LegendOpen: boolean;
   setStep1LegendOpen: (v: boolean) => void;
   region: string; setRegion: (v: string) => void;
   division: string; setDivision: (v: string) => void;
   district: string; setDistrict: (v: string) => void;
-  // Meeting
-  meetingDate: string; setMeetingDate: (v: string) => void;
-  lastIepDate: string; setLastIepDate: (v: string) => void;
-  meetingPurpose: string; setMeetingPurpose: (v: string) => void;
-  revisionDate: string; setRevisionDate: (v: string) => void;
-  iepReviewDate: string; setIepReviewDate: (v: string) => void;
-  // Team
-  teamMembers: IepTeamMember[];
-  setTeamMembers: Dispatch<SetStateAction<IepTeamMember[]>>;
-  addTeamMember: () => void;
   canEdit: boolean;
 }
 
@@ -64,19 +52,13 @@ export function Step1LearnerMeeting({
   parentWorkplace, setParentWorkplace, parentNotes, setParentNotes,
   step1LegendOpen, setStep1LegendOpen,
   region, setRegion, division, setDivision, district, setDistrict,
-  meetingDate, setMeetingDate, lastIepDate, setLastIepDate,
-  meetingPurpose, setMeetingPurpose, revisionDate, setRevisionDate,
-  iepReviewDate, setIepReviewDate,
-  teamMembers, setTeamMembers, addTeamMember,
   canEdit,
 }: Step1Props) {
 
-  // ── Student picker UI state (local — doesn't affect form/recovery) ─────────
   const [studentSearch, setStudentSearch] = useState("");
   const [dropOpen, setDropOpen] = useState(false);
   const dropRef = useRef<HTMLDivElement>(null);
 
-  // Sync display text with the selected student value from parent
   useEffect(() => {
     if (dropOpen) return;
     const found = students.find((s) => s.id === studentId);
@@ -84,7 +66,6 @@ export function Step1LearnerMeeting({
     else if (!studentId) setStudentSearch("");
   }, [studentId, students, dropOpen]);
 
-  // Close dropdown on outside click
   useEffect(() => {
     if (!dropOpen) return;
     const handler = (e: MouseEvent) => {
@@ -99,7 +80,7 @@ export function Step1LearnerMeeting({
   return (
     <div className="space-y-5">
 
-      {/* ── Panel 1: Student & Family ── */}
+      {/* ── Learner & Family ── */}
       <div className="rounded-xl border border-border/50 bg-muted/60 p-5 space-y-4">
         <div>
           <p className="text-sm font-semibold">Learner &amp; Family</p>
@@ -227,7 +208,7 @@ export function Step1LearnerMeeting({
           <button
             type="button"
             onClick={() => setStep1LegendOpen(!step1LegendOpen)}
-            className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+            className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground cursor-pointer transition-colors"
           >
             {step1LegendOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
             DepEd classification — region, division, district
@@ -246,95 +227,6 @@ export function Step1LearnerMeeting({
             </div>
           )}
         </div>
-      </div>
-
-      {/* ── Panel 2: Meeting Setup ── */}
-      <div className="rounded-xl border border-border/50 bg-muted/60 p-5 space-y-4">
-        <div>
-          <p className="text-sm font-semibold">Meeting Setup</p>
-          <p className="text-xs text-muted-foreground mt-0.5">Document the meeting purpose, dates, and follow-up schedule.</p>
-        </div>
-
-        <Field label="Purpose of Meeting">
-          <Select value={meetingPurpose} onChange={(e) => setMeetingPurpose(e.target.value)} disabled={!canEdit}>
-            <option value="">— Select —</option>
-            {MEETING_PURPOSE_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </Select>
-        </Field>
-        <div className="grid md:grid-cols-2 gap-3">
-          <Field label="Date of Meeting">
-            <DatePicker value={meetingDate} onChange={setMeetingDate} disabled={!canEdit} />
-          </Field>
-          {meetingPurpose !== "initial" && (
-            <Field label="Date of Last IEP">
-              <DatePicker value={lastIepDate} onChange={setLastIepDate} disabled={!canEdit} />
-            </Field>
-          )}
-        </div>
-        {meetingPurpose === "revision" && (
-          <Field label="Revision Date">
-            <DatePicker value={revisionDate} onChange={setRevisionDate} disabled={!canEdit} />
-          </Field>
-        )}
-        <div className="grid md:grid-cols-2 gap-3">
-          <Field label="IEP Review Date">
-            <DatePicker value={iepReviewDate} onChange={setIepReviewDate} disabled={!canEdit} />
-          </Field>
-        </div>
-
-      </div>
-
-      {/* ── Panel 3: IEP Team ── */}
-      <div className="rounded-xl border border-border/50 bg-muted/60 p-5 space-y-4">
-        <div>
-          <p className="text-sm font-semibold">IEP Team</p>
-          <p className="text-xs text-muted-foreground mt-0.5">{TEAM_FOOTNOTE}</p>
-        </div>
-
-        {teamMembers.length === 0 && <EmptyHint>No team members added yet.</EmptyHint>}
-        {teamMembers.map((m, idx) => (
-          <BlockCard key={m.id} index={idx}
-            onRemove={canEdit ? () => setTeamMembers((p) => p.filter((x) => x.id !== m.id)) : undefined}>
-            <div className="grid md:grid-cols-2 gap-3">
-              <Field label="Name">
-                <Input value={m.name}
-                  onChange={(e) => setTeamMembers((p) => p.map((x) => x.id === m.id ? { ...x, name: e.target.value } : x))}
-                  disabled={!canEdit} />
-              </Field>
-              <Field label="Role">
-                <Select
-                  value={m.role}
-                  onChange={(e) => setTeamMembers((p) => p.map((x) => x.id === m.id ? { ...x, role: e.target.value } : x))}
-                  disabled={!canEdit}
-                >
-                  <option value="">— Select role —</option>
-                  {DEFAULT_TEAM_ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
-                </Select>
-              </Field>
-            </div>
-            <label className="inline-flex items-center gap-2 text-xs">
-              <input type="checkbox" checked={m.requires_ack} disabled={!canEdit}
-                onChange={(e) => setTeamMembers((p) => p.map((x) => x.id === m.id ? { ...x, requires_ack: e.target.checked } : x))} />
-              Requires acknowledgement
-            </label>
-            {m.requires_ack && (
-              <Field label="Acknowledged At">
-                <DatePicker
-                  value={m.acknowledged_at ?? ""}
-                  onChange={(v) => setTeamMembers((p) => p.map((x) => x.id === m.id ? { ...x, acknowledged_at: v || null } : x))}
-                  disabled={!canEdit}
-                />
-              </Field>
-            )}
-          </BlockCard>
-        ))}
-        {canEdit && (
-          <Button type="button" variant="outline" size="sm" onClick={addTeamMember}>
-            <Plus className="w-4 h-4 mr-1" /> Add team member
-          </Button>
-        )}
       </div>
 
     </div>

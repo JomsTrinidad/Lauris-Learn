@@ -14,29 +14,49 @@ const STEP_HELP: Record<WizardStep, StepHelp> = {
   1: {
     whatBelongs: [
       "Plan title and the learner's name, LRN, date of birth, sex, grade, religion, and mother tongue",
-      "Caregiver name, contact number, email, address, and any notes from conversation",
-      "Meeting purpose (Initial, Annual, Triennial, Revision, or Exit), date of meeting, and IEP review date",
-      "IEP team members with their roles; mark who requires formal acknowledgement",
+      "Caregiver name, contact number, email, home address, workplace, and any notes from conversation",
       "DepEd classification — region, schools division, and district (expandable section at the bottom)",
     ],
     whoContributes: [
-      { role: "School Admin / SPED Coordinator", contribution: "Confirms meeting purpose, dates, and school classification details" },
-      { role: "SPED Teacher", contribution: "Verifies learner details and leads team composition" },
-      { role: "Parent / Caregiver", contribution: "Provides contact and workplace info; participates as a required team member" },
+      { role: "School Admin / SPED Coordinator", contribution: "Verifies learner details and school classification info" },
+      { role: "SPED Teacher", contribution: "Confirms learner profile before the meeting" },
+      { role: "Parent / Caregiver", contribution: "Provides contact, address, and workplace details" },
+    ],
+    examples: [
+      "LRN: 100200300400 · Grade / Section: Grade 3 — Sampaguita · Mother Tongue: Filipino",
+      "Caregiver: Maria Santos · +63 912 345 6789 · maria@example.com",
+    ],
+    avoid: [
+      "Leaving the learner blank — all plan data is scoped to a specific learner",
+      "Forgetting the DepEd classification (expandable at the bottom) — required for school submissions",
+    ],
+  },
+
+  2: {
+    whatBelongs: [
+      "Meeting purpose (Initial, Annual, Triennial, Revision, or Exit) and date of meeting",
+      "Physical location of the meeting and online meeting link (if applicable)",
+      "Last IEP date, revision date, and scheduled IEP review date",
+      "IEP team members with their roles; check 'Confirm participation' once they have joined",
+    ],
+    whoContributes: [
+      { role: "School Admin / SPED Coordinator", contribution: "Sets meeting purpose, dates, and location" },
+      { role: "SPED Teacher", contribution: "Leads team composition and confirms attendance" },
+      { role: "Parent / Caregiver", contribution: "Participates as a required IEP team member" },
     ],
     examples: [
       "Meeting Purpose: Annual IEP — reviewing progress toward last year's goals",
+      "Location: SPED Resource Room, BK Main Building",
       "Team: SPED Teacher · Parent/Guardian · Classroom Teacher · Speech-Language Therapist",
     ],
     avoid: [
       "Leaving meeting date blank — it becomes part of the official IEP date record",
       "Omitting the IEP review date — this determines when the plan is due for re-evaluation",
       "Skipping the parent/guardian team member — DepEd Order No. 44 requires their participation",
-      "Forgetting the DepEd classification (expandable at the bottom) — required for school submissions",
     ],
   },
 
-  2: {
+  3: {
     whatBelongs: [
       "Reported Difficulties — check all that apply: Seeing, Hearing, Communicating, Moving, Concentrating, Remembering",
       "Medical or diagnosis information if provided by the parent or a specialist",
@@ -60,12 +80,12 @@ const STEP_HELP: Record<WizardStep, StepHelp> = {
     avoid: [
       "Copying assessment reports word-for-word — translate clinical findings into educational terms",
       "Documenting only deficits — strengths are equally important and guide goal-setting",
-      "Skipping the Impact on Curriculum field — this justifies the goals you will write in Step 4",
+      "Skipping the Impact on Curriculum field — this justifies the goals you will write in Step 5",
     ],
     note: "Use the Evidence Assistant to draft evaluation summaries, strengths, and needs from existing progress reports or uploaded files. Starter Ideas panels on each field offer quick suggested phrases.",
   },
 
-  3: {
+  4: {
     whatBelongs: [
       "Assistive Technology & Devices — each item links a difficulty area to a specific device or tool used consistently",
       "Learning Supports entries — each entry covers: the difficulty area, what makes it harder (barriers), what helps (facilitators), and classroom accommodations",
@@ -86,10 +106,10 @@ const STEP_HELP: Record<WizardStep, StepHelp> = {
       "Vague supports — write \"provide written step-by-step instructions\" not \"give extra help\"",
       "Omitting devices used every day — all consistent tools should be listed",
     ],
-    note: "Use the Suggest Supports button to draft barrier, facilitator, and accommodation entries based on the needs documented in Step 2. Expand Support Planning Tips inside the panel for a quick reference list of common barriers and facilitators.",
+    note: "Use the Suggest Supports button to draft barrier, facilitator, and accommodation entries based on the needs documented in Step 3. Expand Support Planning Tips inside the panel for a quick reference list of common barriers and facilitators.",
   },
 
-  4: {
+  5: {
     whatBelongs: [
       "Annual Goals — each needs: a measurable description, domain/area, target date, short-term objectives (milestones), frequency, and the responsible person",
       "Advanced Tracking per goal (toggle to expand): baseline, how progress is measured, success criteria, and evaluation notes",
@@ -113,12 +133,32 @@ const STEP_HELP: Record<WizardStep, StepHelp> = {
     note: "Link each Support Strategy to an Annual Goal using the goal dropdown inside each strategy card. This creates goal-coverage tracking so the team can see which goals have strategies and which don't.",
   },
 
-  5: {
+  6: {
     whatBelongs: [
-      "Key discussion points and decisions from the IEP meeting",
-      "Services recommended — therapy, pull-out support, additional assessments",
-      "Placement decisions and any adjustments to the learning environment",
-      "Referrals to specialists and next steps the team agreed to pursue",
+      "Anything useful you want to capture before or during drafting — questions, reminders, observations, possible supports",
+      "Concerns to raise with the team, things to verify before the meeting, or informal notes from parent conversations",
+      "Early planning thoughts that aren't ready to go into a structured field yet",
+    ],
+    whoContributes: [
+      { role: "SPED Teacher / Drafter", contribution: "Primary user — uses this as a private planning scratch space" },
+      { role: "Anyone editing the draft", contribution: "Can add notes they want the team to discuss" },
+    ],
+    examples: [
+      "Remember to ask OT about fine motor baseline before the meeting.",
+      "Parent mentioned reading difficulty at home — check if this affects the literacy goal.",
+      "Not sure if 3× weekly is realistic — confirm with admin before finalizing frequency.",
+    ],
+    avoid: [
+      "Treating this as a permanent record — these notes are saved but do not appear on the printed IEP",
+      "Duplicating content from Goals or Supports — if something is decided, put it in the right section",
+    ],
+    note: "Draft Notes do not appear in the printed IEP or shared versions of the plan. Use them freely as a thinking space — cross things out, leave questions, think out loud.",
+  },
+
+  7: {
+    whatBelongs: [
+      "Team Recommendations — individual proposals for services, placements, or referrals with their status (Proposed, Under Discussion, Accepted, Not Proceeding, Deferred)",
+      "Discussion Notes — free-form notes from the IEP meeting: context, observations, or anything not captured in structured recommendations",
     ],
     whoContributes: [
       { role: "SPED Teacher", contribution: "Summarizes the team's discussion and proposed actions" },
@@ -126,17 +166,18 @@ const STEP_HELP: Record<WizardStep, StepHelp> = {
       { role: "Therapists / Specialists", contribution: "Provide domain-specific service and referral recommendations" },
     ],
     examples: [
-      "Continue speech-language therapy twice weekly for the remainder of the school year.",
-      "Refer for occupational therapy assessment to address emerging fine-motor difficulties.",
-      "Maintain current inclusive placement with pull-out literacy support three times per week.",
+      "Continue speech-language therapy twice weekly for the remainder of the school year. [Accepted]",
+      "Refer for occupational therapy assessment to address emerging fine-motor difficulties. [Proposed]",
+      "Maintain current inclusive placement with pull-out literacy support three times per week. [Accepted]",
     ],
     avoid: [
-      "Listing goals here — goals belong in Step 4; this section captures services and team decisions",
+      "Listing goals here — goals belong in Step 5; this section captures services and team decisions",
       "Vague statements — \"provide more support\" is not a recommendation; be specific about who, what, and how often",
     ],
+    note: "This section is typically completed collaboratively — during or after the IEP team meeting, or before final approval. It is not expected to be filled in during initial drafting.",
   },
 
-  6: {
+  8: {
     whatBelongs: [
       "Progress Reflection entries — each entry records: date, which goal it relates to (optional), what was observed, who observed it, and a suggested next step",
       "Entries build an ongoing record of the learner's growth across the plan period — add them throughout the year, not just at the end",
@@ -158,29 +199,32 @@ const STEP_HELP: Record<WizardStep, StepHelp> = {
     ],
   },
 
-  7: {
+  9: {
     whatBelongs: [
-      "Agreements — commitments made by both the school and the family: who will do what and by when",
-      "Home Support Notes — strategies or routines the family is implementing at home",
-      "Parent Acknowledgement — confirm that the parent or guardian has reviewed and agreed to this plan",
+      "Finalized Agreements — commitments the team reached: responsibilities, timelines, and follow-through actions",
+      "Action Items — concrete next steps with responsible parties and expected dates",
+      "Unresolved Concerns — topics the team flagged but could not fully resolve; carry forward to next meeting",
+      "Next Review Commitments — what the team commits to bring to the next IEP review",
+      "Home Support Notes and Parent Consent Notes — strategies the family is implementing and summary of consent discussions",
+      "Parent Acknowledgement — confirm that the parent or guardian has reviewed and agreed to this plan (available once the plan is shared for review)",
     ],
     whoContributes: [
-      { role: "SPED Teacher", contribution: "Documents the team's commitments from the IEP meeting" },
+      { role: "SPED Teacher", contribution: "Documents the team's commitments and action items from the meeting" },
       { role: "Parent / Caregiver", contribution: "Confirms home support plans; acknowledges receiving the plan" },
       { role: "School Admin", contribution: "May add school-side commitments (e.g. scheduling, report delivery)" },
     ],
     examples: [
-      "Agreement: School will send weekly progress updates to the family via the class messenger app.",
-      "Agreement: Parent will implement the home reading programme three times per week.",
+      "Agreement: School will provide weekly progress reports to the family.",
+      "Action Item: SPED teacher will draft revised goal targets by March 15.",
       "Home support: Visual schedule displayed at home using the same routine as at school.",
     ],
     avoid: [
-      "Mixing agreements with recommendations — recommendations (Step 5) are what the team proposes; agreements are what everyone has committed to",
+      "Mixing agreements with recommendations — recommendations (Step 7) are what the team proposes; agreements are what everyone has committed to",
       "Marking parent acknowledgement before the parent has actually reviewed the plan — this is a meaningful confirmation",
     ],
   },
 
-  8: {
+  10: {
     whatBelongs: [
       "Supporting documents already uploaded to Document Coordination for this learner",
       "Progress Reports and previous IEPs — document types: IEP, Therapy Progress",
@@ -206,14 +250,16 @@ const STEP_HELP: Record<WizardStep, StepHelp> = {
 };
 
 const STEP_LABELS: Record<WizardStep, string> = {
-  1: "Learner & Meeting",
-  2: "Needs & Strengths",
-  3: "Supports & Accommodations",
-  4: "Goals & Interventions",
-  5: "Discussion & Recommendations",
-  6: "Progress & Review",
-  7: "Agreements",
-  8: "Attachments",
+  1:  "Learner & Family",
+  2:  "Meeting Setup",
+  3:  "Needs & Strengths",
+  4:  "Supports & Accommodations",
+  5:  "Goals & Interventions",
+  6:  "Draft Notes",
+  7:  "Team Review",
+  8:  "Progress & Review",
+  9:  "Agreements",
+  10: "Attachments",
 };
 
 export function IepStepHelp({ step, onClose }: { step: WizardStep; onClose: () => void }) {

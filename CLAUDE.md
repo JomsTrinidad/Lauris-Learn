@@ -423,6 +423,64 @@ Built so far: Phases A (schema), B (RLS + RPC), C (API route + types), D1–D16.
 
 ---
 
+## IEP Evidence Assistant AI Provider
+
+- **Default provider:** OpenAI. No Anthropic API key is required.
+- **API billing:** OpenAI API usage is billed separately from ChatGPT subscriptions — requires a paid API account at `platform.openai.com`.
+- **Server-side only:** All extraction and summarization calls are made inside Next.js API routes. `OPENAI_API_KEY` is **never** exposed to the browser.
+- **Suggestions are drafts only:** all AI output is framed as educational planning support and must be reviewed by a qualified educator before applying. The AI does not make medical or legal determinations.
+
+### Required env vars
+
+```
+OPENAI_API_KEY=sk-...
+IEP_EXTRACTION_PROVIDER=openai
+IEP_AI_PROVIDER=openai
+REPORT_OCR_ENABLED=true
+REPORT_AI_SUMMARY_ENABLED=true
+```
+
+### Optional model overrides (defaults shown)
+
+```
+OPENAI_IEP_IMAGE_MODEL=gpt-4o-mini      # image OCR (JPEG/PNG/WebP)
+OPENAI_IEP_PDF_MODEL=gpt-4.1-mini       # PDF extraction via Responses API
+OPENAI_IEP_SUMMARY_MODEL=gpt-4.1-mini   # IEP suggestion generation
+```
+
+### Backward compatibility
+
+- `IEP_EXTRACTION_PROVIDER=openai_vision` → treated as `openai`
+- `IEP_AI_PROVIDER=openai_gpt4` → treated as `openai`
+
+### Guardrails (preserved)
+
+- File size: 10 MB default, 25 MB hard limit
+- PDF page count: 10 pages default, 50 hard limit (only enforced when page count is detectable)
+- AI summaries: 3/plan/day, 25/org/day (rate-limited in `POST /api/iep-assistant/summarize`)
+- Extracted text is truncated before sending to AI (`truncateForAi`)
+- `REPORT_OCR_ENABLED=false` disables extraction; `REPORT_AI_SUMMARY_ENABLED=false` disables summarization
+
+### Architecture
+
+- Image extraction → `POST /api/iep-assistant/extract-file` → `extractWithOpenAI()` → Responses API (`input_image`)
+- PDF extraction → same route → `extractWithOpenAI()` → Responses API (`input_file` with `file_url`)
+- Response text parsed via `extractOpenAIResponseText()` which checks both `data.output_text` (shortcut) and `data.output[].content[].text` (full path)
+- Summarization → `POST /api/iep-assistant/summarize` → OpenAI Chat Completions with Structured Outputs (`response_format: json_schema`, `strict: true`) — all 7 IEP summary fields guaranteed present
+- Signed URLs (1-hour expiry minimum) are fetched server-side; the browser never receives storage paths or signed URLs
+
+### Manual test checklist
+
+1. **Missing API key** — remove `OPENAI_API_KEY` from `.env.local`. Upload any file → Evidence Assistant shows "Extraction Provider Not Configured" card, no crash, `status=not_configured` in `iep_report_extractions`.
+2. **Image extraction** — restore key. Upload a JPEG/PNG/WebP in Upload Image tab → extracted text preview appears → `iep_report_extractions` row with `status=done` and non-null `extracted_text`.
+3. **PDF extraction** — upload a PDF (scanned or native-text) → extraction completes → no "convert to PNG" error message → `iep_report_extractions` row with `status=done`.
+4. **Summary generation** — after either extraction succeeds, click "Next: Generate Suggestions" → `iep_report_summaries` row created → `iep_ai_suggestions` rows created (check all 7 fields populated, or empty string for sections not found in the report).
+5. **Apply / edit / reject** — in the review step, Apply a suggestion → IEP draft field updated in the modal → click Save Draft → verify in DB. Edit and Apply → `was_edited=true`. Reject → suggestion moves to applied state without populating a field.
+6. **No Anthropic key required** — confirm `ANTHROPIC_API_KEY` is absent from `.env.local` and the full flow works end-to-end.
+7. **Server-side error log** — temporarily set `OPENAI_API_KEY=sk-invalid`. Upload a file → check Next.js server stdout for `[iep-extraction] OpenAI API error` with `httpStatus: 401`. Confirm no API key appears in the log.
+
+---
+
 ## Schema Additions (Migrations 016–017)
 
 ### Migration 016 — Parent Features

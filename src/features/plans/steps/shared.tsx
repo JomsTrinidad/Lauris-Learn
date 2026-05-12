@@ -100,6 +100,27 @@ export function EmptyHint({ children }: { children: ReactNode }) {
   return <div className="text-xs text-muted-foreground italic">{children}</div>;
 }
 
+/** Inline "Not applicable" checkbox shown at the top-right of a section panel. */
+export function NaToggle({ checked, onChange, label = "Not applicable", disabled }: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  label?: string;
+  disabled?: boolean;
+}) {
+  return (
+    <label className="flex items-center gap-1.5 cursor-pointer select-none">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        disabled={disabled}
+        className="h-3.5 w-3.5 rounded"
+      />
+      <span className="text-[11px] text-muted-foreground font-medium">{label}</span>
+    </label>
+  );
+}
+
 // ── Sub-row update helpers ─────────────────────────────────────────────────
 
 export function updateGoal(

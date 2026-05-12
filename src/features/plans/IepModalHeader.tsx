@@ -22,7 +22,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Save, Loader2, AlertCircle, MoreHorizontal,
-  Printer, Archive, X, ChevronRight,
+  Printer, Archive, Trash2, X, ChevronRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -52,6 +52,8 @@ export interface IepModalHeaderProps {
   isAdmin: boolean;
   isArchived: boolean;
   onArchive: () => void;
+  canDiscardDraft: boolean;
+  onDiscardDraft: () => void;
   // Save-draft prompt (shown when user tries AI assistant on unsaved plan)
   showSaveDraftPrompt: boolean;
   onDismissSaveDraftPrompt: () => void;
@@ -66,7 +68,7 @@ export function IepModalHeader({
   showRecoveryPrompt, recoveryTimestamp, onRestoreRecovery, onDiscardRecovery,
   status, studentName, title, updatedAt,
   saving, canEdit, onSave,
-  onPrint, canPrint, isAdmin, isArchived, onArchive,
+  onPrint, canPrint, isAdmin, isArchived, onArchive, canDiscardDraft, onDiscardDraft,
   showSaveDraftPrompt, onDismissSaveDraftPrompt,
   activeStep, onStepChange,
   isReadOnly = false,
@@ -142,11 +144,12 @@ export function IepModalHeader({
             onClick={onSave}
             disabled={saving || !canEdit}
             className="shrink-0"
+            title="Save your progress and continue editing later"
           >
             {saving
               ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
               : <Save className="w-3.5 h-3.5 mr-1.5" />}
-            Save
+            {status === "draft" ? "Save Draft" : "Save"}
           </Button>
         )}
 
@@ -181,6 +184,16 @@ export function IepModalHeader({
                 >
                   <Archive className="w-3.5 h-3.5" />
                   Archive plan
+                </button>
+              )}
+              {canDiscardDraft && (
+                <button
+                  type="button"
+                  onClick={() => { onDiscardDraft(); setShowMoreMenu(false); }}
+                  className="flex items-center gap-2.5 w-full px-3 py-2 text-sm hover:bg-muted text-left text-destructive"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Discard Draft
                 </button>
               )}
             </div>

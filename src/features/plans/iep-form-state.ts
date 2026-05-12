@@ -10,7 +10,7 @@
  */
 
 import type { GoalRow, InterventionRow, ProgressRow } from "./steps/shared";
-import type { IepTeamMember, IepAssistiveDevice, IepBarrier, PlanStatus } from "./types";
+import type { IepTeamMember, IepAssistiveDevice, IepBarrier, RecommendationItem, PlanStatus } from "./types";
 
 export interface IepFormState {
   // Head
@@ -67,8 +67,16 @@ export interface IepFormState {
   meetingPurpose: string;
   revisionDate: string;
   iepReviewDate: string;
+  meetingLocation: string;
+  meetingLink: string;
+  meetingLinkPending: boolean;
   recommendations: string;
+  recommendationItems: RecommendationItem[];
   agreements: string;
+  parentConsentNotes: string;
+  unresolvedConcerns: string;
+  actionItems: string;
+  nextReviewCommitments: string;
   // Team + devices + barriers
   teamMembers: IepTeamMember[];
   assistiveDevices: IepAssistiveDevice[];
@@ -78,6 +86,18 @@ export interface IepFormState {
   preparedDate: string;
   checkedReviewedBy: string;
   checkedReviewedDate: string;
+  // Planning-stage draft notes (teacher scratch space)
+  draftNotes: string;
+  // "Not Applicable" toggles (stored in iep_details JSONB — no migration needed)
+  meetingTbs: boolean;
+  supportsNa: boolean;
+  goalsNa: boolean;
+  recommendationsNa: boolean;
+  discussionNa: boolean;
+  progressNa: boolean;
+  agreementsNa: boolean;
+  concernsNa: boolean;
+  nextReviewNa: boolean;
   // Sub-row collections
   goals: GoalRow[];
   interventions: InterventionRow[];
@@ -102,9 +122,15 @@ export function emptyFormState(): IepFormState {
     diffOther: false, diffOtherDesc: "", hasMedical: false, medicalDiagnosis: "",
     evaluationResults: "", presentStrengths: "", presentNeeds: "", disabilityImpact: "",
     meetingDate: "", lastIepDate: "", meetingPurpose: "", revisionDate: "",
-    iepReviewDate: "", recommendations: "", agreements: "",
+    iepReviewDate: "", meetingLocation: "", meetingLink: "", meetingLinkPending: false,
+    recommendations: "", recommendationItems: [],
+    agreements: "", parentConsentNotes: "", unresolvedConcerns: "", actionItems: "", nextReviewCommitments: "",
     teamMembers: [], assistiveDevices: [], barriers: [],
     preparedBy: "", preparedDate: "", checkedReviewedBy: "", checkedReviewedDate: "",
+    draftNotes: "",
+    meetingTbs: false, supportsNa: false, goalsNa: false,
+    recommendationsNa: false, discussionNa: false, progressNa: false,
+    agreementsNa: false, concernsNa: false, nextReviewNa: false,
     goals: [], interventions: [], progress: [], attachmentIds: [],
   };
 }

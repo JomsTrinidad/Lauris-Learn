@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { BARRIERS_LEGEND } from "../constants";
 import type { IepAssistiveDevice, IepBarrier } from "../types";
-import { Field, BlockCard } from "./shared";
+import { Field, BlockCard, NaToggle } from "./shared";
 import { StarterIdeasPanel } from "@/features/plans/authoring-assist/StarterIdeasPanel";
 import {
   BARRIER_DIFFICULTY_STARTERS,
@@ -30,6 +30,7 @@ export interface Step3Props {
   // Barriers tips collapsible (distinct from Step 1's DepEd legend)
   step3BarriersLegendOpen: boolean;
   setStep3BarriersLegendOpen: (v: boolean) => void;
+  supportsNa: boolean; setSupportsNa: (v: boolean) => void;
   // AI assistant
   isStaff: boolean;
   isEditing: boolean;
@@ -42,23 +43,39 @@ export function Step3Supports({
   assistiveDevices, setAssistiveDevices, addDevice,
   barriers, setBarriers, addBarrier,
   step3BarriersLegendOpen, setStep3BarriersLegendOpen,
+  supportsNa, setSupportsNa,
   isStaff, isEditing, saving, handleAssistantClick, canEdit,
 }: Step3Props) {
   return (
     <div className="space-y-5">
 
+      {/* ── N/A banner ── */}
+      {supportsNa && (
+        <div className="rounded-xl border border-border/40 bg-muted/40 px-4 py-3 flex items-center justify-between gap-3">
+          <p className="text-xs text-muted-foreground">Marked as not applicable — no assistive devices or barriers to document for this review.</p>
+          {canEdit && (
+            <NaToggle checked={supportsNa} onChange={setSupportsNa} label="Not applicable" disabled={!canEdit} />
+          )}
+        </div>
+      )}
+
       {/* ── Panel A: Assistive Technology & Devices ── */}
-      <div className="rounded-xl border border-border/50 bg-muted/60 p-5 space-y-4">
+      <div className={`rounded-xl border border-border/50 bg-muted/60 p-5 space-y-4${supportsNa ? " opacity-40 pointer-events-none" : ""}`}>
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="text-sm font-semibold">Assistive Technology &amp; Devices</p>
             <p className="text-xs text-muted-foreground mt-0.5">Tools, equipment, and technology that support the learner&apos;s participation.</p>
           </div>
-          {canEdit && assistiveDevices.length > 0 && (
-            <Button type="button" variant="outline" size="sm" onClick={addDevice} className="shrink-0">
-              <Plus className="w-3.5 h-3.5 mr-1" />Add device
-            </Button>
-          )}
+          <div className="flex items-center gap-3 shrink-0">
+            {!supportsNa && canEdit && (
+              <NaToggle checked={supportsNa} onChange={setSupportsNa} label="Not applicable" disabled={!canEdit} />
+            )}
+            {canEdit && assistiveDevices.length > 0 && (
+              <Button type="button" variant="outline" size="sm" onClick={addDevice}>
+                <Plus className="w-3.5 h-3.5 mr-1" />Add device
+              </Button>
+            )}
+          </div>
         </div>
 
         {assistiveDevices.length === 0 ? (
@@ -98,7 +115,7 @@ export function Step3Supports({
       </div>
 
       {/* ── Panel B: Learning Supports & Accommodations ── */}
-      <div className="rounded-xl border border-border/50 bg-muted/60 p-5 space-y-4">
+      <div className={`rounded-xl border border-border/50 bg-muted/60 p-5 space-y-4${supportsNa ? " opacity-40 pointer-events-none" : ""}`}>
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="text-sm font-semibold">Learning Supports &amp; Accommodations</p>

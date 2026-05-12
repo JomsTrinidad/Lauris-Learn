@@ -7,7 +7,7 @@ import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { DatePicker } from "@/components/ui/datepicker";
 import type { PlanStatus } from "../types";
-import { Field, BlockCard, StaffPicker, updateProgress, type GoalRow, type ProgressRow } from "./shared";
+import { Field, BlockCard, NaToggle, StaffPicker, updateProgress, type GoalRow, type ProgressRow } from "./shared";
 
 export interface Step5Props {
   // Progress entries
@@ -25,6 +25,7 @@ export interface Step5Props {
   reviewDate: string; setReviewDate: (v: string) => void;
   reviewedByTeacherId: string; setReviewedByTeacherId: (v: string) => void;
   reviewedByAdminId: string; setReviewedByAdminId: (v: string) => void;
+  progressNa: boolean; setProgressNa: (v: boolean) => void;
   // Status display
   status: PlanStatus;
   schoolId: string;
@@ -33,6 +34,7 @@ export interface Step5Props {
 
 export function Step5ProgressReview({
   progress, setProgress, addProgress, goals,
+  progressNa, setProgressNa,
   showReviewDetails, setShowReviewDetails,
   preparedBy, setPreparedBy, preparedDate, setPreparedDate,
   checkedReviewedBy, setCheckedReviewedBy, checkedReviewedDate, setCheckedReviewedDate,
@@ -50,16 +52,23 @@ export function Step5ProgressReview({
             <h3 className="text-sm font-semibold text-foreground">Learner Progress Reflection</h3>
             <p className="text-xs text-muted-foreground mt-0.5">Document observations, instructional progress, and next steps over time.</p>
           </div>
-          {canEdit && progress.length > 0 && (
-            <button type="button" onClick={addProgress}
-              className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:text-primary/80 shrink-0">
-              <Plus className="w-3.5 h-3.5" />
-              Add entry
-            </button>
-          )}
+          <div className="flex items-center gap-3 shrink-0">
+            {canEdit && <NaToggle checked={progressNa} onChange={setProgressNa} label="Not applicable" disabled={!canEdit} />}
+            {canEdit && !progressNa && progress.length > 0 && (
+              <button type="button" onClick={addProgress}
+                className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:text-primary/80">
+                <Plus className="w-3.5 h-3.5" />
+                Add entry
+              </button>
+            )}
+          </div>
         </div>
 
-        {progress.length === 0 && (
+        {progressNa && (
+          <p className="text-xs text-muted-foreground italic">Progress entries marked as not applicable for this review cycle.</p>
+        )}
+
+        {!progressNa && progress.length === 0 && (
           <div className="rounded-lg border border-dashed border-border bg-card/60 p-5 text-center space-y-3">
             <p className="text-xs font-medium text-foreground">No observations recorded yet</p>
             <p className="text-xs text-muted-foreground max-w-sm mx-auto">Add an entry whenever you observe meaningful progress, a challenge, or a change worth noting. Each entry becomes part of the learner&apos;s growth story.</p>
@@ -73,7 +82,7 @@ export function Step5ProgressReview({
           </div>
         )}
 
-        {progress.map((pr, idx) => (
+        {!progressNa && progress.map((pr, idx) => (
           <BlockCard key={pr.id} index={idx}
             onRemove={canEdit ? () => setProgress((p) => p.filter((x) => x.id !== pr.id)) : undefined}>
             <div className="flex flex-wrap items-end gap-3">

@@ -26,9 +26,12 @@ interface ModalProps {
    *  fixed distance from the top so the dialog doesn't jump when content
    *  height changes between steps/views (e.g. multi-step wizards). */
   align?: "center" | "top";
+  /** Optional ref forwarded to the scrollable container div so callers can
+   *  imperatively reset scroll position (e.g. on step change in a wizard). */
+  scrollRef?: React.RefObject<HTMLDivElement | null>;
 }
 
-export function Modal({ open, onClose, title, children, className, align = "center" }: ModalProps) {
+export function Modal({ open, onClose, title, children, className, align = "center", scrollRef }: ModalProps) {
   const [isDirty, setIsDirty] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const overlayRef = useRef<HTMLDivElement>(null);
@@ -109,6 +112,7 @@ export function Modal({ open, onClose, title, children, className, align = "cent
         onClick={(e) => { if (e.target === e.currentTarget && backdropMouseDown.current) tryClose(); }}
       >
         <div
+          ref={scrollRef}
           className={cn(
             "bg-card rounded-xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto overflow-x-hidden [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full",
             className

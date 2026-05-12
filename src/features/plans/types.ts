@@ -78,6 +78,15 @@ export interface IepBarrier {
   accommodations: string;
 }
 
+/** Structured recommendation item stored inside iep_details.recommendation_items[]. */
+export interface RecommendationItem {
+  id: string;
+  text: string;
+  category?: string;
+  proposed_by?: string;
+  status: "proposed" | "under_discussion" | "accepted" | "rejected" | "deferred";
+}
+
 /**
  * DepEd-specific IEP details stored as JSONB in student_plans.iep_details.
  *
@@ -146,8 +155,16 @@ export interface IepDetails {
   meeting_purpose?: string;
   revision_date?: string;
   iep_review_date?: string;
+  meeting_location?: string;
+  meeting_link?: string;
+  meeting_link_pending?: boolean;
   recommendations?: string;
+  recommendation_items?: RecommendationItem[];
   agreements?: string;
+  parent_consent_notes?: string;
+  unresolved_concerns?: string;
+  action_items?: string;
+  next_review_commitments?: string;
 
   // IEP Team Members (repeatable)
   team_members?: IepTeamMember[];
@@ -163,4 +180,18 @@ export interface IepDetails {
   prepared_date?: string;
   checked_reviewed_by?: string;
   checked_reviewed_date?: string;
+
+  // Planning-stage draft notes (teacher-private scratch space during drafting)
+  draft_notes?: string;
+
+  // "Not Applicable" toggles — stored in JSONB so no migration needed
+  meeting_tbs?: boolean;           // meeting date TBD (waives meeting_date requirement)
+  supports_na?: boolean;           // no assistive devices / barriers to report
+  goals_na?: boolean;              // goals not applicable for this review cycle
+  recommendations_na?: boolean;    // no structured recommendations to add
+  discussion_na?: boolean;         // no discussion notes to add
+  progress_na?: boolean;           // no progress entries for this cycle
+  agreements_na?: boolean;         // no written agreements reached
+  concerns_na?: boolean;           // no unresolved concerns to note
+  next_review_na?: boolean;        // no next-review commitments to record
 }

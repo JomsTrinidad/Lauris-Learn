@@ -102,6 +102,19 @@ export async function POST(req: NextRequest) {
     return errorJson("Plan not found or access denied", 403);
   }
 
+  // ─── Fetch user role (required for version insert RLS) ───────────────
+  const { data: profileRaw } = await serverClient
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  const userRole = (profileRaw as { role: string } | null)?.role;
+  if (!userRole || !["school_admin", "teacher"].includes(userRole)) {
+    return errorJson("Insufficient permissions to upload evidence", 403);
+  }
+  const uploaderKind = userRole as "school_admin" | "teacher";
+
   // ─── Upload file to child-documents bucket ───────────────────────────
   const adminClient = createAdminClient();
   const docId = crypto.randomUUID();
@@ -148,12 +161,14 @@ export async function POST(req: NextRequest) {
   const { error: verInsertErr } = await (serverClient.from("child_document_versions") as any).insert({
     id: versionId,
     document_id: docId,
+    school_id: planRow.school_id,
     version_number: 1,
     storage_path: storagePath,
     mime_type: mimeType,
-    file_size_bytes: file.size,
+    file_size: file.size,
     file_name: file.name,
-    uploaded_by: user.id,
+    uploaded_by_user_id: user.id,
+    uploaded_by_kind: uploaderKind,
     is_hidden: false,
   });
 
@@ -173,6 +188,9 @@ export async function POST(req: NextRequest) {
   }
 
   // ─── Get signed URL for extraction ───────────────────────────────────
+  // 1-hour expiry: OpenAI Responses API fetches the file_url server-side after the
+  // request is received, so the URL must remain valid long enough for that round-trip.
+  // Do not reduce below 3600 seconds.
   const { data: signedData, error: signErr } = await adminClient.storage
     .from("child-documents")
     .createSignedUrl(storagePath, 3600);

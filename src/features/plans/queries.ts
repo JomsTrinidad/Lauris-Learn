@@ -488,6 +488,23 @@ export async function setPlanStatus(
 }
 
 
+// ─── Discard Draft ────────────────────────────────────────────────────────────
+
+/**
+ * Hard-deletes a draft plan that has never been submitted, approved, or
+ * finalized. All sub-rows (goals, interventions, progress, attachments, and
+ * evidence assistant rows) cascade automatically via ON DELETE CASCADE.
+ *
+ * RLS enforces eligibility (migration 090):
+ *   - school_admin: FOR ALL policy (migration 070) allows any draft DELETE
+ *   - teacher:      only their own drafts with all timestamp guards satisfied
+ */
+export async function discardPlan(supabase: Client, planId: string): Promise<void> {
+  const { error } = await supabase.from("student_plans").delete().eq("id", planId);
+  if (error) throw error;
+}
+
+
 // ─── Create Revision ──────────────────────────────────────────────────────────
 
 /**

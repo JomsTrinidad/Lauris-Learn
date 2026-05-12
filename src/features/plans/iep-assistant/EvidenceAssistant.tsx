@@ -658,8 +658,9 @@ export function EvidenceAssistant({
                 Extraction Provider Not Configured
               </div>
               <p className="text-xs">
-                To automatically extract text, configure an extraction provider (e.g. set
-                IEP_EXTRACTION_PROVIDER=openai_vision). For images, this enables AI-based text reading.
+                To automatically extract text, configure OpenAI by setting{" "}
+                <code className="font-mono">OPENAI_API_KEY</code> and{" "}
+                <code className="font-mono">IEP_EXTRACTION_PROVIDER=openai</code>.
               </p>
             </div>
           )}
