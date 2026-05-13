@@ -2,7 +2,10 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Home, MessageSquare, User, CreditCard, LogOut, GraduationCap, TrendingUp, CalendarDays, FileText } from "lucide-react";
+import {
+  Home, MessageSquare, User, CreditCard, LogOut,
+  GraduationCap, TrendingUp, CalendarDays, FileText, MoreHorizontal,
+} from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { BrandingApplier } from "@/components/BrandingApplier";
 import { Spinner } from "@/components/ui/spinner";
@@ -19,15 +22,16 @@ interface ChildInfo {
   childProfileId: string | null;
 }
 
-const NAV = [
+// Primary bottom nav — max 4 items so More fits on 320px screens
+const NAV_PRIMARY = [
   { href: "/parent/dashboard", icon: Home,          label: "Home" },
-  { href: "/parent/student",   icon: User,          label: "Child" },
   { href: "/parent/updates",   icon: MessageSquare, label: "Updates" },
   { href: "/parent/events",    icon: CalendarDays,  label: "Events" },
   { href: "/parent/progress",  icon: TrendingUp,    label: "Progress" },
-  { href: "/parent/documents", icon: FileText,      label: "Documents" },
-  { href: "/parent/billing",   icon: CreditCard,    label: "Billing" },
-];
+] as const;
+
+// Routes that belong under "More"
+const MORE_ROUTES = ["/parent/student", "/parent/documents", "/parent/billing"];
 
 export default function ParentLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -42,10 +46,13 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
   const [branding, setBranding] = useState<Pick<BrandingConfig, "primaryColor" | "accentColor" | "textSizeScale" | "spacingScale">>({
     primaryColor: null, accentColor: null, textSizeScale: "default", spacingScale: "default",
   });
+  const [showMore, setShowMore] = useState(false);
   const mainRef = useRef<HTMLElement>(null);
 
+  // Scroll to top and close More sheet on route change
   useEffect(() => {
     mainRef.current?.scrollTo({ top: 0 });
+    setShowMore(false);
   }, [pathname]);
 
   useEffect(() => {
@@ -57,9 +64,6 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { router.replace("/login"); return; }
 
-    // Find students linked to this user's email via guardians.
-    // child_profile_id is fetched to support cross-app service presence
-    // (therapy, medical) via the parent-safe RPC in migration 091.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: guardianRows } = await (supabase as any)
       .from("guardians")
@@ -85,7 +89,6 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
       if (!s) return [];
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const enrollments = (s.enrollments ?? []) as any[];
-      // Prefer the enrollment whose school year is active, then fall back to any enrolled record
       const activeEnrollment =
         enrollments.find((e: any) => e.status === "enrolled" && e.classes?.school_years?.status === "active") ??
         enrollments.find((e: any) => e.status === "enrolled") ??
@@ -105,7 +108,6 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
     setChildren_(kids);
     if (kids.length > 0 && !selectedChildId) setSelectedChildId(kids[0].id);
 
-    // Get school name from first student
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const firstStudent = (guardianRows as any[])[0]?.students;
     if (firstStudent?.school_id) {
@@ -141,20 +143,26 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
   }
 
   const selectedChild = children_.find((c) => c.id === selectedChildId) ?? children_[0] ?? null;
+  const moreActive = MORE_ROUTES.some((r) => pathname.startsWith(r));
 
   return (
-    <div className="h-screen bg-background flex flex-col overflow-hidden">
+    <div className="h-dvh flex flex-col bg-background overflow-hidden">
       <BrandingApplier branding={branding} />
-      {/* Top header */}
-      <header className="border-b border-border bg-card px-4 py-3 flex items-center justify-between flex-shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center">
+
+      {/* ── Top header ──────────────────────────────────────────────────────── */}
+      <header className="flex-shrink-0 border-b border-border bg-card px-4 py-3 flex items-center justify-between z-30">
+        {/* Child info — tapping opens child profile */}
+        <Link
+          href="/parent/student"
+          className="flex items-center gap-3 hover:opacity-75 transition-opacity min-w-0"
+        >
+          <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
             <GraduationCap className="w-4 h-4 text-primary-foreground" />
           </div>
-          <div>
-            <p className="text-sm font-semibold leading-none">{schoolName || "School Portal"}</p>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold leading-none truncate">{schoolName || "School Portal"}</p>
             {selectedChild && (
-              <p className="text-xs text-muted-foreground mt-0.5">
+              <p className="text-xs text-muted-foreground mt-0.5 truncate">
                 {selectedChild.firstName} {selectedChild.lastName}
                 {selectedChild.studentCode && (
                   <span className="font-mono ml-1">· {selectedChild.studentCode}</span>
@@ -162,34 +170,28 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
               </p>
             )}
           </div>
-        </div>
+        </Link>
 
-        <div className="flex items-center gap-3">
-          {/* Child switcher for multi-child families */}
-          {children_.length > 1 && (
-            <select
-              value={selectedChildId ?? ""}
-              onChange={(e) => setSelectedChildId(e.target.value)}
-              className="text-xs border border-border rounded px-2 py-1 bg-background"
-            >
-              {children_.map((c) => (
-                <option key={c.id} value={c.id}>{c.firstName} {c.lastName}</option>
-              ))}
-            </select>
-          )}
-          <button
-            onClick={signOut}
-            className="text-muted-foreground hover:text-foreground transition-colors"
-            title="Sign out"
+        {/* Child switcher — only shown for multi-child families */}
+        {children_.length > 1 && (
+          <select
+            value={selectedChildId ?? ""}
+            onChange={(e) => setSelectedChildId(e.target.value)}
+            className="text-xs border border-border rounded px-2 py-1 bg-background ml-2 flex-shrink-0"
           >
-            <LogOut className="w-4 h-4" />
-          </button>
-        </div>
+            {children_.map((c) => (
+              <option key={c.id} value={c.id}>{c.firstName} {c.lastName}</option>
+            ))}
+          </select>
+        )}
       </header>
 
-      {/* Main content */}
-      <main ref={mainRef} className="flex-1 overflow-y-auto px-4 py-6 max-w-2xl mx-auto w-full [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full">
-        {/* Pass selectedChildId via URL param convention — child components read it */}
+      {/* ── Scrollable main content ──────────────────────────────────────────── */}
+      <main
+        ref={mainRef}
+        className="flex-1 overflow-y-auto overscroll-contain px-4 py-6 max-w-2xl mx-auto w-full [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full"
+        style={{ paddingBottom: "calc(4.5rem + env(safe-area-inset-bottom))" }}
+      >
         {children_.length === 0 ? (
           <div className="text-center py-16 text-muted-foreground space-y-3">
             <GraduationCap className="w-12 h-12 mx-auto opacity-30" />
@@ -197,38 +199,134 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
             <p className="text-sm">Ask your school to send you an invite link.</p>
           </div>
         ) : (
-          // Clone children with selectedChildId context
-          <ParentContext.Provider value={{ childId: selectedChildId, child: selectedChild, schoolName, schoolId, classId: selectedChild?.classId ?? null, messengerLink: selectedChild?.messengerLink ?? null, childProfileId: selectedChild?.childProfileId ?? null }}>
+          <ParentContext.Provider value={{
+            childId: selectedChildId,
+            child: selectedChild,
+            schoolName,
+            schoolId,
+            classId: selectedChild?.classId ?? null,
+            messengerLink: selectedChild?.messengerLink ?? null,
+            childProfileId: selectedChild?.childProfileId ?? null,
+          }}>
             {children}
           </ParentContext.Provider>
         )}
       </main>
 
-      {/* Bottom nav */}
-      <nav className="border-t border-border bg-card safe-bottom flex-shrink-0">
+      {/* ── Fixed bottom nav ─────────────────────────────────────────────────── */}
+      <nav
+        className="fixed bottom-0 inset-x-0 z-40 border-t border-border bg-card"
+        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+      >
         <div className="flex max-w-2xl mx-auto">
-          {NAV.map(({ href, icon: Icon, label }) => {
+          {NAV_PRIMARY.map(({ href, icon: Icon, label }) => {
             const active = pathname.startsWith(href);
             return (
               <Link
                 key={href}
                 href={href}
-                className={`flex-1 flex flex-col items-center py-3 gap-1 text-xs transition-colors ${
+                className={`flex-1 flex flex-col items-center py-2.5 gap-1 text-[11px] transition-colors min-w-0 ${
                   active ? "text-primary" : "text-muted-foreground hover:text-foreground"
                 }`}
               >
-                <Icon className="w-5 h-5" />
-                {label}
+                <Icon className="w-5 h-5 flex-shrink-0" />
+                <span className="leading-none">{label}</span>
               </Link>
             );
           })}
+
+          {/* More button */}
+          <button
+            type="button"
+            onClick={() => setShowMore(true)}
+            className={`flex-1 flex flex-col items-center py-2.5 gap-1 text-[11px] transition-colors min-w-0 ${
+              moreActive || showMore ? "text-primary" : "text-muted-foreground hover:text-foreground"
+            }`}
+            aria-label="More options"
+          >
+            <MoreHorizontal className="w-5 h-5 flex-shrink-0" />
+            <span className="leading-none">More</span>
+          </button>
         </div>
       </nav>
+
+      {/* ── More bottom sheet ────────────────────────────────────────────────── */}
+      {showMore && (
+        <>
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 z-40 bg-black/40"
+            onClick={() => setShowMore(false)}
+          />
+          {/* Sheet */}
+          <div
+            className="fixed bottom-0 inset-x-0 z-50 bg-card rounded-t-2xl border-t border-border"
+            style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+          >
+            <div className="max-w-2xl mx-auto px-4 pt-3 pb-3">
+              {/* Drag handle */}
+              <div className="w-10 h-1 bg-border rounded-full mx-auto mb-5" />
+
+              <div className="space-y-0.5">
+                <Link
+                  href="/parent/student"
+                  onClick={() => setShowMore(false)}
+                  className={`flex items-center gap-3 px-3 py-3.5 rounded-xl transition-colors text-sm font-medium ${
+                    pathname.startsWith("/parent/student")
+                      ? "bg-primary/10 text-primary"
+                      : "hover:bg-accent/60 text-foreground"
+                  }`}
+                >
+                  <User className="w-5 h-5 flex-shrink-0 text-muted-foreground" />
+                  Child Profile
+                </Link>
+
+                <Link
+                  href="/parent/documents"
+                  onClick={() => setShowMore(false)}
+                  className={`flex items-center gap-3 px-3 py-3.5 rounded-xl transition-colors text-sm font-medium ${
+                    pathname.startsWith("/parent/documents")
+                      ? "bg-primary/10 text-primary"
+                      : "hover:bg-accent/60 text-foreground"
+                  }`}
+                >
+                  <FileText className="w-5 h-5 flex-shrink-0 text-muted-foreground" />
+                  Documents
+                </Link>
+
+                <Link
+                  href="/parent/billing"
+                  onClick={() => setShowMore(false)}
+                  className={`flex items-center gap-3 px-3 py-3.5 rounded-xl transition-colors text-sm font-medium ${
+                    pathname.startsWith("/parent/billing")
+                      ? "bg-primary/10 text-primary"
+                      : "hover:bg-accent/60 text-foreground"
+                  }`}
+                >
+                  <CreditCard className="w-5 h-5 flex-shrink-0 text-muted-foreground" />
+                  Billing
+                </Link>
+
+                <div className="border-t border-border/60 my-1" />
+
+                <button
+                  type="button"
+                  onClick={signOut}
+                  className="w-full flex items-center gap-3 px-3 py-3.5 rounded-xl hover:bg-red-50 text-red-600 transition-colors text-sm font-medium"
+                >
+                  <LogOut className="w-5 h-5 flex-shrink-0" />
+                  Sign Out
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
 
-// Simple context so child pages can get the selected child's id
+// ── Context ───────────────────────────────────────────────────────────────────
 import { createContext, useContext } from "react";
 
 interface ParentCtx {
@@ -240,5 +338,8 @@ interface ParentCtx {
   messengerLink: string | null;
   childProfileId: string | null;
 }
-export const ParentContext = createContext<ParentCtx>({ childId: null, child: null, schoolName: "", schoolId: null, classId: null, messengerLink: null, childProfileId: null });
+export const ParentContext = createContext<ParentCtx>({
+  childId: null, child: null, schoolName: "", schoolId: null,
+  classId: null, messengerLink: null, childProfileId: null,
+});
 export function useParentContext() { return useContext(ParentContext); }
