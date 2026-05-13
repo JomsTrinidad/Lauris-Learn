@@ -139,7 +139,7 @@ export function Header({
         </div>
 
         {/* User menu */}
-        <div className="relative">
+        <div className="relative" onMouseLeave={() => setUserMenuOpen(false)}>
           <button
             onClick={() => setUserMenuOpen(!userMenuOpen)}
             className="flex items-center gap-2.5 px-3 py-1.5 bg-muted rounded-lg hover:bg-accent transition-colors"

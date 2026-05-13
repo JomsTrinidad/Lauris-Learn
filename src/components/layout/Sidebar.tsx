@@ -77,6 +77,7 @@ const navSections: NavSection[] = [
 
 interface SidebarProps {
   open: boolean;
+  onClose?: () => void;
   schoolName?: string;
   schoolYear?: string;
   userRole?: Role;
@@ -85,6 +86,7 @@ interface SidebarProps {
 
 export function Sidebar({
   open,
+  onClose,
   schoolName = "Lauris Learn",
   schoolYear = "SY 2025–2026",
   userRole,
@@ -101,12 +103,26 @@ export function Sidebar({
   }
 
   return (
-    <aside
-      className={cn(
-        "flex-shrink-0 bg-sidebar border-r border-sidebar-border transition-all duration-300 overflow-hidden",
-        open ? "w-64" : "w-0"
+    <>
+      {/* Mobile backdrop — sits behind the drawer, closes it on tap */}
+      {open && (
+        <div
+          className="fixed inset-0 z-30 bg-black/40 lg:hidden"
+          onClick={onClose}
+          aria-hidden="true"
+        />
       )}
-    >
+      <aside
+        className={cn(
+          "bg-sidebar border-r border-sidebar-border transition-all duration-300",
+          // Mobile: fixed drawer, always full-width, slides in/out via translate
+          "fixed inset-y-0 left-0 z-40 w-64 shadow-xl",
+          open ? "translate-x-0" : "-translate-x-full",
+          // Desktop: push layout, translate always 0, width toggles
+          "lg:relative lg:inset-auto lg:z-auto lg:shadow-none lg:translate-x-0 lg:flex-shrink-0 lg:overflow-hidden",
+          open ? "lg:w-64" : "lg:w-0",
+        )}
+      >
       <div className="h-full flex flex-col min-w-64">
         {/* Brand */}
         <Link href="/dashboard" className="block p-5 border-b border-sidebar-border hover:bg-sidebar-accent transition-colors">
@@ -152,6 +168,7 @@ export function Sidebar({
                     <li key={item.path}>
                       <Link
                         href={item.path}
+                        onClick={onClose}
                         className={cn(
                           "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors text-sm",
                           isActive(item.path)
@@ -177,6 +194,7 @@ export function Sidebar({
               </p>
               <Link
                 href="/super-admin/schools"
+                onClick={onClose}
                 className={cn(
                   "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors text-sm",
                   pathname.startsWith("/super-admin")
@@ -196,6 +214,7 @@ export function Sidebar({
           <p className="text-xs text-muted-foreground text-center">Lauris Learn v0.2</p>
         </div>
       </div>
-    </aside>
+      </aside>
+    </>
   );
 }

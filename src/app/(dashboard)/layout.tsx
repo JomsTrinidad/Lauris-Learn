@@ -237,6 +237,7 @@ function Shell({ children }: { children: React.ReactNode }) {
       <div className="flex flex-1 overflow-hidden">
         <Sidebar
           open={sidebarOpen}
+          onClose={() => setSidebarOpen(false)}
           schoolName={schoolName || "Lauris Learn"}
           schoolYear={yearLabel}
           userRole={userRole}
