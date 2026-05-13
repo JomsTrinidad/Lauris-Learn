@@ -168,7 +168,6 @@ export function Sidebar({
                     <li key={item.path}>
                       <Link
                         href={item.path}
-                        onClick={onClose}
                         className={cn(
                           "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors text-sm",
                           isActive(item.path)
@@ -194,7 +193,6 @@ export function Sidebar({
               </p>
               <Link
                 href="/super-admin/schools"
-                onClick={onClose}
                 className={cn(
                   "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors text-sm",
                   pathname.startsWith("/super-admin")

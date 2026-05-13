@@ -16,6 +16,7 @@ interface ChildInfo {
   classId: string | null;
   messengerLink: string | null;
   studentCode: string | null;
+  childProfileId: string | null;
 }
 
 const NAV = [
@@ -56,7 +57,9 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { router.replace("/login"); return; }
 
-    // Find students linked to this user's email via guardians
+    // Find students linked to this user's email via guardians.
+    // child_profile_id is fetched to support cross-app service presence
+    // (therapy, medical) via the parent-safe RPC in migration 091.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: guardianRows } = await (supabase as any)
       .from("guardians")
@@ -65,6 +68,7 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
         students(
           id, first_name, last_name, student_code,
           school_id,
+          child_profile_id,
           enrollments(status, class_id, classes(name, messenger_link, school_years(status)))
         )
       `)
@@ -91,6 +95,7 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
         firstName: s.first_name,
         lastName: s.last_name,
         studentCode: s.student_code ?? null,
+        childProfileId: s.child_profile_id ?? null,
         className: activeEnrollment?.classes?.name ?? "—",
         classId: activeEnrollment?.class_id ?? null,
         messengerLink: activeEnrollment?.classes?.messenger_link ?? null,
@@ -193,7 +198,7 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
           </div>
         ) : (
           // Clone children with selectedChildId context
-          <ParentContext.Provider value={{ childId: selectedChildId, child: selectedChild, schoolName, schoolId, classId: selectedChild?.classId ?? null, messengerLink: selectedChild?.messengerLink ?? null }}>
+          <ParentContext.Provider value={{ childId: selectedChildId, child: selectedChild, schoolName, schoolId, classId: selectedChild?.classId ?? null, messengerLink: selectedChild?.messengerLink ?? null, childProfileId: selectedChild?.childProfileId ?? null }}>
             {children}
           </ParentContext.Provider>
         )}
@@ -233,6 +238,7 @@ interface ParentCtx {
   schoolId: string | null;
   classId: string | null;
   messengerLink: string | null;
+  childProfileId: string | null;
 }
-export const ParentContext = createContext<ParentCtx>({ childId: null, child: null, schoolName: "", schoolId: null, classId: null, messengerLink: null });
+export const ParentContext = createContext<ParentCtx>({ childId: null, child: null, schoolName: "", schoolId: null, classId: null, messengerLink: null, childProfileId: null });
 export function useParentContext() { return useContext(ParentContext); }

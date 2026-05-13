@@ -117,7 +117,6 @@ export default function SuperAdminLayout({ children }: { children: React.ReactNo
                 <li key={item.path}>
                   <Link
                     href={item.path}
-                    onClick={() => setSidebarOpen(false)}
                     className={cn(
                       "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors text-sm",
                       pathname.startsWith(item.path)

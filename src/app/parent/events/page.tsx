@@ -8,6 +8,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useParentContext } from "../layout";
 
 type RsvpResponse = "going" | "not_going" | "maybe";
+type EventTypeFilter = "all" | "school_event" | "class_event" | "meeting" | "deadline" | "holiday";
 
 interface Event {
   id: string;
@@ -20,6 +21,7 @@ interface Event {
   fee: number | null;
   requiresRsvp: boolean;
   maxCompanions: number | null;
+  eventType: string;
   rsvp: RsvpResponse | null;
   rsvpId: string | null;
   companions: number;
@@ -27,6 +29,33 @@ interface Event {
   saving: boolean;
   changedFromGoing: boolean;
 }
+
+const EVENT_TYPE_LABELS: Record<string, string> = {
+  school_event: "School Event",
+  class_event:  "Class Event",
+  holiday:      "No Classes — Holiday",
+  deadline:     "Action Needed",
+  meeting:      "Meeting",
+  online_class: "Online Class",
+};
+
+const EVENT_TYPE_BADGE: Record<string, string> = {
+  school_event: "bg-blue-50 text-blue-700 border-blue-200",
+  class_event:  "bg-primary/10 text-primary border-primary/20",
+  holiday:      "bg-muted text-muted-foreground border-border",
+  deadline:     "bg-amber-50 text-amber-700 border-amber-200",
+  meeting:      "bg-purple-50 text-purple-700 border-purple-200",
+  online_class: "bg-sky-50 text-sky-700 border-sky-200",
+};
+
+const FILTER_TABS: { value: EventTypeFilter; label: string }[] = [
+  { value: "all",          label: "All" },
+  { value: "school_event", label: "School Events" },
+  { value: "class_event",  label: "Class Events" },
+  { value: "meeting",      label: "Meetings" },
+  { value: "deadline",     label: "Deadlines" },
+  { value: "holiday",      label: "Holidays" },
+];
 
 const RSVP_OPTIONS: { value: RsvpResponse; label: string; active: string; inactive: string }[] = [
   { value: "going",     label: "Going",    active: "bg-green-500 text-white border-green-500",   inactive: "border-border text-muted-foreground hover:border-green-400 hover:text-green-700" },
@@ -39,6 +68,7 @@ export default function ParentEventsPage() {
   const supabase = createClient();
   const [loading, setLoading] = useState(true);
   const [events, setEvents] = useState<Event[]>([]);
+  const [typeFilter, setTypeFilter] = useState<EventTypeFilter>("all");
 
   // Local companion name drafts, keyed by eventId — tracks unsaved edits
   const [namesDraft, setNamesDraft] = useState<Record<string, string[]>>({});
@@ -58,7 +88,7 @@ export default function ParentEventsPage() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: evData } = await (supabase as any)
       .from("events")
-      .select("id, title, description, event_date, start_time, end_time, all_day, applies_to, class_id, fee, requires_rsvp, max_companions")
+      .select("id, title, description, event_date, start_time, end_time, all_day, applies_to, class_id, fee, requires_rsvp, max_companions, event_type")
       .eq("school_id", schoolId)
       .gte("event_date", today)
       .order("event_date");
@@ -102,6 +132,7 @@ export default function ParentEventsPage() {
       fee: e.fee ?? null,
       requiresRsvp: e.requires_rsvp ?? true,
       maxCompanions: e.max_companions ?? null,
+      eventType: e.event_type ?? "school_event",
       rsvp: rsvpMap[e.id]?.response ?? null,
       rsvpId: rsvpMap[e.id]?.id ?? null,
       companions: rsvpMap[e.id]?.companions ?? 0,
@@ -211,6 +242,10 @@ export default function ParentEventsPage() {
 
   if (loading) return <PageSpinner />;
 
+  const visibleEvents = typeFilter === "all"
+    ? events
+    : events.filter((e) => e.eventType === typeFilter);
+
   return (
     <div className="space-y-5">
       <div>
@@ -218,17 +253,45 @@ export default function ParentEventsPage() {
         <p className="text-muted-foreground text-sm mt-1">Upcoming school events</p>
       </div>
 
-      {events.length === 0 ? (
+      {/* Filter tabs */}
+      {events.length > 0 && (
+        <div className="flex gap-2 overflow-x-auto pb-1 -mx-4 px-4 no-scrollbar">
+          {FILTER_TABS.map((tab) => {
+            const count = tab.value === "all" ? events.length : events.filter((e) => e.eventType === tab.value).length;
+            if (count === 0 && tab.value !== "all") return null;
+            return (
+              <button
+                key={tab.value}
+                onClick={() => setTypeFilter(tab.value)}
+                className={`flex-shrink-0 px-3.5 py-1.5 rounded-full text-xs font-medium border transition-colors ${
+                  typeFilter === tab.value
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "border-border text-muted-foreground hover:text-foreground hover:border-foreground/30"
+                }`}
+              >
+                {tab.label}
+                {tab.value !== "all" && count > 0 && (
+                  <span className="ml-1 opacity-70">{count}</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {visibleEvents.length === 0 ? (
         <Card>
           <CardContent className="py-14 text-center text-muted-foreground">
             <CalendarDays className="w-10 h-10 mx-auto mb-3 opacity-30" />
-            <p className="font-medium">No upcoming events</p>
+            <p className="font-medium">
+              {typeFilter === "all" ? "No upcoming events" : `No ${EVENT_TYPE_LABELS[typeFilter] ?? typeFilter} events`}
+            </p>
             <p className="text-sm mt-1">Check back later for school events.</p>
           </CardContent>
         </Card>
       ) : (
         <div className="space-y-4">
-          {events.map((event) => {
+          {visibleEvents.map((event) => {
             const d = new Date(event.eventDate + "T00:00:00");
             const draft = namesDraft[event.id] ?? [];
             const isDirty = !!namesDirty[event.id];
@@ -246,6 +309,11 @@ export default function ParentEventsPage() {
                       <p className="text-xl font-bold leading-tight">{d.getDate()}</p>
                     </div>
                     <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${EVENT_TYPE_BADGE[event.eventType] ?? EVENT_TYPE_BADGE.school_event}`}>
+                          {EVENT_TYPE_LABELS[event.eventType] ?? "Event"}
+                        </span>
+                      </div>
                       <p className="font-semibold text-sm leading-snug">{event.title}</p>
                       {event.allDay ? (
                         <p className="text-xs text-muted-foreground mt-0.5">All day</p>

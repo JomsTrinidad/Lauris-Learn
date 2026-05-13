@@ -243,7 +243,7 @@ event_applies_to: all | class | selected
 rsvp_status: going | not_going | maybe
 inquiry_status: inquiry | assessment_scheduled | waitlisted | offered_slot | enrolled | not_proceeding
 online_class_status: scheduled | live | completed | cancelled
-progress_rating: emerging | developing | consistent | advanced
+progress_rating: emerging | developing | consistent | advanced  ← enum preserved in Postgres but progress_observations.rating is TEXT since migration 092 (arbitrary scale labels accepted)
 observation_visibility: internal_only | parent_visible
 document_type: iep | therapy_evaluation | therapy_progress | school_accommodation
              | medical_certificate | dev_pediatrician_report | parent_provided
@@ -611,6 +611,54 @@ Check locations:
 ---
 
 ## Session Log
+
+### 2026-05-13 — Progress Tracking + Grading Scale Assignments
+
+Evolved progress tracking so grading scales are reusable and context-aware. The old system hardcoded a 4-level `progress_rating` Postgres ENUM into every observation. The new system resolves a scale set at observation time via a hierarchy.
+
+**Migration 092** (`092_grading_scale_assignments.sql`).
+- `progress_observations.rating` migrated from the `progress_rating` enum → TEXT. Existing string values (`'emerging'`, `'developing'`, `'consistent'`, `'advanced'`) are preserved intact. The enum type remains in Postgres but is no longer referenced by the column.
+- `progress_observations.scale_item_id UUID NULL REFERENCES grading_scales(id) ON DELETE SET NULL` — tracks which scale item was selected. NULL for legacy observations (recorded before this migration).
+- New table `grading_scale_assignments` — maps (school + optional level/domain/student) → a `grading_scale_set_id`. Four `assignment_type` values: `school_default`, `level_default`, `domain_default`, `student_domain_override`. Four CHECK constraints enforce valid field combinations. Four partial UNIQUE indexes keep one active row per context. RLS: SELECT for school members; INSERT/UPDATE/DELETE for `school_admin` + `is_super_admin()`.
+- Seeds BK pilot school → `school_default` pointing at the existing "Preschool Development Scale" set (UUID `00000000-0000-0000-0000-000000000003`). Idempotent (`WHERE NOT EXISTS`).
+
+**Scale resolution hierarchy** (highest wins, evaluated client-side from in-memory data):
+1. `student_domain_override` — specific student + specific domain
+2. `domain_default` — specific domain (progress category), any student
+3. `level_default` — the student's class level, any domain
+4. `school_default` — school-wide fallback
+
+Resolution source is surfaced to the teacher in the observation modal ("Using: Preschool Development Scale · School default"). If no assignment resolves (no active assignment at any level), the save button is disabled and an amber warning is shown.
+
+**Critical rules for future changes:**
+- **Never assume the 4 legacy rating values** (`emerging`/`developing`/`consistent`/`advanced`). `progress_observations.rating` is TEXT and can hold any scale label. Always use scale resolution to determine valid ratings.
+- **Legacy observations** (before migration 092) have `scale_item_id = NULL`. Their `rating` will be one of the 4 legacy strings. The `RATING_META` / `RATING_COLORS` / `LEGACY_RATING_RANK` constants in `progress/page.tsx` exist for backward-compatible display of these.
+- **Trend analysis** uses a precomputed `rank` field on each `Observation` object. For new-style observations, `rank = scale_item.sort_order`. For legacy, `rank = LEGACY_RATING_RANK[rating]` (emerging=1, developing=2, consistent=3, advanced=4).
+- **Parent portal** (`/parent/progress`): `rating` type is `string` with graceful fallback for unknown labels. No scale resolution needed there — parents only see the label text.
+
+**Scale Assignments in Settings.** `Settings → Grading → Scale Assignments` section lets admins:
+- Set the school default
+- Set level defaults (per class level from `class_levels`)
+- Set domain defaults (per progress category from `progress_categories`)
+- Student + domain override: deferred (TODO comment in UI, note in help drawer)
+
+Changes save immediately (no Save button) via `saveAssignment()` which upserts/clears the assignment using optimistic local state update (no full reload on change).
+
+**Smoke test** `092_grading_scale_assignments_smoke.sql` — 13 tests. T-1: rating is TEXT. T-2: scale_item_id exists. T-3: table exists. T-4: BK seed row. T-5/T-6/T-7/T-8: CHECK constraints. T-9: unique constraint. T-10: domain_default beats school_default. T-11: invalid scale_item_id FK rejected. T-12/T-13: legacy and custom TEXT ratings accepted.
+
+**Files changed:**
+- `supabase/migrations/092_grading_scale_assignments.sql` — new migration
+- `supabase/tests/092_grading_scale_assignments_smoke.sql` — new smoke test
+- `src/lib/types/database.ts` — `progress_observations.rating` → `string`, `scale_item_id` added, `grading_scale_assignments` table types added
+- `src/app/(dashboard)/progress/page.tsx` — fully rewritten: scale resolution, new Observation type with `scaleItemId`+`rank`, modal shows scale attribution + no-scale warning, rating buttons from resolved scale with hex colors, `scale_item_id` saved to DB, domain nav shows last observed date + stale clock badge, help drawer topic added
+- `src/app/(dashboard)/settings/page.tsx` — Scale Assignments subsection added in Grading section; loads `grading_scale_assignments` + `progress_categories` in parallel; `saveAssignment()` function; help drawer grading topic expanded + count fixed
+- `src/app/parent/progress/page.tsx` — `rating` type relaxed to `string`; `LEGACY_RATING_CONFIG` with unknown-label fallback
+
+**Out of scope (deferred):**
+- Student + domain override UI in Settings (schema + RLS are in place; UI ships in a follow-up)
+- Per-student override UI in Progress Tracking page (same: schema ready, no UI yet)
+- Historical re-rating of legacy observations (they keep their TEXT label and `scale_item_id = NULL` forever)
+- Scale-based report cards / PDF export
 
 ### 2026-05-04 — Basic Therapy Sessions (Phase 6E)
 

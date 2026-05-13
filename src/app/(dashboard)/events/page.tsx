@@ -15,6 +15,25 @@ import { getInitials } from "@/lib/utils";
 
 type AppliesTo = "all" | "class" | "selected";
 type RsvpStatus = "going" | "maybe" | "not_going";
+type EventTypeFilter = "all" | "school_event" | "class_event" | "holiday" | "deadline" | "meeting" | "online_class";
+
+const EVENT_TYPE_LABELS: Record<string, string> = {
+  school_event: "School Event",
+  class_event:  "Class Event",
+  holiday:      "No Classes — Holiday",
+  deadline:     "Action Needed",
+  meeting:      "Meeting",
+  online_class: "Online Class",
+};
+
+const EVENT_TYPE_BADGE: Record<string, string> = {
+  school_event: "bg-blue-50 text-blue-700 border-blue-200",
+  class_event:  "bg-primary/10 text-primary border-primary/20",
+  holiday:      "bg-muted text-muted-foreground border-border",
+  deadline:     "bg-amber-50 text-amber-700 border-amber-200",
+  meeting:      "bg-purple-50 text-purple-700 border-purple-200",
+  online_class: "bg-sky-50 text-sky-700 border-sky-200",
+};
 
 interface Event {
   id: string;
@@ -30,6 +49,7 @@ interface Event {
   fee: number | null;
   requiresRsvp: boolean;
   maxCompanions: number | null;
+  eventType: string;
   rsvpGoing: number;
   rsvpMaybe: number;
   rsvpNotGoing: number;
@@ -64,6 +84,7 @@ interface EventForm {
   fee: string;
   requiresRsvp: boolean;
   maxCompanions: string;
+  eventType: string;
 }
 
 const EMPTY_FORM: EventForm = {
@@ -71,6 +92,7 @@ const EMPTY_FORM: EventForm = {
   allDay: false, startTime: "", endTime: "",
   appliesTo: "all", classId: "", fee: "",
   requiresRsvp: true, maxCompanions: "",
+  eventType: "school_event",
 };
 
 const STATUS_LABELS: Record<RsvpStatus, string> = {
@@ -106,6 +128,7 @@ export default function EventsPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState<EventForm>(EMPTY_FORM);
   const [tab, setTab] = useState<"upcoming" | "all">("upcoming");
+  const [typeFilter, setTypeFilter] = useState<EventTypeFilter>("all");
 
   // RSVP list modal
   const [rsvpViewEvent, setRsvpViewEvent] = useState<Event | null>(null);
@@ -135,7 +158,7 @@ export default function EventsPage() {
       supabase
         .from("events")
         .select(`id, title, description, event_date, start_time, end_time, all_day,
-          applies_to, class_id, fee, requires_rsvp, max_companions, classes(name),
+          applies_to, class_id, fee, requires_rsvp, max_companions, event_type, classes(name),
           event_rsvps(status, companions)`)
         .eq("school_id", schoolId!)
         .order("event_date"),
@@ -188,6 +211,7 @@ export default function EventsPage() {
           fee: e.fee ? Number(e.fee) : null,
           requiresRsvp,
           maxCompanions: (e as any).max_companions ?? null,
+          eventType: (e as any).event_type ?? "school_event",
           rsvpGoing,
           rsvpMaybe,
           rsvpNotGoing,
@@ -289,6 +313,7 @@ export default function EventsPage() {
       fee: form.fee ? parseFloat(form.fee) : null,
       requires_rsvp: form.requiresRsvp,
       max_companions: form.requiresRsvp ? maxComp : null,
+      event_type: form.eventType,
     });
 
     if (iErr) { setFormError(iErr.message); setSaving(false); return; }
@@ -298,9 +323,13 @@ export default function EventsPage() {
     await loadEvents();
   }
 
-  const displayed = tab === "upcoming"
+  const tabFiltered = tab === "upcoming"
     ? events.filter((e) => isUpcoming(e.eventDate)).sort((a, b) => a.eventDate.localeCompare(b.eventDate))
     : [...events].sort((a, b) => b.eventDate.localeCompare(a.eventDate));
+
+  const displayed = typeFilter === "all"
+    ? tabFiltered
+    : tabFiltered.filter((e) => e.eventType === typeFilter);
 
   const filteredRsvpRows = rsvpFilter === "all" ? rsvpRows : rsvpRows.filter((r) => r.status === rsvpFilter);
 
@@ -341,6 +370,36 @@ export default function EventsPage() {
         ))}
       </div>
 
+      {/* Event type filter chips */}
+      <div className="flex flex-wrap gap-2">
+        {([
+          { value: "all",          label: "All Types" },
+          { value: "school_event", label: "School Events" },
+          { value: "class_event",  label: "Class Events" },
+          { value: "meeting",      label: "Meetings" },
+          { value: "deadline",     label: "Deadlines" },
+          { value: "holiday",      label: "Holidays" },
+          { value: "online_class", label: "Online Classes" },
+        ] as { value: EventTypeFilter; label: string }[]).map((chip) => {
+          const count = chip.value === "all" ? tabFiltered.length : tabFiltered.filter((e) => e.eventType === chip.value).length;
+          if (count === 0 && chip.value !== "all") return null;
+          return (
+            <button
+              key={chip.value}
+              onClick={() => setTypeFilter(chip.value)}
+              className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                typeFilter === chip.value
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "border-border text-muted-foreground hover:text-foreground hover:border-foreground/30"
+              }`}
+            >
+              {chip.label}
+              {chip.value !== "all" && <span className="ml-1 opacity-70">{count}</span>}
+            </button>
+          );
+        })}
+      </div>
+
       {/* Event list */}
       {displayed.length === 0 ? (
         <Card>
@@ -370,6 +429,9 @@ export default function EventsPage() {
                     <div className="flex flex-wrap items-start justify-between gap-2 mb-2">
                       <h3 className="font-semibold">{event.title}</h3>
                       <div className="flex items-center gap-2 flex-wrap">
+                        <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full border ${EVENT_TYPE_BADGE[event.eventType] ?? EVENT_TYPE_BADGE.school_event}`}>
+                          {EVENT_TYPE_LABELS[event.eventType] ?? "Event"}
+                        </span>
                         {event.appliesTo === "class" && event.className && (
                           <Badge variant="default">{event.className}</Badge>
                         )}
@@ -700,6 +762,33 @@ export default function EventsPage() {
                     ),
                   },
                   {
+                    id: "event-type",
+                    icon: ListChecks,
+                    title: "Event types and filters",
+                    searchText: "event type school class holiday deadline meeting online filter category classify",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Classify each event so parents see the right label and can filter by category.</p>
+                        <div className="space-y-2.5 mt-2">
+                          {[
+                            { label: "School Event",       desc: "School-wide programs, ceremonies, and activities. Most events use this." },
+                            { label: "Class Event",        desc: "Activities for a specific class — field trips, picture day, class performance." },
+                            { label: "Meeting",            desc: "Parent-Teacher Conferences and similar parent meetings." },
+                            { label: "Deadline",           desc: "Permission slips, submission cut-offs, or any time a parent needs to act by a date." },
+                            { label: "Holiday",            desc: "Public holidays with no classes. Parents see 'No Classes — Holiday'." },
+                            { label: "Online Class",       desc: "Scheduled online sessions visible in the parent portal." },
+                          ].map(({ label, desc }) => (
+                            <div key={label} className="flex gap-2.5 items-start">
+                              <span className="font-semibold text-xs w-28 flex-shrink-0 mt-0.5 text-foreground">{label}</span>
+                              <span className="text-xs">{desc}</span>
+                            </div>
+                          ))}
+                        </div>
+                        <Note>In the parent portal, the event type badge appears on every event card. The Next Event card on the parent dashboard prioritises class/school events over holidays — holidays only show as &quot;Next Event&quot; when there are no other upcoming events.</Note>
+                      </div>
+                    ),
+                  },
+                  {
                     id: "fee",
                     icon: Calendar,
                     title: "Adding a fee to an event",
@@ -744,7 +833,7 @@ export default function EventsPage() {
               })()}
             </div>
             <div className="px-5 py-3 border-t border-border flex-shrink-0 text-xs text-muted-foreground">
-              {helpSearch ? <span>Showing results for &quot;<span className="font-medium text-foreground">{helpSearch}</span>&quot;</span> : <span>7 topics · click any to expand</span>}
+              {helpSearch ? <span>Showing results for &quot;<span className="font-medium text-foreground">{helpSearch}</span>&quot;</span> : <span>8 topics · click any to expand</span>}
             </div>
           </div>
         </div>
@@ -753,6 +842,18 @@ export default function EventsPage() {
       <Modal open={modalOpen} onClose={() => { setModalOpen(false); setForm(EMPTY_FORM); setFormError(null); }} title="Add Event">
         <div className="space-y-4">
           {formError && <ErrorAlert message={formError} />}
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Event Type</label>
+            <Select value={form.eventType} onChange={(e) => setForm({ ...form, eventType: e.target.value })}>
+              <option value="school_event">School Event</option>
+              <option value="class_event">Class Event</option>
+              <option value="meeting">Meeting (PTC, parent meetings)</option>
+              <option value="deadline">Deadline / Action Needed</option>
+              <option value="holiday">Holiday (No Classes)</option>
+              <option value="online_class">Online Class</option>
+            </Select>
+          </div>
 
           <div>
             <label className="block text-sm font-medium mb-1">Event Name *</label>

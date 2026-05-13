@@ -461,12 +461,13 @@ export type Database = {
           requires_rsvp: boolean;
           all_day: boolean;
           max_companions: number | null;
+          event_type: string;
           created_by: string | null;
           created_at: string;
           updated_at: string;
         };
-        Insert: { id?: string; school_id: string; title: string; description?: string | null; event_date: string; start_time?: string | null; end_time?: string | null; applies_to?: "all" | "class" | "selected"; class_id?: string | null; fee?: number | null; requires_rsvp?: boolean; all_day?: boolean; max_companions?: number | null; created_by?: string | null; created_at?: string; updated_at?: string };
-        Update: { id?: string; school_id?: string; title?: string; description?: string | null; event_date?: string; start_time?: string | null; end_time?: string | null; applies_to?: "all" | "class" | "selected"; class_id?: string | null; fee?: number | null; requires_rsvp?: boolean; all_day?: boolean; max_companions?: number | null; updated_at?: string };
+        Insert: { id?: string; school_id: string; title: string; description?: string | null; event_date: string; start_time?: string | null; end_time?: string | null; applies_to?: "all" | "class" | "selected"; class_id?: string | null; fee?: number | null; requires_rsvp?: boolean; all_day?: boolean; max_companions?: number | null; event_type?: string; created_by?: string | null; created_at?: string; updated_at?: string };
+        Update: { id?: string; school_id?: string; title?: string; description?: string | null; event_date?: string; start_time?: string | null; end_time?: string | null; applies_to?: "all" | "class" | "selected"; class_id?: string | null; fee?: number | null; requires_rsvp?: boolean; all_day?: boolean; max_companions?: number | null; event_type?: string; updated_at?: string };
         Relationships: [{ foreignKeyName: "events_school_id_fkey"; columns: ["school_id"]; isOneToOne: false; referencedRelation: "schools"; referencedColumns: ["id"] }];
       };
       event_rsvps: {
@@ -547,7 +548,10 @@ export type Database = {
           id: string;
           student_id: string;
           category_id: string;
-          rating: "emerging" | "developing" | "consistent" | "advanced";
+          /** TEXT since migration 092: stores any scale label, not limited to the original 4 enum values. */
+          rating: string;
+          /** FK to grading_scales.id — set for observations recorded after migration 092; NULL for legacy. */
+          scale_item_id: string | null;
           note: string | null;
           observed_by: string | null;
           observer_id: string | null;
@@ -556,11 +560,35 @@ export type Database = {
           created_at: string;
           updated_at: string;
         };
-        Insert: { id?: string; student_id: string; category_id: string; rating: "emerging" | "developing" | "consistent" | "advanced"; note?: string | null; observed_by?: string | null; observer_id?: string | null; observed_at: string; visibility?: "internal_only" | "parent_visible"; created_at?: string; updated_at?: string };
-        Update: { id?: string; student_id?: string; category_id?: string; rating?: "emerging" | "developing" | "consistent" | "advanced"; note?: string | null; observed_by?: string | null; observer_id?: string | null; observed_at?: string; visibility?: "internal_only" | "parent_visible"; updated_at?: string };
+        Insert: { id?: string; student_id: string; category_id: string; rating: string; scale_item_id?: string | null; note?: string | null; observed_by?: string | null; observer_id?: string | null; observed_at: string; visibility?: "internal_only" | "parent_visible"; created_at?: string; updated_at?: string };
+        Update: { id?: string; student_id?: string; category_id?: string; rating?: string; scale_item_id?: string | null; note?: string | null; observed_by?: string | null; observer_id?: string | null; observed_at?: string; visibility?: "internal_only" | "parent_visible"; updated_at?: string };
         Relationships: [
           { foreignKeyName: "progress_observations_student_id_fkey"; columns: ["student_id"]; isOneToOne: false; referencedRelation: "students"; referencedColumns: ["id"] },
-          { foreignKeyName: "progress_observations_category_id_fkey"; columns: ["category_id"]; isOneToOne: false; referencedRelation: "progress_categories"; referencedColumns: ["id"] }
+          { foreignKeyName: "progress_observations_category_id_fkey"; columns: ["category_id"]; isOneToOne: false; referencedRelation: "progress_categories"; referencedColumns: ["id"] },
+          { foreignKeyName: "progress_observations_scale_item_id_fkey"; columns: ["scale_item_id"]; isOneToOne: false; referencedRelation: "grading_scales"; referencedColumns: ["id"] }
+        ];
+      };
+      grading_scale_assignments: {
+        Row: {
+          id: string;
+          school_id: string;
+          grading_scale_set_id: string;
+          assignment_type: "school_default" | "level_default" | "domain_default" | "student_domain_override";
+          level_id: string | null;
+          domain_id: string | null;
+          student_id: string | null;
+          is_active: boolean;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: { id?: string; school_id: string; grading_scale_set_id: string; assignment_type: "school_default" | "level_default" | "domain_default" | "student_domain_override"; level_id?: string | null; domain_id?: string | null; student_id?: string | null; is_active?: boolean; created_at?: string; updated_at?: string };
+        Update: { id?: string; school_id?: string; grading_scale_set_id?: string; assignment_type?: "school_default" | "level_default" | "domain_default" | "student_domain_override"; level_id?: string | null; domain_id?: string | null; student_id?: string | null; is_active?: boolean; updated_at?: string };
+        Relationships: [
+          { foreignKeyName: "gsa_school_id_fkey"; columns: ["school_id"]; isOneToOne: false; referencedRelation: "schools"; referencedColumns: ["id"] },
+          { foreignKeyName: "gsa_grading_scale_set_id_fkey"; columns: ["grading_scale_set_id"]; isOneToOne: false; referencedRelation: "grading_scale_sets"; referencedColumns: ["id"] },
+          { foreignKeyName: "gsa_level_id_fkey"; columns: ["level_id"]; isOneToOne: false; referencedRelation: "class_levels"; referencedColumns: ["id"] },
+          { foreignKeyName: "gsa_domain_id_fkey"; columns: ["domain_id"]; isOneToOne: false; referencedRelation: "progress_categories"; referencedColumns: ["id"] },
+          { foreignKeyName: "gsa_student_id_fkey"; columns: ["student_id"]; isOneToOne: false; referencedRelation: "students"; referencedColumns: ["id"] }
         ];
       };
       academic_periods: {
@@ -1341,6 +1369,28 @@ export type Database = {
           email: string;
           role: string;
           status: string;
+        }[];
+      };
+      list_parent_child_connected_services: {
+        Args: { p_student_id: string };
+        Returns: {
+          source_category: string;
+          organization_id: string;
+          organization_name: string;
+          relationship_kind: string;
+          status: string;
+        }[];
+      };
+      list_parent_visible_therapy_updates: {
+        Args: { p_student_id: string };
+        Returns: {
+          id: string;
+          clinic_name: string;
+          therapy_type: string;
+          scheduled_at: string;
+          status: string;
+          parent_visible_summary: string;
+          therapist_name: string | null;
         }[];
       };
     };

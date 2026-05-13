@@ -9,18 +9,19 @@ import { useParentContext } from "../layout";
 interface Observation {
   id: string;
   categoryName: string;
-  rating: "emerging" | "developing" | "consistent" | "advanced";
+  rating: string;
   note: string | null;
   observedAt: string;
   observedBy: string | null;
 }
 
-const RATING_CONFIG: Record<Observation["rating"], { label: string; pill: string; bar: string }> = {
+const LEGACY_RATING_CONFIG: Record<string, { label: string; pill: string; bar: string }> = {
   emerging:   { label: "Emerging",   pill: "bg-gray-100 text-gray-700",     bar: "bg-gray-400 w-1/4" },
   developing: { label: "Developing", pill: "bg-yellow-100 text-yellow-700", bar: "bg-yellow-400 w-2/4" },
   consistent: { label: "Consistent", pill: "bg-green-100 text-green-700",   bar: "bg-green-500 w-3/4" },
   advanced:   { label: "Advanced",   pill: "bg-blue-100 text-blue-700",     bar: "bg-blue-500 w-full" },
 };
+const FALLBACK_RATING_CONFIG = { label: "", pill: "bg-muted text-muted-foreground", bar: "bg-muted w-1/4" };
 
 export default function ParentProgressPage() {
   const { childId, child } = useParentContext();
@@ -88,14 +89,15 @@ export default function ParentProgressPage() {
       ) : (
         <div className="space-y-3">
           {observations.map((obs) => {
-            const cfg = RATING_CONFIG[obs.rating];
+            const cfg = LEGACY_RATING_CONFIG[obs.rating] ?? FALLBACK_RATING_CONFIG;
+            const displayLabel = cfg.label || obs.rating;
             return (
               <Card key={obs.id}>
                 <CardContent className="p-4 space-y-2">
                   <div className="flex items-center justify-between gap-3">
                     <p className="font-medium text-sm">{obs.categoryName}</p>
                     <span className={`text-xs font-medium px-2.5 py-1 rounded-full flex-shrink-0 ${cfg.pill}`}>
-                      {cfg.label}
+                      {displayLabel}
                     </span>
                   </div>
 

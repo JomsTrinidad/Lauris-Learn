@@ -1,9 +1,47 @@
 import type { ParentJourneyItem, JourneySentiment } from "./types";
 
+// ── Therapy ───────────────────────────────────────────────────────────────────
+
+const THERAPY_TYPE_LABELS: Record<string, string> = {
+  speech:       "Speech Therapy",
+  occupational: "Occupational Therapy",
+  behavioral:   "Behavioral Therapy",
+  other:        "Therapy Session",
+};
+
+export function therapySessionToJourney(
+  ts: {
+    id: string;
+    clinic_name: string;
+    therapy_type: string;
+    scheduled_at: string;
+    status: string;
+    parent_visible_summary: string;
+    therapist_name: string | null;
+  },
+  childId: string
+): ParentJourneyItem {
+  const typeLabel = THERAPY_TYPE_LABELS[ts.therapy_type] ?? "Therapy Session";
+  return {
+    id: `therapy-${ts.id}`,
+    childId,
+    sourceCategory: "therapy",
+    organizationName: ts.clinic_name,
+    providerName: ts.therapist_name ?? undefined,
+    itemType: "session_summary",
+    title: typeLabel,
+    summary: ts.parent_visible_summary,
+    occurredAt: ts.scheduled_at,
+    sentiment: "informational",
+  };
+}
+
 export function updateToJourney(
   u: { id: string; content: string; created_at: string; author?: { full_name?: string } | null; class?: { name?: string } | null },
   childId: string,
-  schoolName: string
+  schoolName: string,
+  mediaCount = 0,
+  mediaThumbnailUrls?: string[],
 ): ParentJourneyItem {
   const className = u.class?.name;
   const orgLabel = className ? `${schoolName} · ${className}` : schoolName;
@@ -19,7 +57,8 @@ export function updateToJourney(
     occurredAt: u.created_at,
     sentiment: "informational",
     actionHref: "/parent/updates",
-    actionLabel: "See all updates",
+    mediaCount: mediaCount > 0 ? mediaCount : undefined,
+    mediaThumbnailUrls: mediaThumbnailUrls && mediaThumbnailUrls.length > 0 ? mediaThumbnailUrls : undefined,
   };
 }
 

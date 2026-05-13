@@ -131,6 +131,23 @@ interface StudentCodeConfig {
   includeYear: boolean;
 }
 
+type GradingAssignmentType = "school_default" | "level_default" | "domain_default" | "student_domain_override";
+
+interface GradingScaleAssignment {
+  id: string;
+  gradingScaleSetId: string;
+  assignmentType: GradingAssignmentType;
+  levelId: string | null;
+  domainId: string | null;
+  studentId: string | null;
+  isActive: boolean;
+}
+
+interface ProgressCategory {
+  id: string;
+  name: string;
+}
+
 // ── Branding helpers ──────────────────────────────────────────────────────────
 
 interface BrandingForm {
@@ -312,6 +329,12 @@ export default function SettingsPage() {
   const [pendingTemplate, setPendingTemplate] = useState<GradingTemplate | null>(null);
   const [templateApplying, setTemplateApplying] = useState(false);
 
+  // Scale Assignments
+  const [scaleAssignments, setScaleAssignments] = useState<GradingScaleAssignment[]>([]);
+  const [progressCategories, setProgressCategories] = useState<ProgressCategory[]>([]);
+  const [assignmentSaving, setAssignmentSaving] = useState<string | null>(null);
+  const [assignmentError, setAssignmentError] = useState<string | null>(null);
+
   // Branding & Accessibility
   const [brandingForm, setBrandingForm] = useState<BrandingForm>(BRANDING_DEFAULTS);
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
@@ -327,7 +350,7 @@ export default function SettingsPage() {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const sb = supabase as any;
-    const [{ data: school }, { data: branches }, { data: years }, { data: hols }, { data: periods }, { data: teacherRows }, { data: codeRow }, { data: scaleRows }, { data: scaleSetRows }, { data: levelRows }, { data: levelUsage }] =
+    const [{ data: school }, { data: branches }, { data: years }, { data: hols }, { data: periods }, { data: teacherRows }, { data: codeRow }, { data: scaleRows }, { data: scaleSetRows }, { data: levelRows }, { data: levelUsage }, { data: assignmentRows }, { data: categoryRows }] =
       await Promise.all([
         supabase.from("schools").select("name, enrollment_balance_policy, iep_workflow_mode, region, schools_division, district").eq("id", schoolId).single(),
         supabase.from("branches").select("name, address, phone").eq("school_id", schoolId).limit(1).maybeSingle(),
@@ -340,6 +363,8 @@ export default function SettingsPage() {
         sb.from("grading_scale_sets").select("id, name, description, scale_mode, is_default").eq("school_id", schoolId).order("name"),
         sb.from("class_levels").select("id, name, kind, display_order, archived_at").eq("school_id", schoolId).order("display_order").order("name"),
         sb.from("classes").select("level_id").eq("school_id", schoolId).not("level_id", "is", null),
+        sb.from("grading_scale_assignments").select("id, grading_scale_set_id, assignment_type, level_id, domain_id, student_id, is_active").eq("school_id", schoolId),
+        sb.from("progress_categories").select("id, name").eq("school_id", schoolId).order("name"),
       ]);
 
     setSchoolInfo({
@@ -454,6 +479,22 @@ export default function SettingsPage() {
       const def = mappedSets.find((s) => s.isDefault);
       return def?.id ?? mappedSets[0]?.id ?? "";
     });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    setScaleAssignments(((assignmentRows ?? []) as any[]).map((a: any) => ({
+      id: a.id,
+      gradingScaleSetId: a.grading_scale_set_id,
+      assignmentType: a.assignment_type as GradingAssignmentType,
+      levelId: a.level_id ?? null,
+      domainId: a.domain_id ?? null,
+      studentId: a.student_id ?? null,
+      isActive: a.is_active,
+    })));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    setProgressCategories(((categoryRows ?? []) as any[]).map((c: any) => ({
+      id: c.id,
+      name: c.name,
+    })));
 
     setLoading(false);
   }, [schoolId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1029,6 +1070,63 @@ export default function SettingsPage() {
     setGradingScaleSets(remaining);
     setGradingScales((prev) => prev.filter((s) => s.scaleSetId !== id));
     if (selectedSetId === id) setSelectedSetId(remaining[0]?.id ?? "");
+  }
+
+  // ── Scale Assignments ──
+  async function saveAssignment(
+    type: "school_default" | "level_default" | "domain_default",
+    scaleSetId: string,
+    contextId?: string,
+  ) {
+    if (!schoolId) return;
+    const saveKey = type + (contextId ?? "");
+    setAssignmentSaving(saveKey);
+    setAssignmentError(null);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sb = supabase as any;
+
+    const existing = scaleAssignments.find(
+      (a) =>
+        a.isActive &&
+        a.assignmentType === type &&
+        (type === "level_default" ? a.levelId === contextId : true) &&
+        (type === "domain_default" ? a.domainId === contextId : true),
+    );
+
+    if (!scaleSetId) {
+      if (existing) {
+        const { error: e } = await sb.from("grading_scale_assignments").update({ is_active: false }).eq("id", existing.id);
+        if (e) { setAssignmentError(e.message); setAssignmentSaving(null); return; }
+        setScaleAssignments((prev) => prev.map((a) => a.id === existing.id ? { ...a, isActive: false } : a));
+      }
+    } else if (existing) {
+      const { error: e } = await sb.from("grading_scale_assignments").update({ grading_scale_set_id: scaleSetId }).eq("id", existing.id);
+      if (e) { setAssignmentError(e.message); setAssignmentSaving(null); return; }
+      setScaleAssignments((prev) => prev.map((a) => a.id === existing.id ? { ...a, gradingScaleSetId: scaleSetId } : a));
+    } else {
+      const payload: Record<string, unknown> = {
+        school_id: schoolId,
+        grading_scale_set_id: scaleSetId,
+        assignment_type: type,
+        is_active: true,
+      };
+      if (type === "level_default" && contextId) payload.level_id = contextId;
+      if (type === "domain_default" && contextId) payload.domain_id = contextId;
+      const { data: ins, error: e } = await sb.from("grading_scale_assignments").insert(payload).select("id").single();
+      if (e) { setAssignmentError(e.message); setAssignmentSaving(null); return; }
+      if (ins?.id) {
+        setScaleAssignments((prev) => [...prev, {
+          id: ins.id,
+          gradingScaleSetId: scaleSetId,
+          assignmentType: type,
+          levelId: type === "level_default" ? (contextId ?? null) : null,
+          domainId: type === "domain_default" ? (contextId ?? null) : null,
+          studentId: null,
+          isActive: true,
+        }]);
+      }
+    }
+    setAssignmentSaving(null);
   }
 
   // ── Templates ──
@@ -1884,6 +1982,126 @@ export default function SettingsPage() {
                   )}
                 </>
               )}
+
+              {/* ── Scale Assignments ── */}
+              <div className="space-y-4 pt-2">
+                <div>
+                  <h3 className="font-semibold text-base">Scale Assignments</h3>
+                  <p className="text-sm text-muted-foreground mt-0.5">
+                    Choose which grading scale is used when teachers record progress observations.
+                    Resolution priority (highest wins): Student + Domain override → Domain default → Level default → School default.
+                  </p>
+                </div>
+                {assignmentError && <ErrorAlert message={assignmentError} />}
+                {gradingScaleSets.length === 0 ? (
+                  <Card>
+                    <CardContent className="py-8 text-center text-muted-foreground text-sm">
+                      Create at least one scale group above before assigning scales to contexts.
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <Card>
+                    <CardContent className="p-0 divide-y divide-border">
+                      {/* School Default */}
+                      <div className="px-5 py-4 flex items-start justify-between gap-4">
+                        <div>
+                          <p className="text-sm font-medium">School Default</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">Fallback for all observations with no other assignment.</p>
+                        </div>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          <Select
+                            value={scaleAssignments.find((a) => a.isActive && a.assignmentType === "school_default")?.gradingScaleSetId ?? ""}
+                            onChange={(e) => saveAssignment("school_default", e.target.value)}
+                            className="text-sm w-52"
+                            disabled={assignmentSaving === "school_default"}
+                          >
+                            <option value="">— Not assigned —</option>
+                            {gradingScaleSets.map((s) => (
+                              <option key={s.id} value={s.id}>{s.name}</option>
+                            ))}
+                          </Select>
+                          {assignmentSaving === "school_default" && <span className="text-xs text-muted-foreground">Saving…</span>}
+                        </div>
+                      </div>
+
+                      {/* Level Defaults */}
+                      {classLevels.filter((l) => !l.archivedAt).length > 0 && (
+                        <>
+                          <div className="px-5 py-2 bg-muted/40">
+                            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Level Defaults</p>
+                          </div>
+                          {classLevels.filter((l) => !l.archivedAt).map((level) => {
+                            const assignment = scaleAssignments.find(
+                              (a) => a.isActive && a.assignmentType === "level_default" && a.levelId === level.id,
+                            );
+                            const saveKey = "level_default" + level.id;
+                            return (
+                              <div key={level.id} className="px-5 py-3.5 flex items-center justify-between gap-4">
+                                <p className="text-sm">{level.name}</p>
+                                <div className="flex items-center gap-2 flex-shrink-0">
+                                  <Select
+                                    value={assignment?.gradingScaleSetId ?? ""}
+                                    onChange={(e) => saveAssignment("level_default", e.target.value, level.id)}
+                                    className="text-sm w-52"
+                                    disabled={assignmentSaving === saveKey}
+                                  >
+                                    <option value="">— Use school default —</option>
+                                    {gradingScaleSets.map((s) => (
+                                      <option key={s.id} value={s.id}>{s.name}</option>
+                                    ))}
+                                  </Select>
+                                  {assignmentSaving === saveKey && <span className="text-xs text-muted-foreground">Saving…</span>}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </>
+                      )}
+
+                      {/* Domain Defaults */}
+                      {progressCategories.length > 0 && (
+                        <>
+                          <div className="px-5 py-2 bg-muted/40">
+                            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Domain Defaults</p>
+                          </div>
+                          {progressCategories.map((cat) => {
+                            const assignment = scaleAssignments.find(
+                              (a) => a.isActive && a.assignmentType === "domain_default" && a.domainId === cat.id,
+                            );
+                            const saveKey = "domain_default" + cat.id;
+                            return (
+                              <div key={cat.id} className="px-5 py-3.5 flex items-center justify-between gap-4">
+                                <p className="text-sm">{cat.name}</p>
+                                <div className="flex items-center gap-2 flex-shrink-0">
+                                  <Select
+                                    value={assignment?.gradingScaleSetId ?? ""}
+                                    onChange={(e) => saveAssignment("domain_default", e.target.value, cat.id)}
+                                    className="text-sm w-52"
+                                    disabled={assignmentSaving === saveKey}
+                                  >
+                                    <option value="">— Use level/school default —</option>
+                                    {gradingScaleSets.map((s) => (
+                                      <option key={s.id} value={s.id}>{s.name}</option>
+                                    ))}
+                                  </Select>
+                                  {assignmentSaving === saveKey && <span className="text-xs text-muted-foreground">Saving…</span>}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </>
+                      )}
+
+                      {/* Student + Domain Override — deferred */}
+                      <div className="px-5 py-3 bg-muted/20">
+                        <p className="text-xs text-muted-foreground italic">
+                          Student + Domain overrides — available in a future update. These let you assign a different scale to one student for one specific domain.
+                        </p>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
             </>
           )}
 
@@ -2327,18 +2545,24 @@ export default function SettingsPage() {
                   {
                     id: "grading",
                     icon: Library,
-                    title: "Grading scales — set up and use templates",
-                    searchText: "grading scale descriptive score based template add level label color",
+                    title: "Grading scales and assignments — set up scale groups and assign to contexts",
+                    searchText: "grading scale descriptive score based template add level label color assignment school default level domain progress observation",
                     body: (
                       <div className="space-y-2">
-                        <p>Grading scales define your school's rating vocabulary — used on report cards and assessments.</p>
-                        <div className="space-y-2 mt-2">
+                        <p>Grading scales define your school's rating vocabulary for progress observations. Scale groups hold individual rating levels (labels, colors, optional score ranges). Scale Assignments connect those groups to specific contexts.</p>
+                        <p className="text-xs font-semibold text-foreground mt-2">Setting up a scale group</p>
+                        <div className="space-y-2">
                           <Step n={1} text={<span>Click <strong>Grading</strong> in the left nav.</span>} />
-                          <Step n={2} text={<span>Click <strong>Add Scale Set</strong> to create a new grading system. Give it a name and choose the mode: <strong>Label Only</strong> (Excellent / Good / Needs Improvement) or <strong>Score Range</strong> (90–100 = A).</span>} />
-                          <Step n={3} text={<span>Or click <strong>Use Template</strong> to apply a pre-built scale (e.g. DepEd descriptive, A–F, 1–4 rubric).</span>} />
-                          <Step n={4} text={<span>Once a scale set is created, expand it and click <strong>Add Level</strong> to define each grade: label, description, color, and score range (if score-based).</span>} />
+                          <Step n={2} text={<span>Click <strong>New Group</strong> or <strong>Use Template</strong>. Give it a name and choose the mode: <strong>Descriptive</strong> (labels only) or <strong>Score-based</strong> (score ranges).</span>} />
+                          <Step n={3} text={<span>With the group selected, click <strong>Add Level</strong> to define each rating: label, color, description, and score range (if score-based).</span>} />
                         </div>
-                        <Note>Grading scales are currently stored for reference. Direct integration with student report cards is a planned feature.</Note>
+                        <p className="text-xs font-semibold text-foreground mt-2">Assigning a scale to a context</p>
+                        <div className="space-y-2">
+                          <Step n={1} text={<span>Scroll down to <strong>Scale Assignments</strong> on the same Grading page.</span>} />
+                          <Step n={2} text={<span>Set the <strong>School Default</strong> — this scale is used for all progress observations unless overridden.</span>} />
+                          <Step n={3} text={<span>Optionally set <strong>Level Defaults</strong> (per class level, e.g. Toddlers use a different scale than Kinder) or <strong>Domain Defaults</strong> (per progress domain, e.g. Motor Skills uses a custom scale).</span>} />
+                        </div>
+                        <Note>Resolution priority when recording an observation: Student + Domain override (future) → Domain default → Level default → School default. The Progress Tracking page shows which scale is being used and why.</Note>
                       </div>
                     ),
                   },
@@ -2406,7 +2630,7 @@ export default function SettingsPage() {
               })()}
             </div>
             <div className="px-5 py-3 border-t border-border flex-shrink-0 text-xs text-muted-foreground">
-              {helpSearch ? <span>Showing results for "<span className="font-medium text-foreground">{helpSearch}</span>"</span> : <span>7 topics · click any to expand · <button onClick={() => setHelpView("getting-started")} className="underline hover:opacity-70">Getting Started guide</button></span>}
+              {helpSearch ? <span>Showing results for "<span className="font-medium text-foreground">{helpSearch}</span>"</span> : <span>10 topics · click any to expand · <button onClick={() => setHelpView("getting-started")} className="underline hover:opacity-70">Getting Started guide</button></span>}
             </div>
             </>
             )}

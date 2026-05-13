@@ -2,9 +2,10 @@
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import {
-  CheckCircle, XCircle, Clock, Bell, CalendarDays, CreditCard,
-  ChevronRight, AlertTriangle, Star, GraduationCap, BookOpen, TrendingUp,
-  Megaphone, ShieldCheck, Inbox,
+  CheckCircle, XCircle, Clock,
+  Bell, CalendarDays, CreditCard,
+  ChevronRight, AlertTriangle, Star,
+  BookOpen, TrendingUp, ShieldCheck, Inbox, Camera,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { PageSpinner } from "@/components/ui/spinner";
@@ -17,7 +18,7 @@ import {
   fetchUpcomingEvents,
   fetchNeedsAttention,
   fetchLatestHighlight,
-  buildServicePresence,
+  fetchServicePresence,
 } from "@/features/parent-journey/queries";
 import type {
   ParentJourneyItem,
@@ -26,29 +27,157 @@ import type {
   NeedsAttentionCounts,
   LatestHighlight,
   JourneyFilter,
+  ServicePresence,
 } from "@/features/parent-journey/types";
 
-// ── helpers ──────────────────────────────────────────────────────────────────
+// ── helpers ───────────────────────────────────────────────────────────────────
 
-function timeAgo(dateStr: string) {
+function timeAgo(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime();
-  const minutes = Math.floor(diff / 60000);
-  if (minutes < 2) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
+  const mins = Math.floor(diff / 60000);
+  if (mins < 2) return "just now";
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h`;
+  return `${Math.floor(hrs / 24)}d`;
 }
 
-function formatCurrency(n: number) {
-  return new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP", minimumFractionDigits: 0 }).format(n);
+function formatCurrency(n: number): string {
+  return new Intl.NumberFormat("en-PH", {
+    style: "currency", currency: "PHP", minimumFractionDigits: 0,
+  }).format(n);
 }
 
-function formatEventDate(dateStr: string) {
-  return new Date(dateStr + "T00:00:00").toLocaleDateString("en-PH", { weekday: "short", month: "short", day: "numeric" });
+function formatEventDate(dateStr: string): string {
+  return new Date(dateStr + "T00:00:00").toLocaleDateString("en-PH", {
+    weekday: "short", month: "short", day: "numeric",
+  });
 }
 
-// ── sub-components ────────────────────────────────────────────────────────────
+const EVENT_TYPE_LABELS: Record<string, string> = {
+  school_event: "School Event",
+  class_event:  "Class Event",
+  holiday:      "No Classes — Holiday",
+  deadline:     "Action Needed",
+  meeting:      "Meeting",
+  online_class: "Online Class",
+};
+
+const EVENT_TYPE_COLORS: Record<string, string> = {
+  school_event: "text-blue-600",
+  class_event:  "text-primary",
+  holiday:      "text-muted-foreground",
+  deadline:     "text-amber-600",
+  meeting:      "text-purple-600",
+  online_class: "text-blue-600",
+};
+
+// ── source category styles ────────────────────────────────────────────────────
+
+const CAT_STYLES: Record<string, {
+  Icon: React.ElementType;
+  iconBg: string;
+  iconColor: string;
+  labelColor: string;
+}> = {
+  school:  { Icon: BookOpen,    iconBg: "bg-primary/10",  iconColor: "text-primary",          labelColor: "text-primary/80" },
+  therapy: { Icon: TrendingUp,  iconBg: "bg-purple-100",  iconColor: "text-purple-600",       labelColor: "text-purple-600" },
+  medical: { Icon: ShieldCheck, iconBg: "bg-emerald-100", iconColor: "text-emerald-600",      labelColor: "text-emerald-600" },
+  system:  { Icon: Bell,        iconBg: "bg-muted",        iconColor: "text-muted-foreground", labelColor: "text-muted-foreground" },
+};
+
+const SENTIMENT_DOT: Record<string, string> = {
+  positive:        "bg-green-500",
+  neutral:         "bg-blue-400",
+  informational:   "bg-gray-400",
+  requires_action: "bg-orange-500",
+};
+
+// ── journey row ───────────────────────────────────────────────────────────────
+
+function JourneyRow({ item }: { item: ParentJourneyItem }) {
+  const cat = CAT_STYLES[item.sourceCategory] ?? CAT_STYLES.system;
+  const dot = SENTIMENT_DOT[item.sentiment] ?? "bg-gray-400";
+  const { Icon } = cat;
+  const hasMedia = (item.mediaCount ?? 0) > 0;
+  const thumbUrls = item.mediaThumbnailUrls ?? [];
+  const extra = Math.max(0, (item.mediaCount ?? 0) - 3);
+  return (
+    <div className="flex gap-3 py-3.5 border-b border-border/40 last:border-0">
+      <div className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 ${cat.iconBg}`}>
+        <Icon className={`w-4 h-4 ${cat.iconColor}`} />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-start justify-between gap-2">
+          <span className={`text-[10px] font-bold uppercase tracking-wider leading-tight ${cat.labelColor}`}>
+            {item.organizationName}
+          </span>
+          <span className="text-[10px] text-muted-foreground flex-shrink-0 leading-tight">
+            {timeAgo(item.occurredAt)}
+          </span>
+        </div>
+        <p className="text-sm font-semibold leading-snug mt-0.5">{item.title}</p>
+        <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed line-clamp-2">
+          {item.summary}
+        </p>
+
+        {/* Thumbnail strip — taps to the full updates page */}
+        {hasMedia && (
+          <Link href={item.actionHref ?? "/parent/updates"} className="mt-2 flex items-center gap-1.5 group">
+            {thumbUrls.slice(0, 3).map((url, i) => (
+              <div key={i} className="relative flex-shrink-0">
+                <img
+                  src={url}
+                  alt=""
+                  className="w-14 h-14 rounded-lg object-cover ring-1 ring-border"
+                />
+                {i === 2 && extra > 0 && (
+                  <div className="absolute inset-0 bg-black/55 rounded-lg flex items-center justify-center">
+                    <span className="text-white text-xs font-semibold">+{extra}</span>
+                  </div>
+                )}
+              </div>
+            ))}
+            {/* Fallback count when no signed URLs available */}
+            {thumbUrls.length === 0 && (
+              <span className="flex items-center gap-1 text-[10px] text-muted-foreground group-hover:text-foreground transition-colors">
+                <Camera className="w-3 h-3 flex-shrink-0" />
+                {item.mediaCount} photo{item.mediaCount !== 1 ? "s" : ""}
+              </span>
+            )}
+            {/* Count label next to thumbnails */}
+            {thumbUrls.length > 0 && (
+              <span className="text-[10px] text-muted-foreground group-hover:text-foreground transition-colors">
+                {item.mediaCount} photo{item.mediaCount !== 1 ? "s" : ""}
+              </span>
+            )}
+          </Link>
+        )}
+
+        {/* Action link — suppressed for school updates (covered by section-level "View updates") */}
+        {item.actionHref && item.itemType !== "update" && (
+          <Link
+            href={item.actionHref}
+            className="mt-1 text-xs text-primary hover:underline flex items-center gap-0.5"
+          >
+            {item.actionLabel ?? "See more"} <ChevronRight className="w-3 h-3" />
+          </Link>
+        )}
+      </div>
+      <div className="flex-shrink-0 pt-2">
+        <span className={`w-2 h-2 rounded-full block ${dot}`} />
+      </div>
+    </div>
+  );
+}
+
+// ── proud moment helpers ──────────────────────────────────────────────────────
+
+const REACTIONS = [
+  { type: "proud",      emoji: "❤️", label: "Proud" },
+  { type: "great_job",  emoji: "👏", label: "Great Job" },
+  { type: "keep_going", emoji: "🌟", label: "Keep Going" },
+];
 
 const CATEGORY_COLORS: Record<string, string> = {
   "Effort":         "bg-blue-100 text-blue-700",
@@ -61,12 +190,6 @@ const CATEGORY_COLORS: Record<string, string> = {
   "Helping Others": "bg-rose-100 text-rose-700",
 };
 
-const REACTIONS = [
-  { type: "proud",      emoji: "❤️", label: "Proud" },
-  { type: "great_job",  emoji: "👏", label: "Great Job" },
-  { type: "keep_going", emoji: "🌟", label: "Keep Going" },
-];
-
 const MOMENT_HEADINGS: Partial<Record<string, (n: string) => string>> = {
   "Kindness":       (n) => `${n} showed kindness today.`,
   "Effort":         (n) => `${n} gave it their all today.`,
@@ -78,55 +201,27 @@ const MOMENT_HEADINGS: Partial<Record<string, (n: string) => string>> = {
   "Helping Others": (n) => `${n} helped a classmate today.`,
 };
 
-function getMomentHeading(firstName: string, category: string) {
+function getMomentHeading(firstName: string, category: string): string {
   const fn = MOMENT_HEADINGS[category];
   return fn ? fn(firstName) : `${firstName} earned a proud moment.`;
 }
 
-const SENTIMENT_STYLES: Record<string, { dot: string; label: string }> = {
-  positive:         { dot: "bg-green-500",  label: "text-green-700" },
-  neutral:          { dot: "bg-blue-400",   label: "text-blue-700" },
-  informational:    { dot: "bg-primary",    label: "text-primary" },
-  requires_action:  { dot: "bg-orange-500", label: "text-orange-700" },
+// ── filter config ─────────────────────────────────────────────────────────────
+
+const JOURNEY_FILTERS: JourneyFilter[] = ["all", "school", "therapy", "medical"];
+
+const FILTER_LABELS: Record<JourneyFilter, string> = {
+  all:     "All",
+  school:  "School",
+  therapy: "Therapy",
+  medical: "Medical",
 };
 
-const SOURCE_ICONS: Record<string, React.ElementType> = {
-  school:  BookOpen,
-  therapy: TrendingUp,
-  medical: ShieldCheck,
-  system:  Bell,
+const FILTER_EMPTY: Partial<Record<JourneyFilter, string>> = {
+  therapy: "No therapy updates yet. Completed session notes from your child's therapist will appear here when shared.",
+  medical: "No medical updates yet. Assessment summaries and specialist notes will appear here when shared.",
+  school:  "No school updates yet. Teacher posts and progress notes will appear here.",
 };
-
-function JourneyCard({ item }: { item: ParentJourneyItem }) {
-  const style = SENTIMENT_STYLES[item.sentiment] ?? SENTIMENT_STYLES.informational;
-  const Icon = SOURCE_ICONS[item.sourceCategory] ?? Bell;
-
-  return (
-    <div className="flex gap-3 py-3 border-b border-border/50 last:border-0">
-      <div className="mt-0.5 flex-shrink-0">
-        <Icon className="w-4 h-4 text-muted-foreground" />
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
-          <span className={`text-[10px] font-semibold uppercase tracking-wide ${style.label}`}>
-            {item.organizationName}
-          </span>
-          <span className="text-[10px] text-muted-foreground">{timeAgo(item.occurredAt)}</span>
-        </div>
-        <p className="text-sm font-medium leading-snug">{item.title}</p>
-        <p className="text-sm text-muted-foreground leading-relaxed mt-0.5 line-clamp-2">{item.summary}</p>
-        {item.actionHref && (
-          <Link href={item.actionHref} className="text-xs text-primary hover:underline mt-1 inline-flex items-center gap-0.5">
-            {item.actionLabel ?? "See more"} <ChevronRight className="w-3 h-3" />
-          </Link>
-        )}
-      </div>
-      <div className="flex-shrink-0 mt-1.5">
-        <span className={`w-2 h-2 rounded-full block ${style.dot}`} />
-      </div>
-    </div>
-  );
-}
 
 // ── main component ────────────────────────────────────────────────────────────
 
@@ -135,11 +230,15 @@ export default function ParentDashboard() {
   const supabase = createClient();
 
   const [loading, setLoading] = useState(true);
+  const [parentName, setParentName] = useState<string | null>(null);
   const [attendance, setAttendance] = useState<AttendanceTodayResult>({ status: null, checkedInAt: null });
   const [events, setEvents] = useState<UpcomingItem[]>([]);
   const [needs, setNeeds] = useState<NeedsAttentionCounts>({ billingCount: 0, billingTotal: 0, docRequestCount: 0, docApprovalCount: 0 });
   const [highlight, setHighlight] = useState<LatestHighlight | null>(null);
   const [feed, setFeed] = useState<ParentJourneyItem[]>([]);
+  const [servicePresence, setServicePresence] = useState<ServicePresence>({
+    school: { connected: false }, therapy: { connected: false }, medical: { connected: false },
+  });
   const [activeFilter, setActiveFilter] = useState<JourneyFilter>("all");
   const [parentUserId, setParentUserId] = useState<string | null>(null);
   const [reactSaving, setReactSaving] = useState(false);
@@ -159,7 +258,11 @@ export default function ParentDashboard() {
     const userId = user?.id ?? null;
     setParentUserId(userId);
 
-    // Absence pre-check
+    // Try to extract first name from auth metadata
+    const rawName = ((user?.user_metadata?.full_name ?? user?.user_metadata?.name ?? "") as string).trim();
+    setParentName(rawName ? rawName.split(" ")[0] : null);
+
+    // Absence pre-check for today
     const today = new Date().toISOString().split("T")[0];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: absRow } = await (supabase as any)
@@ -171,13 +274,15 @@ export default function ParentDashboard() {
     setAbsenceReported(!!absRow);
 
     const resolvedSchool = schoolName || "School";
+    const resolvedClass = child?.className ?? "";
 
-    const [att, evts, needsData, hlData, feedData] = await Promise.all([
+    const [att, evts, needsData, hlData, feedData, spData] = await Promise.all([
       fetchAttendanceToday(supabase, childId),
-      fetchUpcomingEvents(supabase, resolvedSchool),
+      fetchUpcomingEvents(supabase, resolvedSchool, { schoolId, classId }),
       fetchNeedsAttention({ supabase, childId }),
       fetchLatestHighlight({ supabase, childId, userId }),
       fetchJourneyFeed({ supabase, childId, classId, schoolName: resolvedSchool }),
+      fetchServicePresence(supabase, childId, resolvedSchool, resolvedClass),
     ]);
 
     setAttendance(att);
@@ -185,6 +290,7 @@ export default function ParentDashboard() {
     setNeeds(needsData);
     setHighlight(hlData);
     setFeed(feedData);
+    setServicePresence(spData);
     setLoading(false);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [childId, classId]);
@@ -238,125 +344,161 @@ export default function ParentDashboard() {
   if (loading) return <PageSpinner />;
 
   const firstName = child?.firstName ?? "Your child";
-  const sp = buildServicePresence(schoolName, child?.className ?? "");
 
-  // Attendance card config
-  const attConfig =
-    attendance.status === "present" ? {
-      icon: CheckCircle, color: "text-green-600", bg: "bg-green-50 border-green-200",
-      label: `${firstName} is in school today`,
-      sub: attendance.checkedInAt ? `Checked in at ${attendance.checkedInAt}` : "Marked present",
-    } : attendance.status === "late" ? {
-      icon: Clock, color: "text-amber-600", bg: "bg-amber-50 border-amber-200",
-      label: `${firstName} arrived late today`,
-      sub: attendance.checkedInAt ? `Arrived at ${attendance.checkedInAt}` : "Marked late",
-    } : attendance.status === "absent" ? {
-      icon: XCircle, color: "text-red-600", bg: "bg-red-50 border-red-200",
-      label: `${firstName} is absent today`,
-      sub: "Not in school today",
-    } : {
-      icon: Clock, color: "text-muted-foreground", bg: "bg-muted border-transparent",
-      label: "Attendance not yet recorded",
-      sub: "Will update once the school marks attendance",
+  // ── Attendance status config ─────────────────────────────────────────────
+  const attStatus = (() => {
+    if (attendance.status === "present") return {
+      heading: `${firstName} is in school.`,
+      detail: attendance.checkedInAt ? `Checked in at ${attendance.checkedInAt}` : "Marked present",
+      detailColor: "text-green-600",
+      DetailIcon: CheckCircle,
     };
-  const AttIcon = attConfig.icon;
+    if (attendance.status === "late") return {
+      heading: `${firstName} arrived late today.`,
+      detail: attendance.checkedInAt ? `Arrived at ${attendance.checkedInAt}` : "Marked late",
+      detailColor: "text-amber-600",
+      DetailIcon: Clock,
+    };
+    if (attendance.status === "absent") return {
+      heading: `${firstName} is absent today.`,
+      detail: "Not in school today",
+      detailColor: "text-red-600",
+      DetailIcon: XCircle,
+    };
+    return {
+      heading: `${firstName}'s attendance is pending.`,
+      detail: "Will update once the school marks it",
+      detailColor: "text-muted-foreground",
+      DetailIcon: Clock,
+    };
+  })();
 
-  // Filter pills — only shown when feed has multiple source categories
-  const uniqueSources = [...new Set(feed.map((i) => i.sourceCategory))];
-  const showFilterPills = uniqueSources.length > 1;
-  const filteredFeed = activeFilter === "all" ? feed : feed.filter((i) => i.sourceCategory === activeFilter);
+  // ── Journey feed ─────────────────────────────────────────────────────────
+  const filteredFeed = activeFilter === "all"
+    ? feed
+    : feed.filter((i) => i.sourceCategory === activeFilter);
 
-  // Consolidated needs-attention count
-  const totalNeeds = needs.billingCount + needs.docRequestCount + needs.docApprovalCount;
+  const sp = servicePresence;
 
   return (
     <ErrorBoundary section="parent-dashboard" fallback="minimal">
-    <div className="space-y-5 pb-4">
+    <div className="space-y-5 pb-6">
 
-      {/* ── Greeting + service chips ─────────────────────────────────────── */}
-      <div>
-        <h1 className="text-xl font-semibold">Hello!</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">
-          {firstName}&apos;s support journey
+      {/* ── Greeting + Attendance Status ──────────────────────────────────── */}
+      <div className="pt-1">
+        <p className="text-sm text-muted-foreground">
+          {parentName ? `Hi, ${parentName}!` : "Hi there!"}
         </p>
-        <div className="flex items-center gap-2 mt-2 flex-wrap">
-          {sp.school.connected && (
-            <span className="inline-flex items-center gap-1 text-xs font-medium bg-primary/10 text-primary px-2 py-1 rounded-full">
-              <GraduationCap className="w-3 h-3" />
-              {sp.school.schoolName}
-            </span>
-          )}
-          {sp.therapy.connected && sp.therapy.clinicName && (
-            <span className="inline-flex items-center gap-1 text-xs font-medium bg-purple-100 text-purple-700 px-2 py-1 rounded-full">
-              <TrendingUp className="w-3 h-3" />
-              {sp.therapy.clinicName}
-            </span>
-          )}
+        <h1 className="text-2xl font-bold leading-tight mt-0.5">
+          {attStatus.heading}
+        </h1>
+        <div className={`flex items-center gap-1 mt-1 ${attStatus.detailColor}`}>
+          <attStatus.DetailIcon className="w-3.5 h-3.5 flex-shrink-0" />
+          <p className="text-xs">{attStatus.detail}</p>
         </div>
+
+        {/* Absence reporting — only when attendance not yet marked */}
+        {attendance.status === null && (
+          <div className="mt-2.5">
+            {absenceReported ? (
+              <div className="flex items-center gap-1.5 text-xs text-amber-700">
+                <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+                <span>Absence reported to school for today.</span>
+              </div>
+            ) : showAbsenceForm ? (
+              <div className="space-y-2 mt-1">
+                <input
+                  type="text"
+                  placeholder="Reason (optional) — e.g. Sick, family emergency…"
+                  value={absenceReason}
+                  onChange={(e) => setAbsenceReason(e.target.value)}
+                  className="w-full text-sm border border-border rounded-lg px-3 py-2 bg-background focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+                {absenceError && <p className="text-xs text-red-600">{absenceError}</p>}
+                <div className="flex gap-2">
+                  <button
+                    onClick={submitAbsence}
+                    disabled={submittingAbsence}
+                    className="flex-1 text-sm font-medium bg-amber-500 text-white rounded-lg py-2 hover:bg-amber-600 transition-colors disabled:opacity-50"
+                  >
+                    {submittingAbsence ? "Sending…" : "Notify School"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setShowAbsenceForm(false); setAbsenceReason(""); setAbsenceError(null); }}
+                    className="px-4 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowAbsenceForm(true)}
+                className="mt-0.5 text-xs text-amber-700 hover:text-amber-800 font-medium flex items-center gap-1.5 transition-colors"
+              >
+                <AlertTriangle className="w-3 h-3" />
+                Report {firstName} absent today
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
-      {/* ── Attendance card ───────────────────────────────────────────────── */}
-      <Card className={`border ${attConfig.bg}`}>
-        <CardContent className="p-4">
-          <div className="flex items-center gap-4">
-            <AttIcon className={`w-9 h-9 ${attConfig.color} flex-shrink-0`} />
-            <div className="flex-1 min-w-0">
-              <p className={`font-semibold text-sm ${attConfig.color}`}>{attConfig.label}</p>
-              <p className="text-xs text-muted-foreground">{attConfig.sub}</p>
-            </div>
-          </div>
-
-          {attendance.status === null && (
-            <div className="mt-3 pt-3 border-t border-border/40">
-              {absenceReported ? (
-                <div className="flex items-center gap-2 text-xs text-amber-700">
-                  <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-                  <span>Absence reported to school for today.</span>
-                </div>
-              ) : showAbsenceForm ? (
-                <div className="space-y-2">
-                  <p className="text-xs font-medium text-muted-foreground">Reason (optional)</p>
-                  <input
-                    type="text"
-                    placeholder="e.g. Sick, family emergency…"
-                    value={absenceReason}
-                    onChange={(e) => setAbsenceReason(e.target.value)}
-                    className="w-full text-sm border border-border rounded-lg px-3 py-2 bg-background focus:outline-none focus:ring-2 focus:ring-primary"
-                  />
-                  {absenceError && <p className="text-xs text-red-600">{absenceError}</p>}
-                  <div className="flex gap-2">
-                    <button
-                      onClick={submitAbsence}
-                      disabled={submittingAbsence}
-                      className="flex-1 text-sm font-medium bg-amber-500 text-white rounded-lg py-2 hover:bg-amber-600 transition-colors disabled:opacity-50"
-                    >
-                      {submittingAbsence ? "Sending…" : "Notify School"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { setShowAbsenceForm(false); setAbsenceReason(""); setAbsenceError(null); }}
-                      className="px-4 text-sm text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
+      {/* ── Action cards — Next Event + Billing Balance ───────────────────── */}
+      <div className="grid grid-cols-2 gap-3">
+        {/* Next Event */}
+        <Link href="/parent/events">
+          <Card className="h-full hover:bg-accent/20 transition-colors">
+            <CardContent className="p-3.5">
+              <div className="flex items-center gap-1.5 mb-2">
+                <CalendarDays className="w-3.5 h-3.5 text-muted-foreground" />
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Next Event
+                </p>
+              </div>
+              {events[0] ? (
+                <>
+                  <p className="font-semibold text-sm leading-snug line-clamp-2">{events[0].title}</p>
+                  <p className="text-xs text-muted-foreground mt-1">{formatEventDate(events[0].date)}</p>
+                  <p className={`text-[10px] font-medium mt-1 ${EVENT_TYPE_COLORS[events[0].eventType] ?? "text-muted-foreground"}`}>
+                    {EVENT_TYPE_LABELS[events[0].eventType] ?? "Event"}
+                  </p>
+                </>
               ) : (
-                <button
-                  onClick={() => setShowAbsenceForm(true)}
-                  className="text-xs text-amber-700 hover:text-amber-800 font-medium flex items-center gap-1.5 transition-colors"
-                >
-                  <AlertTriangle className="w-3 h-3" />
-                  Report {firstName} absent today
-                </button>
+                <p className="text-sm text-muted-foreground">No upcoming events</p>
               )}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+            </CardContent>
+          </Card>
+        </Link>
 
-      {/* ── Needs attention — single consolidated card ────────────────────── */}
-      {totalNeeds > 0 && (
+        {/* Billing Balance */}
+        <Link href="/parent/billing">
+          <Card className={`h-full hover:bg-accent/20 transition-colors ${needs.billingCount > 0 ? "border-amber-200 bg-amber-50/50" : ""}`}>
+            <CardContent className="p-3.5">
+              <div className="flex items-center gap-1.5 mb-2">
+                <CreditCard className="w-3.5 h-3.5 text-muted-foreground" />
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Balance
+                </p>
+              </div>
+              {needs.billingCount > 0 ? (
+                <>
+                  <p className="font-bold text-sm text-amber-800 leading-snug">
+                    {formatCurrency(needs.billingTotal)} due
+                  </p>
+                  <p className="text-xs text-amber-600 mt-1">Tap to view bills</p>
+                </>
+              ) : (
+                <p className="text-sm text-green-700 font-medium">All clear</p>
+              )}
+            </CardContent>
+          </Card>
+        </Link>
+      </div>
+
+      {/* ── Needs attention — document alerts only ────────────────────────── */}
+      {(needs.docRequestCount > 0 || needs.docApprovalCount > 0) && (
         <div className="space-y-2">
           {needs.docRequestCount > 0 && (
             <Link
@@ -369,7 +511,9 @@ export default function ParentDashboard() {
                 <p className="font-semibold text-blue-900 text-sm">
                   {needs.docRequestCount} document{needs.docRequestCount > 1 ? "s" : ""} requested by school
                 </p>
-                <p className="text-xs text-blue-700">Tap to view and upload the requested file{needs.docRequestCount > 1 ? "s" : ""}.</p>
+                <p className="text-xs text-blue-700 mt-0.5">
+                  Tap to view and upload the requested file{needs.docRequestCount > 1 ? "s" : ""}.
+                </p>
               </div>
               <ChevronRight className="w-4 h-4 text-blue-500 flex-shrink-0 mt-0.5" />
             </Link>
@@ -385,48 +529,36 @@ export default function ParentDashboard() {
                 <p className="font-semibold text-orange-900 text-sm">
                   {needs.docApprovalCount} consent{needs.docApprovalCount > 1 ? "s" : ""} awaiting your approval
                 </p>
-                <p className="text-xs text-orange-700">The school needs your permission to share a document.</p>
+                <p className="text-xs text-orange-700 mt-0.5">
+                  The school needs your permission to share a document.
+                </p>
               </div>
               <ChevronRight className="w-4 h-4 text-orange-500 flex-shrink-0 mt-0.5" />
-            </Link>
-          )}
-          {needs.billingCount > 0 && (
-            <Link
-              href="/parent/billing"
-              className="relative flex items-start gap-3 pl-5 pr-4 py-3.5 bg-red-50 border border-red-200 rounded-xl text-sm hover:bg-red-100 transition-colors overflow-hidden"
-            >
-              <span aria-hidden className="absolute inset-y-0 left-0 w-1 bg-red-500 rounded-l-xl" />
-              <CreditCard className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
-              <div className="flex-1 min-w-0">
-                <p className="font-semibold text-red-900 text-sm">
-                  {needs.billingCount} unpaid bill{needs.billingCount > 1 ? "s" : ""} · {formatCurrency(needs.billingTotal)}
-                </p>
-                <p className="text-xs text-red-700">Tap to view billing details.</p>
-              </div>
-              <ChevronRight className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
             </Link>
           )}
         </div>
       )}
 
-      {/* ── Latest highlight (Proud Moment) ──────────────────────────────── */}
+      {/* ── Proud Moment highlight ────────────────────────────────────────── */}
       {highlight && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
           <div className="flex items-center gap-2 mb-2">
-            <Star className="w-4 h-4 text-amber-500" />
+            <Star className="w-4 h-4 text-amber-500 flex-shrink-0" />
             <h2 className="font-semibold text-amber-900 text-sm">Proud Moment</h2>
             <span className="text-xs text-amber-600 ml-auto">{timeAgo(highlight.createdAt)}</span>
           </div>
           <p className="font-medium text-sm text-amber-900 leading-snug">
             {getMomentHeading(firstName, highlight.category)}
           </p>
-          <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+          <div className="flex items-center gap-2 mt-1.5">
             <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${CATEGORY_COLORS[highlight.category] ?? "bg-gray-100 text-gray-700"}`}>
               {highlight.category}
             </span>
           </div>
           {highlight.note && (
-            <p className="text-sm text-amber-800 mt-2 leading-relaxed italic">&ldquo;{highlight.note}&rdquo;</p>
+            <p className="text-sm text-amber-800 mt-2 leading-relaxed italic">
+              &ldquo;{highlight.note}&rdquo;
+            </p>
           )}
           <div className="flex items-center gap-2 mt-3 flex-wrap">
             {REACTIONS.map((r) => (
@@ -447,84 +579,71 @@ export default function ParentDashboard() {
           {highlight.myReaction && (
             <p className="text-xs text-green-700 mt-2">✓ Your reaction has been shared with the school.</p>
           )}
-          <Link href="/parent/proud-moments" className="mt-3 text-xs text-amber-700 hover:text-amber-900 font-medium flex items-center gap-1 transition-colors">
+          <Link
+            href="/parent/proud-moments"
+            className="mt-3 text-xs text-amber-700 hover:text-amber-900 font-medium flex items-center gap-1 transition-colors"
+          >
             View all moments <ChevronRight className="w-3 h-3" />
           </Link>
         </div>
       )}
 
-      {/* ── Upcoming events ───────────────────────────────────────────────── */}
-      {events.length > 0 && (
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <CalendarDays className="w-4 h-4 text-muted-foreground" />
-              <h2 className="font-semibold text-sm">Upcoming</h2>
-            </div>
-            <Link href="/parent/events" className="text-xs text-primary hover:underline flex items-center gap-0.5">
-              See all <ChevronRight className="w-3 h-3" />
-            </Link>
-          </div>
-          <div className="space-y-1.5">
-            {events.map((e) => (
-              <div key={e.id} className="flex items-center justify-between px-3 py-2.5 border border-border rounded-xl text-sm">
-                <div className="flex items-center gap-2.5">
-                  <Bell className="w-3.5 h-3.5 text-primary flex-shrink-0" />
-                  <span className="font-medium">{e.title}</span>
-                </div>
-                <span className="text-xs text-muted-foreground flex-shrink-0">{formatEventDate(e.date)}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* ── Child journey feed ─────────────────────────────────────────────── */}
+      {/* ── Child's Journey ───────────────────────────────────────────────── */}
       <div>
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <Megaphone className="w-4 h-4 text-muted-foreground" />
-            <h2 className="font-semibold text-sm">{firstName}&apos;s Journey</h2>
-          </div>
-          <Link href="/parent/updates" className="text-xs text-primary hover:underline flex items-center gap-0.5">
-            Updates <ChevronRight className="w-3 h-3" />
+        {/* Heading row: title left, "View updates" right */}
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="font-semibold text-base">{firstName}&apos;s Journey</h2>
+          <Link
+            href="/parent/updates"
+            className="text-xs text-primary flex items-center gap-0.5 hover:underline flex-shrink-0"
+          >
+            View updates <ChevronRight className="w-3 h-3" />
           </Link>
         </div>
-
-        {showFilterPills && (
-          <div className="flex gap-2 mb-3 flex-wrap">
-            {(["all", ...uniqueSources] as JourneyFilter[]).map((f) => (
+        {/* Filter pills */}
+        <div className="flex items-center gap-1.5 flex-wrap mb-3">
+          {JOURNEY_FILTERS.map((f) => {
+            const isActive = activeFilter === f;
+            return (
               <button
                 key={f}
                 onClick={() => setActiveFilter(f)}
-                className={`text-xs px-3 py-1 rounded-full border transition-colors ${
-                  activeFilter === f
+                className={`inline-flex items-center gap-1 text-xs px-3 py-1 rounded-full border transition-colors flex-shrink-0 ${
+                  isActive
                     ? "bg-primary text-primary-foreground border-primary"
-                    : "border-border text-muted-foreground hover:text-foreground"
+                    : "border-border text-muted-foreground hover:text-foreground hover:border-foreground/30"
                 }`}
               >
-                {f === "all" ? "All" : f.charAt(0).toUpperCase() + f.slice(1)}
+                {FILTER_LABELS[f]}
+                {/* Connected indicator dots for therapy/medical */}
+                {f === "therapy" && sp.therapy.connected && (
+                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isActive ? "bg-purple-200" : "bg-purple-500"}`} />
+                )}
+                {f === "medical" && sp.medical.connected && (
+                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isActive ? "bg-emerald-200" : "bg-emerald-500"}`} />
+                )}
               </button>
-            ))}
-          </div>
-        )}
-
+            );
+          })}
+        </div>
+        {/* Feed or empty state */}
         {filteredFeed.length === 0 ? (
           <Card>
-            <CardContent className="py-8 text-center text-muted-foreground text-sm">
-              No recent updates from {firstName}&apos;s school.
+            <CardContent className="py-8 text-center text-muted-foreground text-sm px-6 leading-relaxed">
+              {FILTER_EMPTY[activeFilter] ?? "No updates yet."}
             </CardContent>
           </Card>
         ) : (
           <Card>
             <CardContent className="px-4 py-2">
               {filteredFeed.map((item) => (
-                <JourneyCard key={item.id} item={item} />
+                <JourneyRow key={item.id} item={item} />
               ))}
             </CardContent>
           </Card>
         )}
       </div>
+
     </div>
     </ErrorBoundary>
   );

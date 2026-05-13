@@ -23,6 +23,8 @@ export interface ParentJourneyItem {
   sentiment: JourneySentiment;
   actionHref?: string;
   actionLabel?: string;
+  mediaCount?: number;
+  mediaThumbnailUrls?: string[];
 }
 
 export interface ServicePresence {
@@ -30,7 +32,7 @@ export interface ServicePresence {
     | { connected: true; schoolName: string; className: string }
     | { connected: false };
   therapy: { connected: boolean; clinicName?: string };
-  medical: { connected: false };
+  medical: { connected: boolean; practiceName?: string };
 }
 
 export interface UpcomingItem {
@@ -41,6 +43,7 @@ export interface UpcomingItem {
   category: SourceCategory;
   organizationName: string;
   actionHref?: string;
+  eventType: string;
 }
 
 export interface AttendanceTodayResult {

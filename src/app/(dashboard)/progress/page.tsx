@@ -1,9 +1,9 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import {
   Plus, BookOpen, Eye, EyeOff, Search, HelpCircle, X,
   ChevronDown, ChevronRight, AlertTriangle, TrendingUp,
-  TrendingDown, Minus, ArrowRight, Clock,
+  TrendingDown, Minus, ArrowRight, Clock, Info,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
@@ -15,7 +15,8 @@ import { PageSpinner, ErrorAlert } from "@/components/ui/spinner";
 import { createClient } from "@/lib/supabase/client";
 import { useSchoolContext } from "@/contexts/SchoolContext";
 
-type Rating = "emerging" | "developing" | "consistent" | "advanced";
+// ── Types ─────────────────────────────────────────────────────────────────────
+
 type Visibility = "internal_only" | "parent_visible";
 type TrendDirection = "improving" | "consistent" | "declining" | "insufficient";
 
@@ -29,7 +30,12 @@ interface Observation {
   id: string;
   studentId: string;
   categoryId: string;
-  rating: Rating;
+  /** Label stored in DB — could be 'emerging' (legacy) or any scale item label. */
+  rating: string;
+  /** grading_scales.id used when the observation was recorded; null for legacy. */
+  scaleItemId: string | null;
+  /** Precomputed rank for trend analysis; uses scale sort_order or legacy fallback. */
+  rank: number;
   note: string;
   observedAt: string;
   observedBy: string;
@@ -41,25 +47,59 @@ interface StudentOption {
   name: string;
   classId: string;
   className: string;
+  /** class_levels.id for the student's active class; null if class has no level assigned. */
+  levelId: string | null;
 }
 
-const RATINGS: Rating[] = ["emerging", "developing", "consistent", "advanced"];
+interface ScaleItem {
+  id: string;
+  scaleSetId: string;
+  label: string;
+  description: string;
+  color: string;
+  sortOrder: number;
+}
 
-// Single source of truth for grading scale metadata.
-// rank drives ordering and trend direction; colorClass and description are display properties.
-// Replace this map with a runtime lookup when grading scales are wired to observations.
-const RATING_META: Record<Rating, { rank: number; colorClass: string; description: string }> = {
+interface ScaleSet {
+  id: string;
+  name: string;
+}
+
+interface GradingScaleAssignment {
+  id: string;
+  gradingScaleSetId: string;
+  assignmentType: "school_default" | "level_default" | "domain_default" | "student_domain_override";
+  levelId: string | null;
+  domainId: string | null;
+  studentId: string | null;
+  isActive: boolean;
+}
+
+interface ResolvedScale {
+  scaleSetId: string;
+  scaleSetName: string;
+  items: ScaleItem[];
+  sourceLabel: string; // e.g. "Domain default", "School default"
+}
+
+// ── Legacy rating constants (used for backward-compat display of old observations) ─
+
+type LegacyRating = "emerging" | "developing" | "consistent" | "advanced";
+
+const LEGACY_RATING_META: Record<LegacyRating, { rank: number; colorClass: string; description: string }> = {
   emerging:   { rank: 0, colorClass: "bg-red-100 text-red-700",       description: "Beginning to show this skill — needs significant support." },
   developing: { rank: 1, colorClass: "bg-yellow-100 text-yellow-700", description: "Building this skill with teacher support and prompting."  },
   consistent: { rank: 2, colorClass: "bg-blue-100 text-blue-700",     description: "Demonstrates this skill reliably with minimal prompting."  },
   advanced:   { rank: 3, colorClass: "bg-green-100 text-green-700",   description: "Demonstrates this skill confidently; can model it for peers." },
 };
 
-// Derived — keeps all rendering code unchanged when RATING_META is replaced.
-const RATING_RANK   = Object.fromEntries(RATINGS.map((r) => [r, RATING_META[r].rank]))       as Record<Rating, number>;
-const RATING_COLORS = Object.fromEntries(RATINGS.map((r) => [r, RATING_META[r].colorClass])) as Record<Rating, string>;
+// Maps legacy label → rank for observations without a scale_item_id.
+const LEGACY_RATING_RANK: Record<string, number> = Object.fromEntries(
+  Object.entries(LEGACY_RATING_META).map(([k, v]) => [k, v.rank])
+);
 
-// Styling for each trend kind — static objects keep Tailwind class names purgeable.
+// ── Trend helpers ──────────────────────────────────────────────────────────────
+
 const TREND_STYLES = {
   positive: { icon: TrendingUp,   iconClass: "text-green-600",  textClass: "text-green-700"  },
   neutral:  { icon: Minus,        iconClass: "text-blue-500",   textClass: "text-blue-700"   },
@@ -69,54 +109,58 @@ const TREND_STYLES = {
 
 function computeTrend(obs: Observation[]): TrendDirection {
   if (obs.length < 2) return "insufficient";
-  // obs is newest-first; sort chronologically for overall direction
   const sorted = [...obs].sort((a, b) => a.observedAt.localeCompare(b.observedAt));
-  const oldest = RATING_RANK[sorted[0].rating];
-  const newest = RATING_RANK[sorted[sorted.length - 1].rating];
+  const oldest = sorted[0].rank;
+  const newest = sorted[sorted.length - 1].rank;
   if (newest > oldest) return "improving";
   if (newest < oldest) return "declining";
   return "consistent";
 }
 
-// Human-readable trend summary. Uses RATING_RANK for direction so the logic
-// works regardless of label names — only the description strings in RATING_META
-// need updating for a different grading scale.
-function buildTrendSummary(
-  obs: Observation[]
-): { text: string; kind: keyof typeof TREND_STYLES } {
+function buildTrendSummary(obs: Observation[]): { text: string; kind: keyof typeof TREND_STYLES } {
   if (obs.length === 0) return { text: "No observations recorded for this domain yet.", kind: "info" };
-  if (obs.length === 1)
-    return {
-      text: "Baseline established. Additional observations will help reveal growth patterns over time.",
-      kind: "info",
-    };
+  if (obs.length === 1) return { text: "Baseline established. Additional observations will help reveal growth patterns over time.", kind: "info" };
 
   const sorted = [...obs].sort((a, b) => a.observedAt.localeCompare(b.observedAt));
-  const oldestRank = RATING_RANK[sorted[0].rating];
-  const newestRank = RATING_RANK[sorted[sorted.length - 1].rating];
   const n = obs.length;
-  const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-  const from = cap(sorted[0].rating);
-  const to   = cap(sorted[sorted.length - 1].rating);
+  const from = sorted[0].rating;
+  const to   = sorted[sorted.length - 1].rating;
+  const cap  = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
-  if (newestRank > oldestRank) {
-    if (n === 2) return { text: `Early signs of growth — moved from ${from} to ${to}.`, kind: "positive" };
-    if (n <= 4)  return { text: `Steady improvement across ${n} observations — from ${from} to ${to}.`, kind: "positive" };
-    return { text: `Strong growth trend — progressed from ${from} to ${to} across ${n} observations.`, kind: "positive" };
+  if (sorted[sorted.length - 1].rank > sorted[0].rank) {
+    if (n === 2) return { text: `Early signs of growth — moved from ${cap(from)} to ${cap(to)}.`, kind: "positive" };
+    if (n <= 4)  return { text: `Steady improvement across ${n} observations — from ${cap(from)} to ${cap(to)}.`, kind: "positive" };
+    return { text: `Strong growth trend — progressed from ${cap(from)} to ${cap(to)} across ${n} observations.`, kind: "positive" };
   }
-
-  if (newestRank < oldestRank) {
-    if (n === 2) return { text: `A shift noted from ${from} to ${to}. Worth following up at the next check-in.`, kind: "caution" };
-    return { text: `Regression noted across ${n} observations — from ${from} to ${to}. Reviewing support strategies may help.`, kind: "caution" };
+  if (sorted[sorted.length - 1].rank < sorted[0].rank) {
+    if (n === 2) return { text: `A shift noted from ${cap(from)} to ${cap(to)}. Worth following up at the next check-in.`, kind: "caution" };
+    return { text: `Regression noted across ${n} observations — from ${cap(from)} to ${cap(to)}. Reviewing support strategies may help.`, kind: "caution" };
   }
-
-  if (n <= 3) return { text: `Holding steady at ${to} across ${n} observations.`, kind: "neutral" };
-  return { text: `Consistent pattern across ${n} observations — sustained at ${to}.`, kind: "neutral" };
+  if (n <= 3) return { text: `Holding steady at ${cap(to)} across ${n} observations.`, kind: "neutral" };
+  return { text: `Consistent pattern across ${n} observations — sustained at ${cap(to)}.`, kind: "neutral" };
 }
 
 function daysSince(dateStr: string): number {
   return Math.floor((Date.now() - new Date(dateStr).getTime()) / (1000 * 60 * 60 * 24));
 }
+
+// ── Display helpers ────────────────────────────────────────────────────────────
+
+/** Returns a Tailwind color class pair for a rating label (legacy only; unknown → muted). */
+function getLegacyColorClass(rating: string): string {
+  return LEGACY_RATING_META[rating as LegacyRating]?.colorClass ?? "bg-muted text-muted-foreground";
+}
+
+/** Returns a short plain-text description for a rating in the context of known scale items. */
+function getRatingDescription(rating: string, scaleItemId: string | null, itemById: Map<string, ScaleItem>): string {
+  if (scaleItemId) {
+    const item = itemById.get(scaleItemId);
+    if (item?.description) return item.description;
+  }
+  return LEGACY_RATING_META[rating as LegacyRating]?.description ?? "";
+}
+
+// ── Page component ─────────────────────────────────────────────────────────────
 
 export default function ProgressPage() {
   const { schoolId, activeYear, userId } = useSchoolContext();
@@ -125,6 +169,9 @@ export default function ProgressPage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [students, setStudents] = useState<StudentOption[]>([]);
   const [observations, setObservations] = useState<Observation[]>([]);
+  const [scaleAssignments, setScaleAssignments] = useState<GradingScaleAssignment[]>([]);
+  const [allScaleItems, setAllScaleItems] = useState<ScaleItem[]>([]);
+  const [allScaleSets, setAllScaleSets] = useState<ScaleSet[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -143,11 +190,23 @@ export default function ProgressPage() {
   const [form, setForm] = useState({
     studentId: "",
     categoryId: "",
-    rating: "developing" as Rating,
+    rating: "",
+    scaleItemId: null as string | null,
     note: "",
     observedAt: new Date().toISOString().split("T")[0],
     visibility: "parent_visible" as Visibility,
   });
+  // undefined = not yet resolved for current student+domain;
+  // null = resolved but no assignment found
+  const [modalResolvedScale, setModalResolvedScale] = useState<ResolvedScale | null | undefined>(undefined);
+
+  // Derived: fast lookup for scale items by id
+  const itemById = useMemo(
+    () => new Map(allScaleItems.map((i) => [i.id, i])),
+    [allScaleItems],
+  );
+
+  // ── Data loading ───────────────────────────────────────────────────────────
 
   useEffect(() => {
     if (!schoolId) { setLoading(false); return; }
@@ -158,7 +217,11 @@ export default function ProgressPage() {
   async function loadAll() {
     setLoading(true);
     setError(null);
-    await Promise.all([loadCategories(), loadStudents()]);
+    await Promise.all([
+      loadCategories(),
+      loadStudents(),
+      loadScaleData(),
+    ]);
     setLoading(false);
   }
 
@@ -176,7 +239,7 @@ export default function ProgressPage() {
     if (!activeYear?.id) { setStudents([]); return; }
     const { data } = await supabase
       .from("enrollments")
-      .select("student_id, class_id, students(first_name, last_name), classes(name)")
+      .select("student_id, class_id, students(first_name, last_name), classes(name, level_id)")
       .eq("school_year_id", activeYear.id)
       .eq("status", "enrolled");
 
@@ -186,43 +249,98 @@ export default function ProgressPage() {
       name: e.students ? `${e.students.first_name} ${e.students.last_name}` : e.student_id,
       classId: e.class_id ?? "",
       className: e.classes?.name ?? "",
+      levelId: e.classes?.level_id ?? null,
     })).sort((a: StudentOption, b: StudentOption) => a.name.localeCompare(b.name));
 
     setStudents(opts);
+  }
+
+  async function loadScaleData() {
+    if (!schoolId) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sb = supabase as any;
+    const [{ data: assignRows }, { data: itemRows }, { data: setRows }] = await Promise.all([
+      sb.from("grading_scale_assignments")
+        .select("id, grading_scale_set_id, assignment_type, level_id, domain_id, student_id, is_active")
+        .eq("school_id", schoolId),
+      sb.from("grading_scales")
+        .select("id, scale_set_id, label, description, color, sort_order")
+        .eq("school_id", schoolId)
+        .order("sort_order"),
+      sb.from("grading_scale_sets")
+        .select("id, name")
+        .eq("school_id", schoolId),
+    ]);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    setScaleAssignments(((assignRows ?? []) as any[]).map((r: any) => ({
+      id: r.id,
+      gradingScaleSetId: r.grading_scale_set_id,
+      assignmentType: r.assignment_type,
+      levelId: r.level_id ?? null,
+      domainId: r.domain_id ?? null,
+      studentId: r.student_id ?? null,
+      isActive: r.is_active,
+    })));
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    setAllScaleItems(((itemRows ?? []) as any[]).map((r: any) => ({
+      id: r.id,
+      scaleSetId: r.scale_set_id,
+      label: r.label,
+      description: r.description ?? "",
+      color: r.color ?? "#6b7280",
+      sortOrder: r.sort_order ?? 0,
+    })));
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    setAllScaleSets(((setRows ?? []) as any[]).map((r: any) => ({ id: r.id, name: r.name })));
   }
 
   async function loadObservations(studentId: string) {
     if (!studentId) return;
     const { data, error: err } = await supabase
       .from("progress_observations")
-      .select(`id, student_id, category_id, rating, note, observed_at, visibility,
+      .select(`id, student_id, category_id, rating, scale_item_id, note, observed_at, visibility,
         observer:profiles(full_name)`)
       .eq("student_id", studentId)
       .order("observed_at", { ascending: false });
 
     if (err) { setError(err.message); return; }
 
-    const obs = (data ?? []).map((o) => ({
-      id: o.id,
-      studentId: o.student_id,
-      categoryId: o.category_id,
-      rating: o.rating as Rating,
-      note: o.note ?? "",
-      observedAt: o.observed_at,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      observedBy: (o as any).observer?.full_name ?? "—",
-      visibility: o.visibility as Visibility,
-    }));
+    const obs = (data ?? []).map((o) => {
+      // Rank: prefer scale item sort_order; fall back to legacy map
+      let rank = 0;
+      const sid = (o as unknown as { scale_item_id: string | null }).scale_item_id ?? null;
+      if (sid) {
+        const item = itemById.get(sid);
+        if (item) rank = item.sortOrder;
+        else rank = LEGACY_RATING_RANK[o.rating] ?? 0;
+      } else {
+        rank = LEGACY_RATING_RANK[o.rating] ?? 0;
+      }
+      return {
+        id: o.id,
+        studentId: o.student_id,
+        categoryId: o.category_id,
+        rating: o.rating as string,
+        scaleItemId: sid,
+        rank,
+        note: o.note ?? "",
+        observedAt: o.observed_at,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        observedBy: (o as any).observer?.full_name ?? "—",
+        visibility: o.visibility as Visibility,
+      };
+    });
     setObservations(obs);
 
-    // Auto-select first category that has observations; fall back to first category
     if (categories.length > 0) {
       const firstWithObs = categories.find((c) => obs.some((o) => o.categoryId === c.id));
       setSelectedCategory(firstWithObs?.id ?? categories[0].id);
     }
   }
 
-  // Reset when student changes
   useEffect(() => {
     setObservations([]);
     setSelectedCategory(categories[0]?.id ?? "");
@@ -231,16 +349,101 @@ export default function ProgressPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedStudent]);
 
+  // ── Scale resolution ───────────────────────────────────────────────────────
+
+  const resolveScaleForStudentDomain = useCallback(
+    (studentId: string, domainId: string): ResolvedScale | null => {
+      if (!studentId || !domainId) return null;
+      const student = students.find((s) => s.id === studentId);
+      const studentLevelId = student?.levelId ?? null;
+      const active = scaleAssignments.filter((a) => a.isActive);
+
+      // Priority order: student+domain → domain → level → school
+      const candidates: Array<{ a: GradingScaleAssignment; sourceLabel: string }> = [
+        ...active
+          .filter((a) =>
+            a.assignmentType === "student_domain_override" &&
+            a.studentId === studentId &&
+            a.domainId === domainId)
+          .map((a) => ({ a, sourceLabel: "Student override" })),
+        ...active
+          .filter((a) => a.assignmentType === "domain_default" && a.domainId === domainId)
+          .map((a) => ({ a, sourceLabel: "Domain default" })),
+        ...(studentLevelId
+          ? active
+              .filter((a) => a.assignmentType === "level_default" && a.levelId === studentLevelId)
+              .map((a) => ({ a, sourceLabel: "Level default" }))
+          : []),
+        ...active
+          .filter((a) => a.assignmentType === "school_default")
+          .map((a) => ({ a, sourceLabel: "School default" })),
+      ];
+
+      for (const { a, sourceLabel } of candidates) {
+        const set = allScaleSets.find((s) => s.id === a.gradingScaleSetId);
+        const items = allScaleItems
+          .filter((i) => i.scaleSetId === a.gradingScaleSetId)
+          .sort((x, y) => x.sortOrder - y.sortOrder);
+        if (set && items.length > 0) {
+          return { scaleSetId: set.id, scaleSetName: set.name, items, sourceLabel };
+        }
+      }
+      return null;
+    },
+    [students, scaleAssignments, allScaleItems, allScaleSets],
+  );
+
+  // ── Modal helpers ──────────────────────────────────────────────────────────
+
+  // Re-resolve scale whenever student or domain changes inside the modal.
+  useEffect(() => {
+    if (!modalOpen) return;
+    const scale = resolveScaleForStudentDomain(form.studentId, form.categoryId);
+    setModalResolvedScale(scale);
+    // Auto-select first item from new scale when domain/student changes
+    const firstItem = scale?.items[0];
+    if (firstItem && (form.scaleItemId == null || !scale?.items.some((i) => i.id === form.scaleItemId))) {
+      setForm((prev) => ({ ...prev, rating: firstItem.label, scaleItemId: firstItem.id }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.studentId, form.categoryId, modalOpen]);
+
+  function openModal(preCategory?: string) {
+    const catId = preCategory ?? selectedCategory ?? categories[0]?.id ?? "";
+    const studentId = selectedStudent;
+    const scale = resolveScaleForStudentDomain(studentId, catId);
+    const firstItem = scale?.items[0];
+    setForm({
+      studentId,
+      categoryId: catId,
+      rating: firstItem?.label ?? "",
+      scaleItemId: firstItem?.id ?? null,
+      note: "",
+      observedAt: new Date().toISOString().split("T")[0],
+      visibility: "parent_visible",
+    });
+    setModalResolvedScale(scale);
+    setFormError(null);
+    setModalOpen(true);
+  }
+
   async function handleSave() {
     if (!form.studentId) { setFormError("Select a student."); return; }
-    if (!form.categoryId) { setFormError("Select a category."); return; }
+    if (!form.categoryId) { setFormError("Select a domain."); return; }
+    if (modalResolvedScale === null) {
+      setFormError("No grading scale is assigned for this student/domain. Ask an admin to assign one in Settings → Grading.");
+      return;
+    }
+    if (!form.rating) { setFormError("Select a rating."); return; }
     setSaving(true);
     setFormError(null);
 
-    const { error: iErr } = await supabase.from("progress_observations").insert({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error: iErr } = await (supabase as any).from("progress_observations").insert({
       student_id: form.studentId,
       category_id: form.categoryId,
       rating: form.rating,
+      scale_item_id: form.scaleItemId,
       note: form.note.trim() || null,
       observed_at: form.observedAt,
       observer_id: userId!,
@@ -253,18 +456,7 @@ export default function ProgressPage() {
     if (form.studentId === selectedStudent) await loadObservations(selectedStudent);
   }
 
-  function openModal(preCategory?: string) {
-    setForm({
-      studentId: selectedStudent,
-      categoryId: preCategory ?? selectedCategory ?? categories[0]?.id ?? "",
-      rating: "developing",
-      note: "",
-      observedAt: new Date().toISOString().split("T")[0],
-      visibility: "parent_visible",
-    });
-    setFormError(null);
-    setModalOpen(true);
-  }
+  // ── Derived view-model ─────────────────────────────────────────────────────
 
   const studentName = students.find((s) => s.id === selectedStudent)?.name ?? "";
 
@@ -277,7 +469,6 @@ export default function ProgressPage() {
     (!studentSearch || s.name.toLowerCase().includes(studentSearch.toLowerCase()))
   );
 
-  // Derived: observations for selected category, newest first
   const catObs = observations
     .filter((o) => o.categoryId === selectedCategory)
     .sort((a, b) => b.observedAt.localeCompare(a.observedAt));
@@ -285,19 +476,20 @@ export default function ProgressPage() {
   const activeCat = categories.find((c) => c.id === selectedCategory);
   const trend = computeTrend(catObs);
   const summary = buildTrendSummary(catObs);
-  // Progression strip: most recent 5, displayed oldest→newest
   const progressionObs = catObs.slice(0, 5).reverse();
   const daysSinceLastObs = latestObs ? daysSince(latestObs.observedAt) : null;
 
-  // Domain navigation grouping
   const activeDomainsInNav = categories.filter((c) => observations.some((o) => o.categoryId === c.id));
   const unobservedDomains  = categories.filter((c) => !observations.some((o) => o.categoryId === c.id));
-  // Expand unobserved section automatically when no active domains exist yet
   const showUnobservedSection = unobservedOpen || activeDomainsInNav.length === 0;
+
+  // Whether save is allowed: scale must be resolved (undefined = not yet checked, allowed to proceed)
+  const canSave = modalResolvedScale !== null && !!form.rating && !!form.studentId && !!form.categoryId;
 
   if (loading) return <PageSpinner />;
 
-  // Shared domain button renderer (used in both active and unobserved sections)
+  // ── Domain nav button ──────────────────────────────────────────────────────
+
   const renderDomainButton = (cat: Category) => {
     const cObs = observations
       .filter((o) => o.categoryId === cat.id)
@@ -305,6 +497,9 @@ export default function ProgressPage() {
     const latest = cObs[0];
     const t = computeTrend(cObs);
     const isSelected = selectedCategory === cat.id;
+    const colorClass = latest ? getLegacyColorClass(latest.rating) : "";
+    const daysSince30 = latest ? daysSince(latest.observedAt) >= 30 : false;
+
     return (
       <button
         key={cat.id}
@@ -319,25 +514,40 @@ export default function ProgressPage() {
           <span className={`text-sm font-medium truncate ${isSelected ? "text-primary" : "text-foreground"}`}>
             {cat.name}
           </span>
-          {latest ? (
-            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full flex-shrink-0 ${RATING_COLORS[latest.rating]}`}>
-              {latest.rating[0].toUpperCase()}
-            </span>
-          ) : (
-            <span className="text-[10px] text-muted-foreground flex-shrink-0">—</span>
-          )}
+          <div className="flex items-center gap-1 flex-shrink-0">
+            {daysSince30 && (
+              <span title="No update in 30+ days"><Clock className="w-2.5 h-2.5 text-amber-500" /></span>
+            )}
+            {latest ? (
+              <span
+                className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${colorClass}`}
+                title={latest.rating}
+              >
+                {latest.rating[0].toUpperCase()}
+              </span>
+            ) : (
+              <span className="text-[10px] text-muted-foreground">—</span>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-1 mt-0.5">
           <span className="text-xs text-muted-foreground">
             {cObs.length > 0 ? `${cObs.length} obs` : "No observations"}
           </span>
-          {t === "improving"  && <TrendingUp   className="w-3 h-3 text-green-500"  />}
-          {t === "declining"  && <TrendingDown className="w-3 h-3 text-orange-500" />}
-          {t === "consistent" && <Minus        className="w-3 h-3 text-blue-400"   />}
+          {latest && (
+            <span className="text-[10px] text-muted-foreground ml-1">
+              · {latest.observedAt}
+            </span>
+          )}
+          {t === "improving"  && <TrendingUp   className="w-3 h-3 text-green-500 ml-1"  />}
+          {t === "declining"  && <TrendingDown className="w-3 h-3 text-orange-500 ml-1" />}
+          {t === "consistent" && <Minus        className="w-3 h-3 text-blue-400 ml-1"   />}
         </div>
       </button>
     );
   };
+
+  // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <div className="space-y-6">
@@ -430,7 +640,7 @@ export default function ProgressPage() {
                 {/* Domain navigation */}
                 <div className="w-full md:w-56 lg:w-60 md:flex-shrink-0">
 
-                  {/* Mobile: horizontal scrollable pills (all domains) */}
+                  {/* Mobile: horizontal scrollable pills */}
                   <div className="md:hidden overflow-x-auto pb-1 -mx-1 px-1">
                     <div className="flex gap-2" style={{ width: "max-content" }}>
                       {categories.map((cat) => {
@@ -451,11 +661,9 @@ export default function ProgressPage() {
                           >
                             {cat.name}
                             {latest && (
-                              <span
-                                className={`text-[10px] font-semibold px-1 rounded ${
-                                  isSelected ? "bg-white/20 text-white" : RATING_COLORS[latest.rating]
-                                }`}
-                              >
+                              <span className={`text-[10px] font-semibold px-1 rounded ${
+                                isSelected ? "bg-white/20 text-white" : getLegacyColorClass(latest.rating)
+                              }`}>
                                 {latest.rating[0].toUpperCase()}
                               </span>
                             )}
@@ -465,10 +673,8 @@ export default function ProgressPage() {
                     </div>
                   </div>
 
-                  {/* Desktop: vertical list, split into active / unobserved */}
+                  {/* Desktop: vertical list */}
                   <div className="hidden md:flex flex-col gap-0.5">
-
-                    {/* Active domains */}
                     {activeDomainsInNav.length > 0 && (
                       <>
                         {unobservedDomains.length > 0 && (
@@ -480,7 +686,6 @@ export default function ProgressPage() {
                       </>
                     )}
 
-                    {/* Unobserved domains — collapsible when active domains exist */}
                     {unobservedDomains.length > 0 && (
                       <div className={activeDomainsInNav.length > 0 ? "mt-2" : ""}>
                         {activeDomainsInNav.length > 0 ? (
@@ -532,7 +737,7 @@ export default function ProgressPage() {
                         </button>
                       </div>
 
-                      {/* Operational insight: stale domain */}
+                      {/* Stale domain alert */}
                       {daysSinceLastObs !== null && daysSinceLastObs >= 30 && (
                         <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 text-xs">
                           <Clock className="w-3.5 h-3.5 flex-shrink-0" />
@@ -568,23 +773,23 @@ export default function ProgressPage() {
                                 Growth Journey
                               </p>
 
-                              {/* Current status with inline scale description */}
                               <div className="mb-4">
                                 <div className="flex items-center gap-3 flex-wrap mb-1">
                                   <span className="text-sm text-muted-foreground">Currently:</span>
-                                  <span className={`px-3 py-1 rounded-full text-sm font-medium capitalize ${RATING_COLORS[latestObs.rating]}`}>
+                                  <span className={`px-3 py-1 rounded-full text-sm font-medium capitalize ${getLegacyColorClass(latestObs.rating)}`}>
                                     {latestObs.rating}
                                   </span>
                                 </div>
-                                <p className="text-xs text-muted-foreground italic mb-1">
-                                  {RATING_META[latestObs.rating].description}
-                                </p>
+                                {getRatingDescription(latestObs.rating, latestObs.scaleItemId, itemById) && (
+                                  <p className="text-xs text-muted-foreground italic mb-1">
+                                    {getRatingDescription(latestObs.rating, latestObs.scaleItemId, itemById)}
+                                  </p>
+                                )}
                                 <p className="text-xs text-muted-foreground">
                                   as of {latestObs.observedAt} · {latestObs.observedBy}
                                 </p>
                               </div>
 
-                              {/* Progression strip — only when 2+ observations */}
                               {progressionObs.length >= 2 && (
                                 <div className="mb-4">
                                   <p className="text-xs text-muted-foreground mb-3">
@@ -594,7 +799,7 @@ export default function ProgressPage() {
                                     {progressionObs.map((obs, idx) => (
                                       <div key={obs.id} className="flex items-center gap-2">
                                         <div className="text-center">
-                                          <span className={`inline-block px-2.5 py-1 rounded-lg text-xs font-semibold capitalize ${RATING_COLORS[obs.rating]}`}>
+                                          <span className={`inline-block px-2.5 py-1 rounded-lg text-xs font-semibold capitalize ${getLegacyColorClass(obs.rating)}`}>
                                             {obs.rating}
                                           </span>
                                           <p className="text-[10px] text-muted-foreground mt-1">{obs.observedAt.slice(5)}</p>
@@ -608,7 +813,6 @@ export default function ProgressPage() {
                                 </div>
                               )}
 
-                              {/* Trend summary — shown for all observation counts */}
                               <div className={`${progressionObs.length >= 2 ? "pt-3 border-t border-border" : ""} flex items-start gap-2`}>
                                 {(() => {
                                   const style = TREND_STYLES[summary.kind];
@@ -636,39 +840,41 @@ export default function ProgressPage() {
                             </CardHeader>
                             <CardContent className="p-0">
                               <div className="divide-y divide-border">
-                                {catObs.slice(0, 10).map((obs) => (
-                                  <div key={obs.id} className="px-5 py-4">
-                                    <div className="flex items-start justify-between gap-4">
-                                      <div className="flex-1 min-w-0">
-                                        <div className="flex items-center gap-2 flex-wrap mb-1">
-                                          <span className={`px-2 py-0.5 rounded-full text-xs font-medium capitalize flex-shrink-0 ${RATING_COLORS[obs.rating]}`}>
-                                            {obs.rating}
-                                          </span>
-                                          {obs.visibility === "internal_only" ? (
-                                            <span className="text-xs text-muted-foreground flex items-center gap-0.5">
-                                              <EyeOff className="w-3 h-3" /> Internal
+                                {catObs.slice(0, 10).map((obs) => {
+                                  const desc = getRatingDescription(obs.rating, obs.scaleItemId, itemById);
+                                  return (
+                                    <div key={obs.id} className="px-5 py-4">
+                                      <div className="flex items-start justify-between gap-4">
+                                        <div className="flex-1 min-w-0">
+                                          <div className="flex items-center gap-2 flex-wrap mb-1">
+                                            <span className={`px-2 py-0.5 rounded-full text-xs font-medium capitalize flex-shrink-0 ${getLegacyColorClass(obs.rating)}`}>
+                                              {obs.rating}
                                             </span>
-                                          ) : (
-                                            <span className="text-xs text-muted-foreground flex items-center gap-0.5">
-                                              <Eye className="w-3 h-3" /> Parent visible
-                                            </span>
+                                            {obs.visibility === "internal_only" ? (
+                                              <span className="text-xs text-muted-foreground flex items-center gap-0.5">
+                                                <EyeOff className="w-3 h-3" /> Internal
+                                              </span>
+                                            ) : (
+                                              <span className="text-xs text-muted-foreground flex items-center gap-0.5">
+                                                <Eye className="w-3 h-3" /> Parent visible
+                                              </span>
+                                            )}
+                                          </div>
+                                          {desc && (
+                                            <p className="text-[11px] text-muted-foreground italic mb-1">{desc}</p>
+                                          )}
+                                          {obs.note && (
+                                            <p className="text-sm text-foreground/80 leading-relaxed">"{obs.note}"</p>
                                           )}
                                         </div>
-                                        {/* Inline scale description — subtle, below the badge */}
-                                        <p className="text-[11px] text-muted-foreground italic mb-1">
-                                          {RATING_META[obs.rating].description}
-                                        </p>
-                                        {obs.note && (
-                                          <p className="text-sm text-foreground/80 leading-relaxed">"{obs.note}"</p>
-                                        )}
-                                      </div>
-                                      <div className="text-right flex-shrink-0">
-                                        <p className="text-xs font-medium">{obs.observedAt}</p>
-                                        <p className="text-xs text-muted-foreground">{obs.observedBy}</p>
+                                        <div className="text-right flex-shrink-0">
+                                          <p className="text-xs font-medium">{obs.observedAt}</p>
+                                          <p className="text-xs text-muted-foreground">{obs.observedBy}</p>
+                                        </div>
                                       </div>
                                     </div>
-                                  </div>
-                                ))}
+                                  );
+                                })}
                               </div>
                               {catObs.length > 10 && (
                                 <div className="px-5 py-3 text-xs text-muted-foreground border-t border-border">
@@ -758,6 +964,33 @@ export default function ProgressPage() {
                     ),
                   },
                   {
+                    id: "grading-scale-resolution",
+                    icon: Info,
+                    title: "Grading scales per domain and level",
+                    searchText: "grading scale domain level student override resolution assigned settings",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Rating options in the observation modal are drawn from the <strong>grading scale assigned</strong> for the selected student and domain.</p>
+                        <p className="text-xs mt-1">The system resolves the scale automatically, in this priority order:</p>
+                        <div className="space-y-1.5 mt-1">
+                          {[
+                            ["Student + domain override", "Most specific — overrides everything else."],
+                            ["Domain default", "Applies to all students in this domain."],
+                            ["Level/Class default", "Uses the student's class level as context."],
+                            ["School default", "Fallback when nothing more specific is set."],
+                          ].map(([label, desc]) => (
+                            <div key={label} className="flex gap-2 items-start">
+                              <span className="font-semibold text-xs w-40 flex-shrink-0 mt-0.5">{label}</span>
+                              <span className="text-xs">{desc}</span>
+                            </div>
+                          ))}
+                        </div>
+                        <p className="text-xs mt-2">The modal shows <strong>"Using: [Scale Name] · [Source]"</strong> so you always know which scale is active.</p>
+                        <Tip>If the modal shows "No grading scale assigned," ask a school admin to set one in <strong>Settings → Grading → Scale Assignments</strong>.</Tip>
+                      </div>
+                    ),
+                  },
+                  {
                     id: "growth-journey",
                     icon: ArrowRight,
                     title: "Reading the Growth Journey section",
@@ -768,9 +1001,9 @@ export default function ProgressPage() {
                         <div className="space-y-2 mt-2">
                           <Step n={1} text={<span><strong>Currently:</strong> shows the most recent rating and a plain-language description of what that rating means.</span>} />
                           <Step n={2} text={<span><strong>Progression strip:</strong> up to the last 5 observations displayed oldest → newest with dates. Only appears when there are 2 or more observations.</span>} />
-                          <Step n={3} text={<span><strong>Trend summary:</strong> a natural-language sentence at the bottom — "Improving across 4 observations — progressed from Emerging to Consistent." Always shown, even for a single observation.</span>} />
+                          <Step n={3} text={<span><strong>Trend summary:</strong> a natural-language sentence at the bottom. Always shown, even for a single observation.</span>} />
                         </div>
-                        <Note>The trend sentence references the actual rating labels from your school's scale, so it remains accurate even if a different grading framework is in use.</Note>
+                        <Note>The trend sentence references the actual rating labels from your school's scale.</Note>
                       </div>
                     ),
                   },
@@ -782,16 +1015,16 @@ export default function ProgressPage() {
                     body: (
                       <div className="space-y-2.5 mt-1">
                         {[
-                          { icon: <TrendingUp className="w-4 h-4 text-green-600" />, label: "Improving", desc: "The most recent observation is at a higher level than the earliest recorded. Good news — consider sharing with the family." },
-                          { icon: <Minus className="w-4 h-4 text-blue-500" />, label: "Consistent", desc: "The overall level hasn't changed across observations. May reflect a stable plateau or solidified mastery." },
-                          { icon: <TrendingDown className="w-4 h-4 text-orange-500" />, label: "Decline noted", desc: "The most recent observation is lower than the earliest. Consider whether this reflects a genuine regression or a difficult period." },
+                          { icon: <TrendingUp className="w-4 h-4 text-green-600" />, label: "Improving", desc: "The most recent observation is at a higher level than the earliest recorded." },
+                          { icon: <Minus className="w-4 h-4 text-blue-500" />, label: "Consistent", desc: "The overall level hasn't changed across observations." },
+                          { icon: <TrendingDown className="w-4 h-4 text-orange-500" />, label: "Decline noted", desc: "The most recent observation is lower than the earliest." },
                         ].map(({ icon, label, desc }) => (
                           <div key={label} className="flex gap-2.5 items-start">
                             <span className="flex-shrink-0 mt-0.5">{icon}</span>
                             <div><span className="font-semibold text-xs text-foreground">{label}</span><p className="text-xs mt-0.5">{desc}</p></div>
                           </div>
                         ))}
-                        <Tip>Trend is based on the first and last observations — a middle dip does not register as "declining" if the student ends higher. Record regularly for accurate trends.</Tip>
+                        <Tip>Trend is based on the first and last observations — a middle dip does not register as "declining" if the student ends higher.</Tip>
                       </div>
                     ),
                   },
@@ -805,35 +1038,12 @@ export default function ProgressPage() {
                         <p>You can record as many observations as you like per student, per domain, over time.</p>
                         <div className="space-y-2 mt-2">
                           <Step n={1} text={<span>Click <strong>Record Observation</strong> (top right) — or the small <strong>Add</strong> button next to the domain name to pre-select that domain.</span>} />
-                          <Step n={2} text={<span>Select a <strong>rating</strong>. A short description appears below the buttons so you can confirm the right level without memorising the scale.</span>} />
+                          <Step n={2} text={<span>The <strong>grading scale</strong> is resolved automatically for the selected student and domain. The scale name and source are shown below the rating buttons.</span>} />
                           <Step n={3} text={<span>Add a <strong>note</strong> with specific evidence: what you observed, in which activity, and context.</span>} />
                           <Step n={4} text={<span>Set the <strong>date</strong> — defaults to today but you can backdate it.</span>} />
                           <Step n={5} text={<span>Set <strong>visibility</strong>: Parent Visible or Internal Only. Click <strong>Save Observation</strong>.</span>} />
                         </div>
                         <Tip>Observations with notes are far more useful over time than ratings alone. Even a single sentence — "Led the morning circle independently" — creates an evidence trail.</Tip>
-                      </div>
-                    ),
-                  },
-                  {
-                    id: "ratings",
-                    icon: BookOpen,
-                    title: "What each rating means",
-                    searchText: "emerging developing consistent advanced rating level scale meaning description",
-                    body: (
-                      <div className="space-y-2.5 mt-1">
-                        <p className="text-xs">Each rating badge shows a short description inline — in the Growth Journey card, in the Recent Evidence list, and in the observation modal. The meanings for the current grading scale are:</p>
-                        {[
-                          { label: "Emerging",   color: "text-red-600",    desc: RATING_META.emerging.description   },
-                          { label: "Developing", color: "text-yellow-600", desc: RATING_META.developing.description },
-                          { label: "Consistent", color: "text-blue-600",   desc: RATING_META.consistent.description },
-                          { label: "Advanced",   color: "text-green-600",  desc: RATING_META.advanced.description   },
-                        ].map(({ label, color, desc }) => (
-                          <div key={label} className="flex gap-2.5 items-start">
-                            <span className={`font-semibold text-xs w-20 flex-shrink-0 mt-0.5 ${color}`}>{label}</span>
-                            <span className="text-xs">{desc}</span>
-                          </div>
-                        ))}
-                        <Note>Ratings are developmental checkpoints, not grades. Use them relative to expected milestones for the class level.</Note>
                       </div>
                     ),
                   },
@@ -866,9 +1076,9 @@ export default function ProgressPage() {
                     searchText: "alert stale 30 days no observations reminder insight operational active unobserved not yet",
                     body: (
                       <div className="space-y-2">
-                        <p><strong>Stale alert:</strong> when a domain has had no new observations for 30 or more days, an amber notice appears at the top of the growth detail panel. This is a soft reminder only.</p>
-                        <p className="text-xs mt-1"><strong>Domain groups:</strong> the left panel separates domains into two sections — <em>Active</em> (at least one observation recorded) and <em>Not observed yet</em> (no observations). The second group is collapsed by default and expands when you click the toggle. If a student has no observations at all, the full list is always visible.</p>
-                        <Note>There's no cross-student reporting view (e.g. "all students Emerging in Social Skills"). That view is planned for a future version.</Note>
+                        <p><strong>Stale alert:</strong> when a domain has had no new observations for 30 or more days, an amber notice appears at the top of the growth detail panel. A small clock icon also appears in the left domain list.</p>
+                        <p className="text-xs mt-1"><strong>Domain groups:</strong> the left panel separates domains into two sections — <em>Active</em> (at least one observation recorded) and <em>Not observed yet</em> (no observations). The second group is collapsed by default.</p>
+                        <Note>The domain list also shows the date of the last observation and a trend arrow for quick scanning.</Note>
                       </div>
                     ),
                   },
@@ -942,26 +1152,66 @@ export default function ProgressPage() {
             </Select>
           </div>
 
+          {/* Grading scale info / no-scale warning */}
+          {form.studentId && form.categoryId && (
+            <div>
+              {modalResolvedScale === null ? (
+                <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 text-xs">
+                  <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                  <span>
+                    No grading scale is assigned for this student/domain.
+                    Ask an admin to assign one in <strong>Settings → Grading → Scale Assignments</strong>.
+                  </span>
+                </div>
+              ) : modalResolvedScale !== undefined && (
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <Info className="w-3.5 h-3.5 flex-shrink-0" />
+                  <span>
+                    Using: <span className="font-medium text-foreground">{modalResolvedScale.scaleSetName}</span>
+                    {" · "}
+                    <span>{modalResolvedScale.sourceLabel}</span>
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Rating buttons — from resolved scale */}
           <div>
             <label className="block text-sm font-medium mb-2">Rating</label>
-            <div className="flex gap-2 flex-wrap">
-              {RATINGS.map((r) => (
-                <button
-                  key={r}
-                  type="button"
-                  onClick={() => setForm({ ...form, rating: r })}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium capitalize transition-all ${
-                    form.rating === r ? RATING_COLORS[r] : "bg-muted hover:bg-accent"
-                  }`}
-                >
-                  {r}
-                </button>
-              ))}
-            </div>
-            {/* Inline scale description — updates as user selects a rating */}
-            <p className="text-xs text-muted-foreground italic mt-2">
-              {RATING_META[form.rating].description}
-            </p>
+            {modalResolvedScale === null ? (
+              <p className="text-xs text-muted-foreground italic">Select a student and domain with an assigned grading scale to choose a rating.</p>
+            ) : modalResolvedScale === undefined || modalResolvedScale.items.length === 0 ? (
+              <p className="text-xs text-muted-foreground italic">Resolving scale…</p>
+            ) : (
+              <>
+                <div className="flex gap-2 flex-wrap">
+                  {modalResolvedScale.items.map((item) => {
+                    const isSelected = form.scaleItemId === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => setForm({ ...form, rating: item.label, scaleItemId: item.id })}
+                        style={isSelected ? { backgroundColor: item.color, color: "#fff", borderColor: item.color } : {}}
+                        className={`px-4 py-2 rounded-lg text-sm font-medium transition-all border ${
+                          isSelected
+                            ? "shadow-sm"
+                            : "bg-muted hover:bg-accent border-transparent"
+                        }`}
+                      >
+                        {item.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                {form.scaleItemId && (
+                  <p className="text-xs text-muted-foreground italic mt-2">
+                    {modalResolvedScale.items.find((i) => i.id === form.scaleItemId)?.description ?? ""}
+                  </p>
+                )}
+              </>
+            )}
           </div>
 
           <div>
@@ -998,7 +1248,8 @@ export default function ProgressPage() {
             <ModalCancelButton />
             <Button
               onClick={handleSave}
-              disabled={saving || !form.studentId || !form.categoryId}
+              disabled={saving || !canSave}
+              title={modalResolvedScale === null ? "No grading scale assigned for this student/domain" : undefined}
             >
               {saving ? "Saving…" : "Save Observation"}
             </Button>
