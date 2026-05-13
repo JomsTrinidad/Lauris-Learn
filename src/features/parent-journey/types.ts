@@ -64,4 +64,37 @@ export interface LatestHighlight {
   note: string | null;
   createdAt: string;
   myReaction: string | null;
+  /** true when the highlight is within the featured window (see HIGHLIGHT_FEATURED_WINDOW_DAYS) */
+  isFeatured: boolean;
+}
+
+/** A recent positive progress observation used as fallback when no featured highlight exists. */
+export interface FallbackHighlight {
+  category: string;
+  summary: string;
+  occurredAt: string;
+}
+
+// ── Priority cards ────────────────────────────────────────────────────────────
+
+export type PriorityCardType =
+  | "urgent_action"    // parent action required (consent, doc request)
+  | "todays_session"   // therapy or school session happening today (future: Care data)
+  | "upcoming_meeting" // scheduled meeting
+  | "balance_due"      // outstanding billing balance
+  | "upcoming_event"   // class-specific or school event
+  | "school_event"     // school-wide event
+  | "holiday"          // no-class day
+  | "all_clear";       // billing all-clear filler
+
+export type PriorityCardAccent = "urgent" | "info" | "warning" | "purple" | "muted" | "success";
+
+export interface PriorityCard {
+  id: string;
+  cardType: PriorityCardType;
+  title: string;
+  subtitle: string;
+  detail?: string;
+  actionHref: string;
+  accentVariant: PriorityCardAccent;
 }

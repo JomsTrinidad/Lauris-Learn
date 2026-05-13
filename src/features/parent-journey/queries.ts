@@ -1,11 +1,13 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { updateToJourney, observationToJourney, therapySessionToJourney } from "./adapters";
+import { isHighlightStillFeatured } from "./helpers";
 import type {
   ParentJourneyItem,
   AttendanceTodayResult,
   UpcomingItem,
   NeedsAttentionCounts,
   LatestHighlight,
+  FallbackHighlight,
   ServicePresence,
 } from "./types";
 
@@ -272,7 +274,49 @@ export async function fetchLatestHighlight({ supabase, childId, userId }: Highli
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ? reactions.find((r: any) => r.parent_id === userId)?.reaction_type ?? null
     : null;
-  return { id: data.id, category: data.category, note: data.note ?? null, createdAt: data.created_at, myReaction };
+  return {
+    id: data.id,
+    category: data.category,
+    note: data.note ?? null,
+    createdAt: data.created_at,
+    myReaction,
+    isFeatured: isHighlightStillFeatured(data.created_at),
+  };
+}
+
+interface FallbackHighlightParams {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: SupabaseClient<any>;
+  childId: string;
+}
+
+/**
+ * Returns the most recent parent-visible positive progress observation
+ * (rated consistent or advanced) as a fallback card when no featured
+ * proud moment exists. Returns null if nothing suitable is found.
+ */
+export async function fetchFallbackHighlight({ supabase, childId }: FallbackHighlightParams): Promise<FallbackHighlight | null> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data } = await (supabase as any)
+    .from("progress_observations")
+    .select("id, rating, notes, observed_at, progress_categories(name)")
+    .eq("student_id", childId)
+    .eq("visibility", "parent_visible")
+    .in("rating", ["consistent", "advanced"])
+    .order("observed_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!data) return null;
+
+  const category = (data.progress_categories?.name as string | undefined) ?? "Progress";
+  const ratingLabel = (data.rating as string).charAt(0).toUpperCase() + (data.rating as string).slice(1);
+
+  return {
+    category,
+    summary: (data.notes as string | null) ?? `Doing well in ${category.toLowerCase()} — rated ${ratingLabel.toLowerCase()}.`,
+    occurredAt: data.observed_at as string,
+  };
 }
 
 // ── Service presence ──────────────────────────────────────────────────────────

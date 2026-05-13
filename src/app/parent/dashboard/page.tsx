@@ -2,10 +2,9 @@
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import {
-  CheckCircle, XCircle, Clock,
-  Bell, CalendarDays, CreditCard,
-  ChevronRight, AlertTriangle, Star,
-  BookOpen, TrendingUp, ShieldCheck, Inbox, Camera,
+  CheckCircle, XCircle, Clock, CalendarDays,
+  Bell, CreditCard, ChevronRight, AlertTriangle,
+  Star, BookOpen, TrendingUp, ShieldCheck, Inbox, Camera,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { PageSpinner } from "@/components/ui/spinner";
@@ -18,16 +17,24 @@ import {
   fetchUpcomingEvents,
   fetchNeedsAttention,
   fetchLatestHighlight,
+  fetchFallbackHighlight,
   fetchServicePresence,
 } from "@/features/parent-journey/queries";
+import {
+  getChildStatusHeadline,
+  getFeaturedParentCards,
+} from "@/features/parent-journey/helpers";
 import type {
   ParentJourneyItem,
   AttendanceTodayResult,
   UpcomingItem,
   NeedsAttentionCounts,
   LatestHighlight,
+  FallbackHighlight,
   JourneyFilter,
   ServicePresence,
+  PriorityCard,
+  PriorityCardType,
 } from "@/features/parent-journey/types";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -41,36 +48,6 @@ function timeAgo(dateStr: string): string {
   if (hrs < 24) return `${hrs}h`;
   return `${Math.floor(hrs / 24)}d`;
 }
-
-function formatCurrency(n: number): string {
-  return new Intl.NumberFormat("en-PH", {
-    style: "currency", currency: "PHP", minimumFractionDigits: 0,
-  }).format(n);
-}
-
-function formatEventDate(dateStr: string): string {
-  return new Date(dateStr + "T00:00:00").toLocaleDateString("en-PH", {
-    weekday: "short", month: "short", day: "numeric",
-  });
-}
-
-const EVENT_TYPE_LABELS: Record<string, string> = {
-  school_event: "School Event",
-  class_event:  "Class Event",
-  holiday:      "No Classes — Holiday",
-  deadline:     "Action Needed",
-  meeting:      "Meeting",
-  online_class: "Online Class",
-};
-
-const EVENT_TYPE_COLORS: Record<string, string> = {
-  school_event: "text-blue-600",
-  class_event:  "text-primary",
-  holiday:      "text-muted-foreground",
-  deadline:     "text-amber-600",
-  meeting:      "text-purple-600",
-  online_class: "text-blue-600",
-};
 
 // ── source category styles ────────────────────────────────────────────────────
 
@@ -121,7 +98,6 @@ function JourneyRow({ item }: { item: ParentJourneyItem }) {
           {item.summary}
         </p>
 
-        {/* Thumbnail strip — taps to the full updates page */}
         {hasMedia && (
           <Link href={item.actionHref ?? "/parent/updates"} className="mt-2 flex items-center gap-1.5 group">
             {thumbUrls.slice(0, 3).map((url, i) => (
@@ -138,14 +114,12 @@ function JourneyRow({ item }: { item: ParentJourneyItem }) {
                 )}
               </div>
             ))}
-            {/* Fallback count when no signed URLs available */}
             {thumbUrls.length === 0 && (
               <span className="flex items-center gap-1 text-[10px] text-muted-foreground group-hover:text-foreground transition-colors">
                 <Camera className="w-3 h-3 flex-shrink-0" />
                 {item.mediaCount} photo{item.mediaCount !== 1 ? "s" : ""}
               </span>
             )}
-            {/* Count label next to thumbnails */}
             {thumbUrls.length > 0 && (
               <span className="text-[10px] text-muted-foreground group-hover:text-foreground transition-colors">
                 {item.mediaCount} photo{item.mediaCount !== 1 ? "s" : ""}
@@ -154,7 +128,6 @@ function JourneyRow({ item }: { item: ParentJourneyItem }) {
           </Link>
         )}
 
-        {/* Action link — suppressed for school updates (covered by section-level "View updates") */}
         {item.actionHref && item.itemType !== "update" && (
           <Link
             href={item.actionHref}
@@ -171,7 +144,121 @@ function JourneyRow({ item }: { item: ParentJourneyItem }) {
   );
 }
 
-// ── proud moment helpers ──────────────────────────────────────────────────────
+// ── priority card rendering ───────────────────────────────────────────────────
+
+const COMPACT_CARD_HEADER: Partial<Record<PriorityCardType, string>> = {
+  upcoming_meeting: "Meeting",
+  balance_due:      "Balance",
+  upcoming_event:   "Upcoming",
+  school_event:     "School Event",
+  holiday:          "Upcoming",
+  all_clear:        "Balance",
+  todays_session:   "Session Today",
+};
+
+const COMPACT_CARD_ICON: Partial<Record<PriorityCardType, React.ElementType>> = {
+  upcoming_meeting: CalendarDays,
+  balance_due:      CreditCard,
+  upcoming_event:   CalendarDays,
+  school_event:     CalendarDays,
+  holiday:          CalendarDays,
+  all_clear:        CheckCircle,
+  todays_session:   CalendarDays,
+};
+
+function CompactCard({ card }: { card: PriorityCard }) {
+  const Icon = COMPACT_CARD_ICON[card.cardType] ?? CalendarDays;
+  const isWarning = card.accentVariant === "warning";
+  const isSuccess = card.accentVariant === "success";
+  const isPurple  = card.accentVariant === "purple";
+
+  return (
+    <Link href={card.actionHref} className="block h-full">
+      <Card className={`h-full hover:bg-accent/20 transition-colors ${
+        isWarning ? "border-amber-200 bg-amber-50/50" :
+        isSuccess ? "border-green-100 bg-green-50/30" : ""
+      }`}>
+        <CardContent className="p-3.5">
+          <div className="flex items-center gap-1.5 mb-2">
+            <Icon className={`w-3.5 h-3.5 ${
+              isWarning ? "text-amber-500" :
+              isSuccess ? "text-green-600" :
+              isPurple  ? "text-purple-500" :
+              "text-muted-foreground"
+            }`} />
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              {COMPACT_CARD_HEADER[card.cardType] ?? "Upcoming"}
+            </p>
+          </div>
+          <p className={`font-semibold text-sm leading-snug line-clamp-2 ${
+            isWarning ? "text-amber-800" :
+            isSuccess ? "text-green-700" : ""
+          }`}>{card.title}</p>
+          <p className="text-xs text-muted-foreground mt-1">{card.subtitle}</p>
+          {card.detail && (
+            <p className={`text-[10px] font-medium mt-1 ${
+              isPurple  ? "text-purple-600" :
+              card.accentVariant === "muted" ? "text-muted-foreground" :
+              "text-primary"
+            }`}>{card.detail}</p>
+          )}
+        </CardContent>
+      </Card>
+    </Link>
+  );
+}
+
+function UrgentBanner({ card }: { card: PriorityCard }) {
+  const isWarning = card.accentVariant === "warning";
+  const baseClass  = isWarning ? "bg-orange-50 border-orange-200" : "bg-blue-50 border-blue-200";
+  const sidebar    = isWarning ? "bg-orange-500" : "bg-blue-500";
+  const titleClass = isWarning ? "text-orange-900" : "text-blue-900";
+  const subClass   = isWarning ? "text-orange-700" : "text-blue-700";
+  const iconClass  = isWarning ? "text-orange-600" : "text-blue-600";
+  const chevClass  = isWarning ? "text-orange-500" : "text-blue-500";
+  const Icon = card.id === "consent-pending" ? ShieldCheck : Inbox;
+
+  return (
+    <Link
+      href={card.actionHref}
+      className={`relative flex items-start gap-3 pl-5 pr-4 py-3.5 border ${baseClass} rounded-xl text-sm hover:opacity-90 transition-opacity overflow-hidden`}
+    >
+      <span aria-hidden className={`absolute inset-y-0 left-0 w-1 ${sidebar} rounded-l-xl`} />
+      <Icon className={`w-5 h-5 ${iconClass} flex-shrink-0 mt-0.5`} />
+      <div className="flex-1 min-w-0">
+        <p className={`font-semibold ${titleClass} text-sm`}>{card.title}</p>
+        <p className={`text-xs ${subClass} mt-0.5`}>{card.subtitle}</p>
+      </div>
+      <ChevronRight className={`w-4 h-4 ${chevClass} flex-shrink-0 mt-0.5`} />
+    </Link>
+  );
+}
+
+function PriorityCardsSection({ cards }: { cards: PriorityCard[] }) {
+  if (cards.length === 0) {
+    return (
+      <div className="flex items-center gap-2.5 px-4 py-3 rounded-xl bg-muted/50 text-sm text-muted-foreground">
+        <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0" />
+        <span>You&apos;re all caught up — no urgent items today.</span>
+      </div>
+    );
+  }
+  const urgentCards = cards.filter(c => c.cardType === "urgent_action");
+  const normalCards = cards.filter(c => c.cardType !== "urgent_action");
+
+  return (
+    <div className="space-y-3">
+      {urgentCards.map(c => <UrgentBanner key={c.id} card={c} />)}
+      {normalCards.length > 0 && (
+        <div className={normalCards.length === 1 ? "" : "grid grid-cols-2 gap-3"}>
+          {normalCards.map(c => <CompactCard key={c.id} card={c} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── positive highlight ────────────────────────────────────────────────────────
 
 const REACTIONS = [
   { type: "proud",      emoji: "❤️", label: "Proud" },
@@ -203,7 +290,7 @@ const MOMENT_HEADINGS: Partial<Record<string, (n: string) => string>> = {
 
 function getMomentHeading(firstName: string, category: string): string {
   const fn = MOMENT_HEADINGS[category];
-  return fn ? fn(firstName) : `${firstName} earned a proud moment.`;
+  return fn ? fn(firstName) : `${firstName} earned a positive highlight.`;
 }
 
 // ── filter config ─────────────────────────────────────────────────────────────
@@ -223,6 +310,15 @@ const FILTER_EMPTY: Partial<Record<JourneyFilter, string>> = {
   school:  "No school updates yet. Teacher posts and progress notes will appear here.",
 };
 
+// ── icon map for status headline ──────────────────────────────────────────────
+
+const STATUS_ICON_MAP = {
+  check:    CheckCircle,
+  clock:    Clock,
+  x:        XCircle,
+  calendar: CalendarDays,
+} as const;
+
 // ── main component ────────────────────────────────────────────────────────────
 
 export default function ParentDashboard() {
@@ -235,6 +331,7 @@ export default function ParentDashboard() {
   const [events, setEvents] = useState<UpcomingItem[]>([]);
   const [needs, setNeeds] = useState<NeedsAttentionCounts>({ billingCount: 0, billingTotal: 0, docRequestCount: 0, docApprovalCount: 0 });
   const [highlight, setHighlight] = useState<LatestHighlight | null>(null);
+  const [fallbackHighlight, setFallbackHighlight] = useState<FallbackHighlight | null>(null);
   const [feed, setFeed] = useState<ParentJourneyItem[]>([]);
   const [servicePresence, setServicePresence] = useState<ServicePresence>({
     school: { connected: false }, therapy: { connected: false }, medical: { connected: false },
@@ -258,11 +355,9 @@ export default function ParentDashboard() {
     const userId = user?.id ?? null;
     setParentUserId(userId);
 
-    // Try to extract first name from auth metadata
     const rawName = ((user?.user_metadata?.full_name ?? user?.user_metadata?.name ?? "") as string).trim();
     setParentName(rawName ? rawName.split(" ")[0] : null);
 
-    // Absence pre-check for today
     const today = new Date().toISOString().split("T")[0];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: absRow } = await (supabase as any)
@@ -276,11 +371,12 @@ export default function ParentDashboard() {
     const resolvedSchool = schoolName || "School";
     const resolvedClass = child?.className ?? "";
 
-    const [att, evts, needsData, hlData, feedData, spData] = await Promise.all([
+    const [att, evts, needsData, hlData, fbData, feedData, spData] = await Promise.all([
       fetchAttendanceToday(supabase, childId),
       fetchUpcomingEvents(supabase, resolvedSchool, { schoolId, classId }),
       fetchNeedsAttention({ supabase, childId }),
       fetchLatestHighlight({ supabase, childId, userId }),
+      fetchFallbackHighlight({ supabase, childId }),
       fetchJourneyFeed({ supabase, childId, classId, schoolName: resolvedSchool }),
       fetchServicePresence(supabase, childId, resolvedSchool, resolvedClass),
     ]);
@@ -289,6 +385,7 @@ export default function ParentDashboard() {
     setEvents(evts);
     setNeeds(needsData);
     setHighlight(hlData);
+    setFallbackHighlight(fbData);
     setFeed(feedData);
     setServicePresence(spData);
     setLoading(false);
@@ -345,33 +442,18 @@ export default function ParentDashboard() {
 
   const firstName = child?.firstName ?? "Your child";
 
-  // ── Attendance status config ─────────────────────────────────────────────
-  const attStatus = (() => {
-    if (attendance.status === "present") return {
-      heading: `${firstName} is in school.`,
-      detail: attendance.checkedInAt ? `Checked in at ${attendance.checkedInAt}` : "Marked present",
-      detailColor: "text-green-600",
-      DetailIcon: CheckCircle,
-    };
-    if (attendance.status === "late") return {
-      heading: `${firstName} arrived late today.`,
-      detail: attendance.checkedInAt ? `Arrived at ${attendance.checkedInAt}` : "Marked late",
-      detailColor: "text-amber-600",
-      DetailIcon: Clock,
-    };
-    if (attendance.status === "absent") return {
-      heading: `${firstName} is absent today.`,
-      detail: "Not in school today",
-      detailColor: "text-red-600",
-      DetailIcon: XCircle,
-    };
-    return {
-      heading: `${firstName}'s attendance is pending.`,
-      detail: "Will update once the school marks it",
-      detailColor: "text-muted-foreground",
-      DetailIcon: Clock,
-    };
-  })();
+  // ── Derived: status headline ─────────────────────────────────────────────
+  const today = new Date().toISOString().split("T")[0];
+  const todayEvents = events.filter(e => e.date === today);
+  const statusHeadline = getChildStatusHeadline(firstName, attendance, todayEvents);
+  const StatusIcon = STATUS_ICON_MAP[statusHeadline.iconKind];
+
+  // ── Derived: priority cards ──────────────────────────────────────────────
+  const priorityCards = getFeaturedParentCards({ events, needs });
+
+  // ── Derived: highlight state ─────────────────────────────────────────────
+  const showFeaturedHighlight = highlight !== null && highlight.isFeatured;
+  const showFallbackHighlight = !showFeaturedHighlight && fallbackHighlight !== null;
 
   // ── Journey feed ─────────────────────────────────────────────────────────
   const filteredFeed = activeFilter === "all"
@@ -384,17 +466,17 @@ export default function ParentDashboard() {
     <ErrorBoundary section="parent-dashboard" fallback="minimal">
     <div className="space-y-5 pb-6">
 
-      {/* ── Greeting + Attendance Status ──────────────────────────────────── */}
+      {/* ── Greeting + Status Headline ────────────────────────────────────── */}
       <div className="pt-1">
         <p className="text-sm text-muted-foreground">
           {parentName ? `Hi, ${parentName}!` : "Hi there!"}
         </p>
         <h1 className="text-2xl font-bold leading-tight mt-0.5">
-          {attStatus.heading}
+          {statusHeadline.heading}
         </h1>
-        <div className={`flex items-center gap-1 mt-1 ${attStatus.detailColor}`}>
-          <attStatus.DetailIcon className="w-3.5 h-3.5 flex-shrink-0" />
-          <p className="text-xs">{attStatus.detail}</p>
+        <div className={`flex items-center gap-1 mt-1 ${statusHeadline.detailColor}`}>
+          <StatusIcon className="w-3.5 h-3.5 flex-shrink-0" />
+          <p className="text-xs">{statusHeadline.detail}</p>
         </div>
 
         {/* Absence reporting — only when attendance not yet marked */}
@@ -445,106 +527,19 @@ export default function ParentDashboard() {
         )}
       </div>
 
-      {/* ── Action cards — Next Event + Billing Balance ───────────────────── */}
-      <div className="grid grid-cols-2 gap-3">
-        {/* Next Event */}
-        <Link href="/parent/events">
-          <Card className="h-full hover:bg-accent/20 transition-colors">
-            <CardContent className="p-3.5">
-              <div className="flex items-center gap-1.5 mb-2">
-                <CalendarDays className="w-3.5 h-3.5 text-muted-foreground" />
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  Next Event
-                </p>
-              </div>
-              {events[0] ? (
-                <>
-                  <p className="font-semibold text-sm leading-snug line-clamp-2">{events[0].title}</p>
-                  <p className="text-xs text-muted-foreground mt-1">{formatEventDate(events[0].date)}</p>
-                  <p className={`text-[10px] font-medium mt-1 ${EVENT_TYPE_COLORS[events[0].eventType] ?? "text-muted-foreground"}`}>
-                    {EVENT_TYPE_LABELS[events[0].eventType] ?? "Event"}
-                  </p>
-                </>
-              ) : (
-                <p className="text-sm text-muted-foreground">No upcoming events</p>
-              )}
-            </CardContent>
-          </Card>
-        </Link>
+      {/* ── Priority cards (dynamic — max 2) ──────────────────────────────── */}
+      {/* Urgent action banners render full-width; non-urgent render as compact cards.    */}
+      {/* Priority: consent > doc request > meeting today > balance > event > holiday.   */}
+      <PriorityCardsSection cards={priorityCards} />
 
-        {/* Billing Balance */}
-        <Link href="/parent/billing">
-          <Card className={`h-full hover:bg-accent/20 transition-colors ${needs.billingCount > 0 ? "border-amber-200 bg-amber-50/50" : ""}`}>
-            <CardContent className="p-3.5">
-              <div className="flex items-center gap-1.5 mb-2">
-                <CreditCard className="w-3.5 h-3.5 text-muted-foreground" />
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  Balance
-                </p>
-              </div>
-              {needs.billingCount > 0 ? (
-                <>
-                  <p className="font-bold text-sm text-amber-800 leading-snug">
-                    {formatCurrency(needs.billingTotal)} due
-                  </p>
-                  <p className="text-xs text-amber-600 mt-1">Tap to view bills</p>
-                </>
-              ) : (
-                <p className="text-sm text-green-700 font-medium">All clear</p>
-              )}
-            </CardContent>
-          </Card>
-        </Link>
-      </div>
+      {/* ── Positive Highlight ────────────────────────────────────────────── */}
 
-      {/* ── Needs attention — document alerts only ────────────────────────── */}
-      {(needs.docRequestCount > 0 || needs.docApprovalCount > 0) && (
-        <div className="space-y-2">
-          {needs.docRequestCount > 0 && (
-            <Link
-              href="/parent/documents"
-              className="relative flex items-start gap-3 pl-5 pr-4 py-3.5 bg-blue-50 border border-blue-200 rounded-xl text-sm hover:bg-blue-100 transition-colors overflow-hidden"
-            >
-              <span aria-hidden className="absolute inset-y-0 left-0 w-1 bg-blue-500 rounded-l-xl" />
-              <Inbox className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
-              <div className="flex-1 min-w-0">
-                <p className="font-semibold text-blue-900 text-sm">
-                  {needs.docRequestCount} document{needs.docRequestCount > 1 ? "s" : ""} requested by school
-                </p>
-                <p className="text-xs text-blue-700 mt-0.5">
-                  Tap to view and upload the requested file{needs.docRequestCount > 1 ? "s" : ""}.
-                </p>
-              </div>
-              <ChevronRight className="w-4 h-4 text-blue-500 flex-shrink-0 mt-0.5" />
-            </Link>
-          )}
-          {needs.docApprovalCount > 0 && (
-            <Link
-              href="/parent/documents"
-              className="relative flex items-start gap-3 pl-5 pr-4 py-3.5 bg-orange-50 border border-orange-200 rounded-xl text-sm hover:bg-orange-100 transition-colors overflow-hidden"
-            >
-              <span aria-hidden className="absolute inset-y-0 left-0 w-1 bg-orange-500 rounded-l-xl" />
-              <ShieldCheck className="w-5 h-5 text-orange-600 flex-shrink-0 mt-0.5" />
-              <div className="flex-1 min-w-0">
-                <p className="font-semibold text-orange-900 text-sm">
-                  {needs.docApprovalCount} consent{needs.docApprovalCount > 1 ? "s" : ""} awaiting your approval
-                </p>
-                <p className="text-xs text-orange-700 mt-0.5">
-                  The school needs your permission to share a document.
-                </p>
-              </div>
-              <ChevronRight className="w-4 h-4 text-orange-500 flex-shrink-0 mt-0.5" />
-            </Link>
-          )}
-        </div>
-      )}
-
-      {/* ── Proud Moment highlight ────────────────────────────────────────── */}
-      {highlight && (
+      {/* Featured highlight — within the 7-day window */}
+      {showFeaturedHighlight && highlight && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
           <div className="flex items-center gap-2 mb-2">
             <Star className="w-4 h-4 text-amber-500 flex-shrink-0" />
-            <h2 className="font-semibold text-amber-900 text-sm">Proud Moment</h2>
+            <h2 className="font-semibold text-amber-900 text-sm">Positive Highlight</h2>
             <span className="text-xs text-amber-600 ml-auto">{timeAgo(highlight.createdAt)}</span>
           </div>
           <p className="font-medium text-sm text-amber-900 leading-snug">
@@ -583,14 +578,36 @@ export default function ParentDashboard() {
             href="/parent/proud-moments"
             className="mt-3 text-xs text-amber-700 hover:text-amber-900 font-medium flex items-center gap-1 transition-colors"
           >
-            View all moments <ChevronRight className="w-3 h-3" />
+            View all highlights <ChevronRight className="w-3 h-3" />
+          </Link>
+        </div>
+      )}
+
+      {/* Fallback — no featured highlight, show recent progress observation */}
+      {showFallbackHighlight && fallbackHighlight && (
+        <div className="bg-green-50/60 border border-green-200 rounded-xl p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <TrendingUp className="w-4 h-4 text-green-600 flex-shrink-0" />
+            <h2 className="font-semibold text-green-900 text-sm">Recent Growth</h2>
+            <span className="text-xs text-green-600 ml-auto">{timeAgo(fallbackHighlight.occurredAt)}</span>
+          </div>
+          <p className="font-medium text-sm text-green-900 leading-snug">
+            {firstName} is making progress in {fallbackHighlight.category}.
+          </p>
+          <p className="text-xs text-green-800 mt-1.5 leading-relaxed">
+            {fallbackHighlight.summary}
+          </p>
+          <Link
+            href="/parent/progress"
+            className="mt-3 text-xs text-green-700 hover:text-green-900 font-medium flex items-center gap-1 transition-colors"
+          >
+            View progress <ChevronRight className="w-3 h-3" />
           </Link>
         </div>
       )}
 
       {/* ── Child's Journey ───────────────────────────────────────────────── */}
       <div>
-        {/* Heading row: title left, "View updates" right */}
         <div className="flex items-center justify-between mb-2">
           <h2 className="font-semibold text-base">{firstName}&apos;s Journey</h2>
           <Link
@@ -615,7 +632,6 @@ export default function ParentDashboard() {
                 }`}
               >
                 {FILTER_LABELS[f]}
-                {/* Connected indicator dots for therapy/medical */}
                 {f === "therapy" && sp.therapy.connected && (
                   <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isActive ? "bg-purple-200" : "bg-purple-500"}`} />
                 )}
@@ -626,7 +642,6 @@ export default function ParentDashboard() {
             );
           })}
         </div>
-        {/* Feed or empty state */}
         {filteredFeed.length === 0 ? (
           <Card>
             <CardContent className="py-8 text-center text-muted-foreground text-sm px-6 leading-relaxed">

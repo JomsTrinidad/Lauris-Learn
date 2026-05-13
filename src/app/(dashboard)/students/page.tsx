@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
@@ -8,7 +9,7 @@ import {
   Link as LinkIcon, Copy, Check, BookOpen,
   ArrowRight, RefreshCw, Users, GraduationCap,
   HelpCircle, AlertTriangle, ChevronRight, X, UserPlus, UserCheck, FileText,
-  Share2,
+  Share2, MoreHorizontal,
 } from "lucide-react";
 import { DatePicker } from "@/components/ui/datepicker";
 import { AvatarUpload } from "@/components/ui/avatar-upload";
@@ -142,12 +143,14 @@ const EMPTY_FORM: StudentForm = {
 };
 
 const STATUS_OPTIONS = [
-  { value: "", label: "All Statuses" },
+  { value: "", label: "Active Students" },
   { value: "enrolled", label: "Enrolled" },
   { value: "waitlisted", label: "Waitlisted" },
   { value: "inquiry", label: "Inquiry" },
   { value: "withdrawn", label: "Withdrawn" },
   { value: "completed", label: "Completed" },
+  { value: "graduated", label: "Graduated" },
+  { value: "__all__", label: "All Students" },
 ];
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -301,6 +304,119 @@ async function upsertStudentLrn(
 
 // ─── Page component ───────────────────────────────────────────────────────────
 
+// ── Row overflow menu ─────────────────────────────────────────────────────────
+
+function RowMenu({
+  student,
+  onEdit,
+  onShare,
+  onGraduate,
+}: {
+  student: Student;
+  onEdit: () => void;
+  onShare: (() => void) | null;
+  onGraduate: (() => void) | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  const openMenu = () => {
+    if (!btnRef.current) return;
+    const rect = btnRef.current.getBoundingClientRect();
+    const extraItems = (onShare ? 1 : 0) + (onGraduate ? 1 : 0);
+    const menuH = 68 + extraItems * 40;
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const top = spaceBelow > menuH ? rect.bottom + 4 : rect.top - menuH - 4;
+    setPos({ top, left: rect.right - 192 });
+    setOpen(true);
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (
+        menuRef.current && !menuRef.current.contains(e.target as Node) &&
+        btnRef.current && !btnRef.current.contains(e.target as Node)
+      ) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={openMenu}
+        aria-label="More actions"
+        className="flex items-center justify-center w-7 h-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+      >
+        <MoreHorizontal className="w-4 h-4" />
+      </button>
+
+      {open && createPortal(
+        <div
+          ref={menuRef}
+          style={{ position: "fixed", top: pos.top, left: pos.left, zIndex: 9999, width: 192 }}
+          className="bg-card border border-border rounded-lg shadow-lg py-1 text-sm"
+        >
+          <Link
+            href={`/documents?student=${student.id}`}
+            className="flex items-center gap-2.5 px-3 py-2 hover:bg-muted transition-colors text-foreground"
+            onClick={() => setOpen(false)}
+          >
+            <FileText className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+            Documents
+          </Link>
+          <button
+            type="button"
+            onClick={() => { setOpen(false); onEdit(); }}
+            className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-muted transition-colors text-foreground text-left"
+          >
+            <Pencil className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+            Edit Student
+          </button>
+          {onGraduate && (
+            <>
+              <div className="my-1 border-t border-border" />
+              <button
+                type="button"
+                onClick={() => { setOpen(false); onGraduate(); }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-muted transition-colors text-foreground text-left"
+              >
+                <GraduationCap className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                Mark as Graduated
+              </button>
+            </>
+          )}
+          {onShare && (
+            <>
+              <div className="my-1 border-t border-border" />
+              <button
+                type="button"
+                onClick={() => { setOpen(false); onShare(); }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-muted transition-colors text-foreground text-left"
+              >
+                <Share2 className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                Share with Clinic
+              </button>
+            </>
+          )}
+        </div>,
+        document.body
+      )}
+    </>
+  );
+}
+
 export default function StudentsPage() {
   const { schoolId, activeYear, userId, userRole, isReadOnly, allSchoolYears: schoolYearList } = useSchoolContext();
   const supabase = createClient();
@@ -353,6 +469,7 @@ export default function StudentsPage() {
 
   const [search, setSearch] = useState("");
   const [levelFilter, setLevelFilter] = useState("");
+  const [classFilter, setClassFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [returningFilter, setReturningFilter] = useState(false);
   // Year selector: which school year's enrollment data to display (default = activeYear)
@@ -383,6 +500,13 @@ export default function StudentsPage() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [helpSearch, setHelpSearch] = useState("");
   const [helpExpanded, setHelpExpanded] = useState<Record<string, boolean>>({});
+
+  // Graduate workflow state
+  const [graduateTarget, setGraduateTarget] = useState<Student | null>(null);
+  const [graduationDate, setGraduationDate] = useState("");
+  const [graduationNote, setGraduationNote] = useState("");
+  const [graduateSaving, setGraduateSaving] = useState(false);
+  const [graduateError, setGraduateError] = useState<string | null>(null);
 
   // Pending placement tab state
   const [pendingRows, setPendingRows] = useState<PendingPlacementRow[]>([]);
@@ -941,6 +1065,28 @@ export default function StudentsPage() {
     invalidateAll();
   }
 
+  async function handleMarkGraduated() {
+    if (!graduateTarget?.enrollmentId) return;
+    setGraduateSaving(true);
+    setGraduateError(null);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (supabase as any)
+      .from("enrollments")
+      .update({
+        status: "completed",
+        progression_status: "graduated",
+        progression_notes: graduationNote.trim() || null,
+        ...(graduationDate ? { end_date: graduationDate } : {}),
+      })
+      .eq("id", graduateTarget.enrollmentId);
+    setGraduateSaving(false);
+    if (error) { setGraduateError(error.message); return; }
+    setGraduateTarget(null);
+    setGraduationDate("");
+    setGraduationNote("");
+    invalidateAll();
+  }
+
   async function handleGenerateInvite(student: Student) {
     if (!schoolId) return;
     setInviteGenerating(true);
@@ -1267,6 +1413,11 @@ export default function StudentsPage() {
       };
     }
     if (yearId === activeYear?.id && s.progressionStatus && CONTINUING_CLASSIFICATIONS.has(s.progressionStatus)) {
+      // Eligible-to-graduate students have no next class to be placed into.
+      // Showing "Pending placement" would be misleading — the school has no higher level.
+      if (s.progressionStatus === "eligible" && s.recommendedNextLevel === "GRADUATE") {
+        return { classId: null, className: "—", classLevel: "", enrollmentStatus: null, enrollmentYearId: yearId, isPending: false };
+      }
       return {
         classId: null,
         className: "—",
@@ -1287,6 +1438,19 @@ export default function StudentsPage() {
     for (const c of classOptions) if (c.level) set.add(c.level);
     for (const s of students) for (const e of s.allEnrollments) if (e.classLevel) set.add(e.classLevel);
     return [...set].sort((a, b) => a.localeCompare(b));
+  })();
+
+  // Distinct classes for the class filter — built from actual display enrollments
+  // so the list always reflects the currently-selected viewing year.
+  const classFilterOptions = (() => {
+    const map = new Map<string, string>(); // classId → className
+    for (const s of students) {
+      const disp = getDisplayEnrollment(s);
+      if (disp.classId && disp.className && disp.className !== "—") {
+        map.set(disp.classId, disp.className);
+      }
+    }
+    return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]));
   })();
 
   // Detect students enrolled in 2+ school years simultaneously (mixed-year data)
@@ -1311,13 +1475,24 @@ export default function StudentsPage() {
     const fullName = `${s.firstName} ${s.lastName}`.toLowerCase();
     const code = (s.studentCode ?? "").toLowerCase();
     const matchSearch = !search || fullName.includes(search.toLowerCase()) || s.guardianName.toLowerCase().includes(search.toLowerCase()) || code.includes(search.toLowerCase());
+
+    // "Graduated" and "All Students" are cross-year lifecycle views — they bypass the
+    // normal year/enrollment filter and instead match on progressionStatus directly.
+    if (statusFilter === "graduated") {
+      return matchSearch && s.progressionStatus === "graduated";
+    }
+    if (statusFilter === "__all__") {
+      return matchSearch;
+    }
+
     // Year filter narrows to students with an enrollment in the selected year —
     // the combined "School Year + Status" column shows that enrollment's status.
     const matchYear = !viewingYearId || disp.enrollmentYearId === viewingYearId;
     const matchClass = !levelFilter || disp.classLevel === levelFilter;
+    const matchClassFilter = !classFilter || (classFilter === "__unassigned__" ? !disp.classId : disp.classId === classFilter);
     const matchStatus = !statusFilter || disp.enrollmentStatus === statusFilter;
     const matchReturning = !returningFilter || returningEnrolledIds.has(s.id);
-    return matchSearch && matchYear && matchClass && matchStatus && matchReturning;
+    return matchSearch && matchYear && matchClass && matchClassFilter && matchStatus && matchReturning;
   });
 
   const sourceYear = allSchoolYears.find((y) => y.id === sourceYearId);
@@ -1477,7 +1652,7 @@ export default function StudentsPage() {
             </div>
             <Select
               value={viewingYearId}
-              onChange={(e) => { setViewingYearId(e.target.value); setLevelFilter(""); }}
+              onChange={(e) => { setViewingYearId(e.target.value); setLevelFilter(""); setClassFilter(""); }}
               className="sm:w-48"
             >
               {schoolYearList.map((y) => (
@@ -1489,6 +1664,11 @@ export default function StudentsPage() {
             <Select value={levelFilter} onChange={(e) => setLevelFilter(e.target.value)} className="sm:w-44">
               <option value="">All Levels</option>
               {levelOptions.map((lvl) => <option key={lvl} value={lvl}>{lvl}</option>)}
+            </Select>
+            <Select value={classFilter} onChange={(e) => setClassFilter(e.target.value)} className="sm:w-44">
+              <option value="">All Classes</option>
+              {classFilterOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+              <option value="__unassigned__">Not Assigned</option>
             </Select>
             <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="sm:w-44">
               {STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
@@ -1510,33 +1690,41 @@ export default function StudentsPage() {
                 <thead className="bg-muted border-b border-border">
                   <tr>
                     <th className="text-left px-5 py-3 font-medium text-muted-foreground">Student</th>
-                    <th className="text-left px-5 py-3 font-medium text-muted-foreground">Level</th>
-                    <th className="text-left px-5 py-3 font-medium text-muted-foreground">School Year - Status</th>
-                    <th className="text-left px-5 py-3 font-medium text-muted-foreground">Parent / Guardian</th>
-                    <th className="text-left px-5 py-3 font-medium text-muted-foreground">Contact</th>
-                    <th className="text-left px-5 py-3 font-medium text-muted-foreground">Next Level</th>
+                    <th className="text-left px-5 py-3 font-medium text-muted-foreground">Class</th>
+                    <th className="text-left px-5 py-3 font-medium text-muted-foreground">Status</th>
+                    <th className="text-left px-5 py-3 font-medium text-muted-foreground">Guardian</th>
+                    <th className="text-left px-5 py-3 font-medium text-muted-foreground">Classification</th>
                     <th className="px-5 py-3" />
                   </tr>
                 </thead>
                 <tbody>
                   {filtered.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="text-center py-10 text-muted-foreground">
+                      <td colSpan={6} className="text-center py-10 text-muted-foreground">
                         {students.length === 0 ? 'No students yet. Use "Enroll Student" to enroll through the pipeline, or "Add Student Profile" to create a record only.' : "No students match your filters."}
                       </td>
                     </tr>
                   ) : (
                     filtered.map((student) => {
                       const disp = getDisplayEnrollment(student);
-                      // The recommended next level applies to the year chronologically after
-                      // the classified enrollment's year — surface it as a hint next to the level.
                       const yearsAsc = [...schoolYearList].sort((a, b) => a.startDate.localeCompare(b.startDate));
                       const srcIdx = student.enrollmentYearId
                         ? yearsAsc.findIndex((y) => y.id === student.enrollmentYearId)
                         : -1;
                       const nextLevelYear = srcIdx >= 0 && srcIdx + 1 < yearsAsc.length ? yearsAsc[srcIdx + 1] : null;
+                      const dispYearName = schoolYearList.find((y) => y.id === disp.enrollmentYearId)?.name ?? "";
+                      const isActiveYear = disp.enrollmentYearId === activeYear?.id;
+
                       return (
-                      <tr key={student.id} className="border-b border-border last:border-0 hover:bg-muted/50 transition-colors">
+                      <tr
+                        key={student.id}
+                        className={`border-b border-border last:border-0 transition-colors ${
+                          disp.isPending
+                            ? "bg-amber-50/40 hover:bg-amber-50/60"
+                            : "hover:bg-muted/50"
+                        }`}
+                      >
+                        {/* Student — primary identifier, name is the only bold element */}
                         <td className="px-5 py-4">
                           <div className="flex items-center gap-3">
                             <div className="w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-semibold flex-shrink-0 overflow-hidden">
@@ -1546,114 +1734,154 @@ export default function StudentsPage() {
                               }
                             </div>
                             <div>
-                              <span className="font-medium">{student.firstName} {student.lastName}</span>
+                              <p className="font-medium leading-snug">{student.firstName} {student.lastName}</p>
                               {student.studentCode && (
-                                <span className="ml-2 text-xs text-muted-foreground font-mono">{student.studentCode}</span>
+                                <p className="text-xs text-muted-foreground font-mono mt-0.5">{student.studentCode}</p>
                               )}
                             </div>
                           </div>
                         </td>
-                        <td className="px-5 py-4 text-muted-foreground">{disp.classLevel || "—"}</td>
+
+                        {/* Class — stacked className / classLevel; amber cue for pending */}
                         <td className="px-5 py-4">
                           {disp.isPending ? (
-                            <span className="text-xs font-medium whitespace-nowrap text-foreground">
-                              {schoolYearList.find((y) => y.id === disp.enrollmentYearId)?.name ?? "—"}
-                              {" - "}
-                              <span className="italic text-muted-foreground">Pending re-enrollment</span>
-                            </span>
-                          ) : disp.enrollmentYearId || disp.enrollmentStatus ? (
-                            <span className={`text-xs font-medium whitespace-nowrap ${disp.enrollmentYearId === activeYear?.id ? "text-foreground" : "text-muted-foreground"}`}>
-                              {schoolYearList.find((y) => y.id === disp.enrollmentYearId)?.name ?? "—"}
-                              {disp.enrollmentStatus ? ` - ${disp.enrollmentStatus.charAt(0).toUpperCase()}${disp.enrollmentStatus.slice(1)}` : ""}
-                            </span>
+                            <div>
+                              <p className="text-xs font-medium text-amber-700 leading-snug">Pending placement</p>
+                              {dispYearName && (
+                                <p className="text-xs text-muted-foreground mt-0.5">{dispYearName}</p>
+                              )}
+                            </div>
+                          ) : disp.classId ? (
+                            <div>
+                              <p className="text-sm text-foreground leading-snug">{disp.className}</p>
+                              {disp.classLevel && (
+                                <p className="text-xs text-muted-foreground mt-0.5">{disp.classLevel}</p>
+                              )}
+                            </div>
+                          ) : student.progressionStatus === "eligible" && student.recommendedNextLevel === "GRADUATE" ? (
+                            <p className="text-xs text-muted-foreground">Graduating</p>
                           ) : (
-                            <span className="text-muted-foreground text-xs">—</span>
+                            <p className="text-xs text-muted-foreground">Not assigned</p>
                           )}
                         </td>
-                        <td className="px-5 py-4">{student.guardianName}</td>
-                        <td className="px-5 py-4 text-muted-foreground">{student.guardianPhone}</td>
+
+                        {/* Status — enrollment status in plain text; show year only for non-active */}
+                        <td className="px-5 py-4">
+                          {disp.isPending ? (
+                            <p className="text-xs text-muted-foreground">—</p>
+                          ) : disp.enrollmentStatus ? (
+                            <div>
+                              <p className={`text-xs font-medium ${
+                                disp.enrollmentStatus === "waitlisted" ? "text-amber-700" :
+                                disp.enrollmentStatus === "withdrawn"  ? "text-muted-foreground" :
+                                "text-muted-foreground"
+                              }`}>
+                                {disp.enrollmentStatus.charAt(0).toUpperCase() + disp.enrollmentStatus.slice(1)}
+                              </p>
+                              {!isActiveYear && dispYearName && (
+                                <p className="text-xs text-muted-foreground mt-0.5">{dispYearName}</p>
+                              )}
+                            </div>
+                          ) : (
+                            <p className="text-xs text-muted-foreground">—</p>
+                          )}
+                        </td>
+
+                        {/* Guardian — name + phone stacked */}
+                        <td className="px-5 py-4">
+                          <div>
+                            <p className="text-sm text-foreground leading-snug">{student.guardianName}</p>
+                            {student.guardianPhone && (
+                              <p className="text-xs text-muted-foreground mt-0.5">{student.guardianPhone}</p>
+                            )}
+                          </div>
+                        </td>
+
+                        {/* Classification — text-only, no pills */}
                         <td className="px-5 py-4">
                           {student.progressionStatus ? (() => {
                             const ps = student.progressionStatus;
-                            const color =
-                              ps === "eligible"              ? "text-green-700 bg-green-50 border-green-200" :
-                              ps === "not_eligible_retained" ? "text-amber-700 bg-amber-50 border-amber-200" :
-                              ps === "not_eligible_other"    ? "text-orange-700 bg-orange-50 border-orange-200" :
-                              ps === "graduated"             ? "text-muted-foreground bg-muted border-border" :
-                              ps === "not_continuing"        ? "text-rose-700 bg-rose-50 border-rose-200" :
-                              ps === "withdrawn"             ? "text-red-700 bg-red-50 border-red-200" :
-                                                              "text-muted-foreground bg-muted border-border";
-                            const label =
-                              ps === "eligible"              ? "Eligible" :
-                              ps === "not_eligible_retained" ? "Retained" :
-                              ps === "not_eligible_other"    ? "Needs Review" :
-                              ps === "graduated"             ? "Graduated" :
-                              ps === "not_continuing"        ? "Not Continuing" :
-                              ps === "withdrawn"             ? "Withdrawn" : ps;
-                            // Resolve what to show under the classification badge.
-                            // Mirrors the Year-End table's logic so the two views stay consistent.
-                            //   - graduated / not_continuing / withdrawn → no next level (terminal state)
-                            //   - not_eligible_retained → student stays at current level
-                            //   - otherwise → class's promotion-path target, pretty-printed
-                            let nextLine: { display: string; showYear: boolean } | null = null;
-                            if (ps === "not_eligible_retained") {
-                              if (student.classLevel) nextLine = { display: student.classLevel, showYear: true };
-                            } else if (ps !== "graduated" && ps !== "not_continuing" && ps !== "withdrawn") {
-                              const nl = student.recommendedNextLevel;
-                              if (nl) {
-                                nextLine = {
-                                  display: nl === "GRADUATE" ? "Graduate / Moving Up"
-                                         : nl === "NON_PROMOTIONAL" ? "Non-promotional"
-                                         : nl,
-                                  showYear: nl !== "GRADUATE" && nl !== "NON_PROMOTIONAL",
-                                };
-                              }
-                            }
-                            return (
-                              <div className="space-y-0.5">
-                                <span className={`inline-block px-2 py-0.5 rounded-full border text-xs font-medium ${color}`}>{label}</span>
-                                {nextLine && (
-                                  <p className="text-xs text-muted-foreground">
-                                    → {nextLine.display}
-                                    {nextLine.showYear && nextLevelYear && <span> ({nextLevelYear.name})</span>}
+                            const nl = student.recommendedNextLevel;
+
+                            if (ps === "graduated") return (
+                              <p className="text-xs text-muted-foreground">Graduated</p>
+                            );
+                            if (ps === "not_continuing") return (
+                              <p className="text-xs text-muted-foreground">Not continuing</p>
+                            );
+                            if (ps === "withdrawn") return (
+                              <p className="text-xs text-muted-foreground">Withdrawn</p>
+                            );
+                            if (ps === "not_eligible_other") return (
+                              <p className="text-xs font-medium text-orange-600">Needs review</p>
+                            );
+                            if (ps === "not_eligible_retained") return (
+                              <div>
+                                <p className="text-xs font-medium text-amber-700">Retained</p>
+                                {student.classLevel && (
+                                  <p className="text-xs text-muted-foreground mt-0.5">
+                                    {student.classLevel}
+                                    {nextLevelYear && <span> · {nextLevelYear.name}</span>}
                                   </p>
                                 )}
                               </div>
                             );
-                          })() : <span className="text-muted-foreground text-xs">—</span>}
+                            if (ps === "eligible" && nl) {
+                              if (nl === "GRADUATE") return (
+                                <div>
+                                  <p className="text-xs text-foreground">Moving up</p>
+                                  <p className="text-xs text-muted-foreground mt-0.5">Graduating</p>
+                                </div>
+                              );
+                              if (nl === "NON_PROMOTIONAL") return (
+                                <p className="text-xs text-muted-foreground">Non-promotional</p>
+                              );
+                              return (
+                                <div>
+                                  <p className="text-xs text-foreground">Moving up to {nl}</p>
+                                  {nextLevelYear && (
+                                    <p className="text-xs text-muted-foreground mt-0.5">{nextLevelYear.name}</p>
+                                  )}
+                                </div>
+                              );
+                            }
+                            return <p className="text-xs text-muted-foreground">—</p>;
+                          })() : <p className="text-xs text-muted-foreground">—</p>}
                         </td>
+
+                        {/* Actions */}
                         <td className="px-5 py-4 text-right">
-                          <div className="flex items-center justify-end gap-3">
-                            <button onClick={() => setSelectedStudent(student)} className="text-primary text-sm hover:underline">
-                              View
-                            </button>
-                            <Link
-                              href={`/documents?student=${student.id}`}
-                              className="text-muted-foreground hover:text-foreground transition-colors"
-                              title="Documents"
-                              onClick={(e) => e.stopPropagation()}
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              onClick={() => setSelectedStudent(student)}
+                              className="text-primary text-sm font-medium hover:underline"
                             >
-                              <FileText className="w-4 h-4" />
-                            </Link>
-                            {userRole === "school_admin" && student.childProfileId && (
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setShareClinicTarget({
-                                    childProfileId: student.childProfileId!,
-                                    name: `${student.firstName} ${student.lastName}`.trim(),
-                                  });
-                                }}
-                                className="text-muted-foreground hover:text-foreground transition-colors"
-                                title="Share with Clinic"
-                              >
-                                <Share2 className="w-4 h-4" />
-                              </button>
-                            )}
-                            <button onClick={() => openEdit(student)} className="text-muted-foreground hover:text-foreground transition-colors" title="Edit">
-                              <Pencil className="w-4 h-4" />
+                              Profile
                             </button>
+                            <RowMenu
+                              student={student}
+                              onEdit={() => openEdit(student)}
+                              onGraduate={
+                                userRole === "school_admin" &&
+                                student.progressionStatus === "eligible" &&
+                                student.recommendedNextLevel === "GRADUATE"
+                                  ? () => {
+                                      setGraduateTarget(student);
+                                      setGraduationDate(new Date().toISOString().split("T")[0]);
+                                      setGraduationNote("");
+                                      setGraduateError(null);
+                                    }
+                                  : null
+                              }
+                              onShare={
+                                userRole === "school_admin" && student.childProfileId
+                                  ? () => setShareClinicTarget({
+                                      childProfileId: student.childProfileId!,
+                                      name: `${student.firstName} ${student.lastName}`.trim(),
+                                    })
+                                  : null
+                              }
+                            />
                           </div>
                         </td>
                       </tr>
@@ -2051,7 +2279,9 @@ export default function StudentsPage() {
 
       {/* Student Profile Modal */}
       <Modal open={!!selectedStudent} onClose={() => setSelectedStudent(null)} title="Student Profile" className="max-w-xl">
-        {selectedStudent && (
+        {selectedStudent && (() => {
+          const selDisp = getDisplayEnrollment(selectedStudent);
+          return (
           <div className="space-y-5">
             <div className="flex items-center gap-4">
               <div className="w-14 h-14 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xl font-semibold overflow-hidden">
@@ -2067,17 +2297,28 @@ export default function StudentsPage() {
                     <span className="ml-2 text-sm font-normal text-muted-foreground">"{selectedStudent.preferredName}"</span>
                   )}
                 </h3>
-                {selectedStudent.studentCode && (
-                  <p className="text-xs font-mono text-muted-foreground mt-0.5 bg-muted px-2 py-0.5 rounded inline-block">
-                    ID: {selectedStudent.studentCode}
-                  </p>
+                {selDisp.classId ? (
+                  <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-primary/10 text-primary mt-1">
+                    {selDisp.className}
+                    {selDisp.classLevel && <span className="text-primary/60">· {selDisp.classLevel}</span>}
+                  </span>
+                ) : (
+                  <span className="text-xs text-muted-foreground mt-1 inline-block">Not Enrolled</span>
                 )}
-                {selectedStudent.lrn && (
-                  <p className="text-xs font-mono text-muted-foreground mt-0.5 ml-1 bg-muted px-2 py-0.5 rounded inline-block">
-                    LRN: {selectedStudent.lrn}
-                  </p>
+                {(selectedStudent.studentCode || selectedStudent.lrn) && (
+                  <div className="flex flex-wrap gap-1 mt-1.5">
+                    {selectedStudent.studentCode && (
+                      <p className="text-xs font-mono text-muted-foreground bg-muted px-2 py-0.5 rounded inline-block">
+                        ID: {selectedStudent.studentCode}
+                      </p>
+                    )}
+                    {selectedStudent.lrn && (
+                      <p className="text-xs font-mono text-muted-foreground bg-muted px-2 py-0.5 rounded inline-block">
+                        LRN: {selectedStudent.lrn}
+                      </p>
+                    )}
+                  </div>
                 )}
-                <p className="text-sm text-muted-foreground mt-0.5">{selectedStudent.className}</p>
               </div>
               <div className="ml-auto">
                 {selectedStudent.enrollmentStatus && <Badge variant={selectedStudent.enrollmentStatus}>{selectedStudent.enrollmentStatus}</Badge>}
@@ -2280,7 +2521,8 @@ export default function StudentsPage() {
               </Button>
             </div>
           </div>
-        )}
+          );
+        })()}
       </Modal>
 
       {/* Add / Edit Student Modals */}
@@ -2921,6 +3163,60 @@ export default function StudentsPage() {
           onShared={() => setShareClinicTarget(null)}
         />
       )}
+
+      {/* Mark as Graduated confirmation modal */}
+      <Modal
+        open={!!graduateTarget}
+        onClose={() => { setGraduateTarget(null); setGraduateError(null); }}
+        title="Mark as Graduated"
+        className="max-w-sm"
+      >
+        {graduateTarget && (
+          <div className="space-y-4">
+            <div>
+              <p className="text-sm font-medium">{graduateTarget.firstName} {graduateTarget.lastName}</p>
+              {graduateTarget.classLevel && (
+                <p className="text-xs text-muted-foreground mt-0.5">{graduateTarget.classLevel}</p>
+              )}
+            </div>
+
+            <div className="p-3 rounded-lg bg-muted/50 text-xs text-muted-foreground">
+              This student will no longer appear in the default active student list. Their profile, history, and documents remain fully accessible.
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Graduation date</label>
+              <DatePicker
+                value={graduationDate}
+                onChange={setGraduationDate}
+                placeholder="Select date"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Note <span className="font-normal text-muted-foreground">(optional)</span></label>
+              <Textarea
+                value={graduationNote}
+                onChange={(e) => setGraduationNote(e.target.value)}
+                placeholder="e.g. Completed Kinder program — SY 2025–2026"
+                rows={2}
+              />
+            </div>
+
+            {graduateError && (
+              <p className="text-sm text-red-600">{graduateError}</p>
+            )}
+
+            <div className="flex justify-end gap-2 pt-1">
+              <ModalCancelButton />
+              <Button onClick={handleMarkGraduated} disabled={graduateSaving}>
+                <GraduationCap className="w-4 h-4" />
+                {graduateSaving ? "Saving…" : "Mark Graduated"}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
