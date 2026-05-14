@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
@@ -3101,7 +3101,7 @@ export default function StudentsPage() {
                   </div>
                 );
                 const Note = ({ children }: { children: React.ReactNode }) => (
-                  <div className="mt-3 flex gap-2 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg px-3 py-2 text-blue-800 dark:text-blue-300 text-xs">
+                  <div className="mt-3 flex gap-2 bg-blue-100 dark:bg-blue-950/50 border border-blue-300 dark:border-blue-700 rounded-lg px-3 py-2 text-blue-900 dark:text-blue-200 text-xs">
                     <HelpCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
                     <span>{children}</span>
                   </div>

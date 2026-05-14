@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -571,7 +571,7 @@ function DocumentsHelpDrawer({
     </div>
   );
   const Note = ({ children }: { children: React.ReactNode }) => (
-    <div className="mt-3 flex gap-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 text-blue-800 text-xs">
+    <div className="mt-3 flex gap-2 bg-blue-100 border border-blue-300 rounded-lg px-3 py-2 text-blue-900 text-xs">
       <HelpCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
       <span>{children}</span>
     </div>
