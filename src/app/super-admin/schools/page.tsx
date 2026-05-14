@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -831,17 +831,17 @@ export default function SuperAdminSchoolsPage() {
                   </div>
                 );
                 const Tip = ({ children }: { children: React.ReactNode }) => (
-                  <div className="mt-3 flex gap-2 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2 text-amber-800 dark:text-amber-300 text-xs">
+                  <div className="mt-3 flex gap-2 bg-amber-100 border border-amber-300 rounded-lg px-3 py-2 text-amber-900 text-xs">
                     <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" /><span>{children}</span>
                   </div>
                 );
                 const Note = ({ children }: { children: React.ReactNode }) => (
-                  <div className="mt-3 flex gap-2 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg px-3 py-2 text-blue-800 dark:text-blue-300 text-xs">
+                  <div className="mt-3 flex gap-2 bg-blue-100 border border-blue-300 rounded-lg px-3 py-2 text-blue-900 text-xs">
                     <HelpCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" /><span>{children}</span>
                   </div>
                 );
                 const Danger = ({ children }: { children: React.ReactNode }) => (
-                  <div className="mt-3 flex gap-2 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2 text-red-800 dark:text-red-300 text-xs">
+                  <div className="mt-3 flex gap-2 bg-red-100 border border-red-300 rounded-lg px-3 py-2 text-red-900 text-xs">
                     <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" /><span>{children}</span>
                   </div>
                 );
@@ -898,7 +898,7 @@ export default function SuperAdminSchoolsPage() {
                           "Seeds a default Branch (Main Branch)",
                           "Sets trial_start_date, trial_end_date, trial_status per your input",
                         ]} />
-                        <Tip>After creating a school you must manually create the first <strong>school_admin</strong> user. Have the admin sign up via <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">/login</code>, then update their profile in Supabase SQL Editor (see Onboarding Checklist).</Tip>
+                        <Tip>After creating a school you must manually create the first <strong>school_admin</strong> user. Have the admin sign up via <code className="bg-amber-100 px-1 rounded">/login</code>, then update their profile in Supabase SQL Editor (see Onboarding Checklist).</Tip>
                       </div>
                     ),
                   },
@@ -978,7 +978,7 @@ export default function SuperAdminSchoolsPage() {
                           <li><strong className="text-foreground">Refresh</strong> — re-seeds with the same scenario</li>
                           <li><strong className="text-foreground">Clear Data</strong> — removes all demo data but leaves the school record</li>
                         </ul>
-                        <Note>Each generation run is tracked in <code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded">demo_data_runs</code>. Run history shows status, scenario, and timestamps for the last 10 runs.</Note>
+                        <Note>Each generation run is tracked in <code className="bg-blue-100 px-1 rounded">demo_data_runs</code>. Run history shows status, scenario, and timestamps for the last 10 runs.</Note>
                       </div>
                     ),
                   },
@@ -1057,7 +1057,7 @@ WHERE email = 'admin@theirschool.com';`}</Code>
                             <p className="text-xs font-mono">Password: DemoPass@{"{batchId}"}!</p>
                           </div>
                         </div>
-                        <Tip>The batch ID changes every time you generate or refresh. To find the current batch ID: Supabase Dashboard → Authentication → Users, filter by <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">@example.com</code>.</Tip>
+                        <Tip>The batch ID changes every time you generate or refresh. To find the current batch ID: Supabase Dashboard → Authentication → Users, filter by <code className="bg-amber-100 px-1 rounded">@example.com</code>.</Tip>
                         <Code>{`-- Find current demo user emails for a school
 SELECT au.email, p.role, p.full_name
 FROM profiles p
@@ -1085,7 +1085,7 @@ ORDER BY p.role, au.email;`}</Code>
 FROM pg_tables
 WHERE schemaname = 'public'
 ORDER BY tablename;`}</Code>
-                        <Tip>If you add a new table: (1) enable RLS, (2) add a super_admin bypass policy using <code className="bg-amber-100 dark:bg-amber-900/40 px-1 rounded">is_super_admin()</code>, and (3) add school-member read/write policies.</Tip>
+                        <Tip>If you add a new table: (1) enable RLS, (2) add a super_admin bypass policy using <code className="bg-amber-100 px-1 rounded">is_super_admin()</code>, and (3) add school-member read/write policies.</Tip>
                         <p className="text-xs font-medium text-foreground">Key design rules:</p>
                         <ul className="text-xs space-y-1 list-disc list-inside">
                           <li>Every tenant table has <code className="bg-muted px-1 rounded">school_id UUID NOT NULL REFERENCES schools(id) ON DELETE CASCADE</code></li>
@@ -1118,7 +1118,7 @@ ORDER BY tablename;`}</Code>
                           ))}
                         </div>
                         <p className="text-xs">Signed URLs expire after <strong className="text-foreground">1 hour</strong>. Pages generate signed URLs in a single batch on load via <code className="bg-muted px-1 rounded">createSignedUrls()</code>.</p>
-                        <Note>Planned (not yet built): split into separate <code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded">receipts</code> and <code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded">student-documents</code> buckets when the document hub is built.</Note>
+                        <Note>Planned (not yet built): split into separate <code className="bg-blue-100 px-1 rounded">receipts</code> and <code className="bg-blue-100 px-1 rounded">student-documents</code> buckets when the document hub is built.</Note>
                       </div>
                     ),
                   },

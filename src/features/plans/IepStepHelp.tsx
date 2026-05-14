@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { X, Users, BookOpen, AlertTriangle, CheckCircle2, Lightbulb } from "lucide-react";
 import type { WizardStep } from "./constants";
 
@@ -327,13 +327,13 @@ export function IepStepHelp({ step, onClose }: { step: WizardStep; onClose: () =
 
       {/* Avoid */}
       {help.avoid && help.avoid.length > 0 && (
-        <div className="flex gap-2.5 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/60 rounded-lg px-3 py-2.5">
+        <div className="flex gap-2.5 bg-amber-100 border border-amber-200 rounded-lg px-3 py-2.5">
           <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-px" />
           <div className="space-y-1">
-            <p className="text-xs font-semibold text-amber-800 dark:text-amber-200">Common mistakes to avoid</p>
+            <p className="text-xs font-semibold text-amber-800">Common mistakes to avoid</p>
             <ul className="space-y-0.5">
               {help.avoid.map((a, i) => (
-                <li key={i} className="text-xs text-amber-700 dark:text-amber-300 leading-relaxed">· {a}</li>
+                <li key={i} className="text-xs text-amber-700 leading-relaxed">· {a}</li>
               ))}
             </ul>
           </div>
@@ -342,9 +342,9 @@ export function IepStepHelp({ step, onClose }: { step: WizardStep; onClose: () =
 
       {/* Note */}
       {help.note && (
-        <div className="flex gap-2.5 bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800/60 rounded-lg px-3 py-2.5">
+        <div className="flex gap-2.5 bg-blue-100 border border-blue-200 rounded-lg px-3 py-2.5">
           <CheckCircle2 className="w-3.5 h-3.5 text-blue-600 shrink-0 mt-px" />
-          <p className="text-xs text-blue-700 dark:text-blue-300 leading-relaxed">{help.note}</p>
+          <p className="text-xs text-blue-700 leading-relaxed">{help.note}</p>
         </div>
       )}
     </div>

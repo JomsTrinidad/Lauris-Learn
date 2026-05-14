@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 /**
  * Evidence Assistant — step-based modal for IEP drafting.
@@ -558,9 +558,9 @@ export function EvidenceAssistant({
         {sourceMode === "upload_image" && (
           <div className="space-y-3">
             {/* Low-trust warning */}
-            <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200 dark:bg-amber-950/20 dark:border-amber-700/60">
-              <ShieldAlert className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-              <p className="text-xs text-amber-800 dark:text-amber-200">
+            <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-100 border border-amber-200">
+              <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <p className="text-xs text-amber-800">
                 <strong>Lower accuracy:</strong> Image-based extraction uses AI vision and may miss text or make errors,
                 especially for handwritten notes or low-quality photos. Review all suggestions carefully.
               </p>
@@ -645,9 +645,9 @@ export function EvidenceAssistant({
         <div className="space-y-3 max-h-[50vh] overflow-y-auto">
           {/* Low-trust warning for image sources */}
           {lowTrustWarning && (
-            <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 dark:bg-amber-950/20 dark:border-amber-700/60 flex items-start gap-2">
-              <ShieldAlert className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-              <p className="text-xs text-amber-800 dark:text-amber-200">{lowTrustWarning}</p>
+            <div className="p-3 rounded-lg bg-amber-100 border border-amber-200 flex items-start gap-2">
+              <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <p className="text-xs text-amber-800">{lowTrustWarning}</p>
             </div>
           )}
 
@@ -714,9 +714,9 @@ export function EvidenceAssistant({
 
         {/* Low-trust warning carried into review step */}
         {lowTrustWarning && (
-          <div className="mb-4 flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200 dark:bg-amber-950/20 dark:border-amber-700/60">
-            <ShieldAlert className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-            <p className="text-xs text-amber-800 dark:text-amber-200">{lowTrustWarning}</p>
+          <div className="mb-4 flex items-start gap-2 p-3 rounded-lg bg-amber-100 border border-amber-200">
+            <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <p className="text-xs text-amber-800">{lowTrustWarning}</p>
           </div>
         )}
 
@@ -738,7 +738,7 @@ export function EvidenceAssistant({
                   className={cn(
                     "p-4 rounded-lg border transition-colors",
                     isApplied
-                      ? "bg-green-50 border-green-200 dark:bg-green-950/20 dark:border-green-700/60"
+                      ? "bg-green-100 border-green-200"
                       : "bg-card border-border hover:border-primary/50",
                   )}
                 >
@@ -829,7 +829,7 @@ export function EvidenceAssistant({
         </div>
 
         {/* Footer banner */}
-        <div className="-mx-6 -mb-6 px-6 py-3 bg-blue-50 border-t border-blue-200 dark:bg-blue-950/20 dark:border-blue-700/60 text-xs text-blue-900 dark:text-blue-200">
+        <div className="-mx-6 -mb-6 px-6 py-3 bg-blue-100 border-t border-blue-200 text-xs text-blue-900">
           <div className="flex items-start gap-2">
             <MessageCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
             <div>

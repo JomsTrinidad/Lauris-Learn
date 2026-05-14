@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 /**
  * IEP Plan modal — create + edit a DepEd-aligned structured IEP Plan.
@@ -860,7 +860,7 @@ export function IEPPlanModal({
       )}
 
       {savedToast && (
-        <div className="mt-4 flex items-center gap-2 px-4 py-2.5 text-sm rounded-lg bg-green-50 border border-green-200 text-green-800 dark:bg-green-950/20 dark:border-green-700/60 dark:text-green-200">
+        <div className="mt-4 flex items-center gap-2 px-4 py-2.5 text-sm rounded-lg bg-green-100 border border-green-200 text-green-800">
           <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" />
           Draft saved.
         </div>
@@ -869,9 +869,9 @@ export function IEPPlanModal({
 
       {/* Read-only notice for finalized / approved plans */}
       {!loading && isReadOnly && (
-        <div className="mt-4 flex items-start gap-2 px-4 py-3 text-sm bg-amber-50 border border-amber-200 rounded-lg dark:bg-amber-950/20 dark:border-amber-700/60">
-          <Lock className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-          <span className="text-amber-800 dark:text-amber-200">
+        <div className="mt-4 flex items-start gap-2 px-4 py-3 text-sm bg-amber-100 border border-amber-200 rounded-lg">
+          <Lock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+          <span className="text-amber-800">
             This plan is <strong>{status === "finalized" ? "finalized" : "approved"}</strong> and is read-only.
             {canCreateRevision && " Use \"Create Revision\" to make a new editable draft based on this plan."}
           </span>

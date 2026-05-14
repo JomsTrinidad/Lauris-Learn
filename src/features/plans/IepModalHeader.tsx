@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 /**
  * IepModalHeader — sticky header for IEP Plan modal.
@@ -95,23 +95,23 @@ export function IepModalHeader({
 
       {/* Recovery prompt — single compact line (hidden for read-only plans) */}
       {!isReadOnly && showRecoveryPrompt && recoveryTimestamp && (
-        <div className="flex items-center gap-2 px-6 py-2 text-xs bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-800">
-          <AlertCircle className="w-3 h-3 text-amber-600 dark:text-amber-400 shrink-0" />
-          <span className="flex-1 text-amber-800 dark:text-amber-200">
+        <div className="flex items-center gap-2 px-6 py-2 text-xs bg-amber-100 border-b border-amber-200">
+          <AlertCircle className="w-3 h-3 text-amber-600 shrink-0" />
+          <span className="flex-1 text-amber-800">
             Unsaved recovery found
           </span>
           <button
             type="button"
             onClick={onRestoreRecovery}
-            className="font-semibold text-amber-800 dark:text-amber-200 hover:text-amber-900 hover:underline underline-offset-2"
+            className="font-semibold text-amber-800 hover:text-amber-900 hover:underline underline-offset-2"
           >
             Restore
           </button>
-          <span className="text-amber-300 dark:text-amber-700">·</span>
+          <span className="text-amber-500">·</span>
           <button
             type="button"
             onClick={onDiscardRecovery}
-            className="text-amber-700 dark:text-amber-400 hover:text-amber-900 dark:hover:text-amber-200"
+            className="text-amber-700 hover:text-amber-900"
           >
             Discard
           </button>

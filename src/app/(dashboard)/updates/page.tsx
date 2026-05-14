@@ -712,7 +712,7 @@ export default function ParentUpdatesPage() {
           <div className="flex gap-2 flex-wrap">
             {(["posted", "draft", "hidden", "all"] as StatusFilter[]).map((f) => (
               <button key={f} onClick={() => setStatusFilter(f)}
-                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${statusFilter === f ? "bg-primary text-primary-foreground" : "bg-white dark:bg-slate-800 border border-border hover:bg-accent"}`}>
+                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${statusFilter === f ? "bg-primary text-primary-foreground" : "bg-white border border-border text-gray-700 hover:bg-muted"}`}>
                 {STATUS_LABELS[f]}
               </button>
             ))}
@@ -725,12 +725,12 @@ export default function ParentUpdatesPage() {
             <span className="text-sm font-semibold text-foreground min-w-fit">Class:</span>
             <div className="flex gap-2 flex-wrap">
               <button onClick={() => setClassFilter("all")}
-                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${classFilter === "all" ? "bg-primary text-primary-foreground" : "bg-white dark:bg-slate-800 border border-border hover:bg-accent"}`}>
+                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${classFilter === "all" ? "bg-primary text-primary-foreground" : "bg-white border border-border text-gray-700 hover:bg-muted"}`}>
                 All
               </button>
               {classOptions.map((c) => (
                 <button key={c.id} onClick={() => setClassFilter(c.id)}
-                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${classFilter === c.id ? "bg-primary text-primary-foreground" : "bg-white dark:bg-slate-800 border border-border hover:bg-accent"}`}>
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${classFilter === c.id ? "bg-primary text-primary-foreground" : "bg-white border border-border text-gray-700 hover:bg-muted"}`}>
                   {c.name}
                 </button>
               ))}

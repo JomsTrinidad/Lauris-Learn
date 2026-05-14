@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import type { Dispatch, SetStateAction } from "react";
 import { ChevronDown, ChevronUp, Plus, Sparkles } from "lucide-react";
@@ -113,7 +113,7 @@ export function Step4GoalsInterventions({
                   disabled={!canEdit}
                   placeholder="By the end of the school year, the learner will…" />
                 {showMeasurabilityHint && (
-                  <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
+                  <p className="text-xs text-amber-600 mt-0.5">
                     Tip: consider adding a measurable target (e.g., a number, percentage, or frequency) to make progress easier to track.
                   </p>
                 )}

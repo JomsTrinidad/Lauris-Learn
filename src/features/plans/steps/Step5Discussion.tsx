@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { type Dispatch, type SetStateAction } from "react";
 import { Plus, Trash2, Users } from "lucide-react";
@@ -19,9 +19,9 @@ const RECOMMENDATION_STATUS_LABELS: Record<RecommendationItem["status"], string>
 };
 
 const STATUS_COLORS: Record<RecommendationItem["status"], string> = {
-  proposed:         "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/30 dark:text-blue-300 dark:border-blue-800",
-  under_discussion: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/30 dark:text-amber-300 dark:border-amber-800",
-  accepted:         "bg-green-50 text-green-700 border-green-200 dark:bg-green-950/30 dark:text-green-300 dark:border-green-800",
+  proposed:         "bg-blue-100 text-blue-700 border-blue-200",
+  under_discussion: "bg-amber-100 text-amber-700 border-amber-200",
+  accepted:         "bg-green-100 text-green-700 border-green-200",
   rejected:         "bg-muted text-muted-foreground border-border",
   deferred:         "bg-muted text-muted-foreground border-border",
 };

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 /**
  * Plans & Forms — third view inside Document Coordination.
@@ -225,7 +225,7 @@ export function PlansAndFormsView({
               className={cn(
                 "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors shrink-0",
                 reviewQueueActive
-                  ? "bg-amber-50 border-amber-200 text-amber-800 dark:bg-amber-950/30 dark:border-amber-700 dark:text-amber-200"
+                  ? "bg-amber-100 border-amber-200 text-amber-800"
                   : "border-border text-muted-foreground hover:text-foreground hover:bg-muted",
               )}
             >
@@ -235,7 +235,7 @@ export function PlansAndFormsView({
                 <span className={cn(
                   "inline-flex items-center justify-center min-w-[1.1rem] h-[1.1rem] px-1 rounded-full text-[10px] font-semibold leading-none",
                   reviewQueueActive
-                    ? "bg-amber-200 text-amber-900 dark:bg-amber-700 dark:text-amber-100"
+                    ? "bg-amber-200 text-amber-900"
                     : "bg-primary text-primary-foreground",
                 )}>
                   {pendingCount > 9 ? "9+" : pendingCount}
@@ -271,9 +271,9 @@ export function PlansAndFormsView({
 
       {/* Review queue context banner */}
       {reviewQueueActive && (
-        <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg dark:bg-amber-950/20 dark:border-amber-700/60">
-          <Clock className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
-          <p className="flex-1 text-xs text-amber-800 dark:text-amber-200">
+        <div className="flex items-center gap-2 px-3 py-2 bg-amber-100 border border-amber-200 rounded-lg">
+          <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+          <p className="flex-1 text-xs text-amber-800">
             {plans.length === 0 || loading
               ? "Showing plans waiting for review · oldest submissions appear first"
               : `${plans.length} plan${plans.length > 1 ? "s" : ""} waiting for review · oldest first`}
@@ -281,7 +281,7 @@ export function PlansAndFormsView({
           <button
             type="button"
             onClick={exitReviewQueue}
-            className="text-amber-600 hover:text-amber-900 dark:text-amber-400 dark:hover:text-amber-200 transition-colors"
+            className="text-amber-600 hover:text-amber-900 transition-colors"
             title="Exit review queue"
           >
             <X className="w-3.5 h-3.5" />

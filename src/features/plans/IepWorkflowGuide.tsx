@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 /**
  * IepWorkflowGuide — inline workflow reference panel for the IEP modal sidebar.
@@ -33,10 +33,10 @@ const APPROVAL_FLOW: FlowNode[] = [
 
 const STATUS_INFO: Partial<Record<PlanStatus, { label: string; description: string; color: string }>> = {
   draft:     { label: "Draft",     description: "In progress. All staff can edit and add evidence from reports.", color: "text-muted-foreground" },
-  submitted: { label: "Submitted", description: "Shared for team input. Awaiting admin review.", color: "text-blue-600 dark:text-blue-400" },
-  in_review: { label: "In Review", description: "Under active review by the team.", color: "text-yellow-600 dark:text-yellow-400" },
-  approved:  { label: "Approved",  description: "Reviewed and approved by admin. Read-only — use Create Revision to edit.", color: "text-green-600 dark:text-green-400" },
-  finalized: { label: "Finalized", description: "Plan is finalized and read-only — use Create Revision to make changes.", color: "text-green-600 dark:text-green-400" },
+  submitted: { label: "Submitted", description: "Shared for team input. Awaiting admin review.", color: "text-blue-600" },
+  in_review: { label: "In Review", description: "Under active review by the team.", color: "text-yellow-600" },
+  approved:  { label: "Approved",  description: "Reviewed and approved by admin. Read-only — use Create Revision to edit.", color: "text-green-600" },
+  finalized: { label: "Finalized", description: "Plan is finalized and read-only — use Create Revision to make changes.", color: "text-green-600" },
   archived:  { label: "Archived",  description: "No longer active.", color: "text-muted-foreground" },
 };
 
@@ -82,7 +82,7 @@ export function IepWorkflowGuide({ status, workflowMode, isAdmin }: IepWorkflowG
                   <div className={cn(
                     "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors",
                     isCompleted
-                      ? "bg-green-50 border-green-200 text-green-700 dark:bg-green-950/30 dark:border-green-800 dark:text-green-400"
+                      ? "bg-green-100 border-green-200 text-green-700"
                       : isCurrent
                         ? "bg-primary/10 border-primary/40 text-primary"
                         : "bg-muted/40 border-border/50 text-muted-foreground",
@@ -141,7 +141,7 @@ export function IepWorkflowGuide({ status, workflowMode, isAdmin }: IepWorkflowG
 
       {/* ── Read-only notice ── */}
       {isReadOnly && (
-        <div className="rounded-lg border border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-950/20 px-4 py-3 text-sm text-green-800 dark:text-green-300">
+        <div className="rounded-lg border border-green-200 bg-green-100 px-4 py-3 text-sm text-green-800">
           This plan is read-only. All tabs and content remain viewable.
           {!isAdmin && " Ask an admin to create a revision if changes are needed."}
           {isAdmin && " Use “Create Revision” in the footer to make a new editable draft."}

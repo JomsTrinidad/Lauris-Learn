@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import type { Dispatch, SetStateAction } from "react";
 import { Paperclip, Sparkles, X } from "lucide-react";
@@ -142,8 +142,8 @@ export function Step6Attachments({
               <p className="text-xs text-muted-foreground">When the plan is complete, use the <strong>Finalize IEP</strong> button below to lock it. A finalized plan cannot be edited.</p>
               {(!meetingDate || !iepReviewDate || goals.length === 0 || teamMembers.length === 0) && (
                 <div className="mt-2 space-y-1">
-                  <p className="text-xs font-medium text-amber-700 dark:text-amber-400">Before finalizing, consider completing:</p>
-                  <ul className="text-xs text-amber-700 dark:text-amber-400 list-disc list-inside space-y-0.5">
+                  <p className="text-xs font-medium text-amber-700">Before finalizing, consider completing:</p>
+                  <ul className="text-xs text-amber-700 list-disc list-inside space-y-0.5">
                     {!meetingDate       && <li>Meeting date (Step 1)</li>}
                     {!iepReviewDate     && <li>IEP review date (Step 1)</li>}
                     {goals.length === 0 && <li>At least one annual goal (Step 4)</li>}
