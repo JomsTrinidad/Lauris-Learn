@@ -164,12 +164,13 @@ export const GetStartedGuide: React.FC<GetStartedGuideProps> = ({
           <div className="space-y-2 mt-2">
             <Step n={1} text={<>Go to <strong>Settings → Class Levels</strong></>} />
             <Step n={2} text={<>Click <strong>Add Level</strong></>} />
-            <Step n={3} text={<>Enter level names like: <strong>Toddler, Nursery, Kinder, Grade 1, Grade 2, etc.</strong></>} />
-            <Step n={4} text="Save" />
+            <Step n={3} text={<>Enter level names like: <strong>Toddler, Pre-Kinder, Kinder, Grade 1, Grade 2, etc.</strong></>} />
+            <Step n={4} text={<>Assign a <strong>Seq</strong> number to each level in order of progression (e.g. Toddler = 1, Pre-Kinder = 2, Kinder = 3). This drives Year-End Classification auto-suggestions.</>} />
+            <Step n={5} text="Save each level" />
           </div>
           <p className="text-xs text-muted-foreground mt-2"><strong>Difference:</strong></p>
           <ul className="text-xs space-y-0.5 ml-2 text-muted-foreground">
-            <li>• <strong>Level:</strong> Age grouping (backend — for reports, billing rates)</li>
+            <li>• <strong>Level:</strong> Age grouping (backend — for reports, billing rates, year-end promotion)</li>
             <li>• <strong>Class:</strong> Actual section (e.g., Kinder A, Kinder B, Toddler AM, Toddler PM)</li>
           </ul>
         </div>
@@ -267,7 +268,7 @@ export const GetStartedGuide: React.FC<GetStartedGuideProps> = ({
           <p className="text-xs text-muted-foreground">Define how student codes are auto-generated when you add new students. Set your prefix and format before enrolling students so the system generates codes correctly.</p>
           <div className="space-y-2 mt-2">
             <Step n={1} text={<>Go to <strong>Settings → Student IDs</strong></>} />
-            <Step n={2} text={<>Enter the <strong>prefix</strong> (e.g., <strong>LL, BK, ABC</strong>) — this starts all student codes</>} />
+            <Step n={2} text={<>Enter the <strong>prefix</strong> (e.g., <strong>SL, ABC</strong>) — this starts all student codes</>} />
             <Step n={3} text={<>Set the <strong>padding</strong> (number of digits, e.g., 4 means <strong>0001, 0002, etc.</strong>)</>} />
             <Step n={4} text={<>Optionally check <strong>Include school year</strong> to append the year (e.g., <strong>LL-26-0001</strong> for 2026)</>} />
             <Step n={5} text="Save" />

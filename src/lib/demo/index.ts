@@ -617,7 +617,7 @@ export async function generateDemoData(
     const { data: levelData, error: levelErr } = await (admin as any)
       .from("class_levels")
       .insert(distinctLevels.map((name, i) => ({
-        school_id: schoolId, name, kind: "core", display_order: i,
+        school_id: schoolId, name, kind: "core", display_order: i, progression_order: i + 1,
       })))
       .select("id, name");
     if (levelErr) throw new Error(`class_levels insert: ${levelErr.message}`);

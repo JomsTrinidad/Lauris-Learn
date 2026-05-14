@@ -1,6 +1,6 @@
 -- Migration 046: Refresh demo school fee types with a comprehensive preset list
 -- Renames generic labels to purpose-specific ones and adds Uniform & Supplies.
--- Only touches the BK demo school seed data.
+-- Only touches the Pilot school seed data.
 
 -- Rename existing generic fee types
 UPDATE fee_types

@@ -355,8 +355,8 @@ CREATE POLICY "super_admin_all_child_identifiers"
 --         on the carried student_id — exact 1:1.
 --
 -- Step D: copy student_code → child_identifiers as 'school_internal'
---         with country_code='PH' (identifier metadata; the BK pilot
---         is PH). Guarded against re-runs.
+--         with country_code='PH' (identifier metadata; PH default).
+--         Guarded against re-runs.
 -- ════════════════════════════════════════════════════════════════
 
 -- A + B + C — child_profiles + students.child_profile_id link

@@ -2428,7 +2428,7 @@ export default function SettingsPage() {
                     id: "year-transition",
                     icon: BookOpen,
                     title: "School Year Transition — Preparing for the Next Year",
-                    searchText: "school year transition new year setup next year classes promote students renewal",
+                    searchText: "school year transition new year setup next year classes year-end classification promote renewal activate close",
                     body: (
                       <div className="space-y-3">
                         <div className="flex gap-2 bg-primary/5 border border-primary/20 rounded-lg px-3 py-2 text-xs text-primary">
@@ -2445,17 +2445,16 @@ export default function SettingsPage() {
                         </div>
                         <p className="text-sm font-medium text-foreground">When your current school year ends and you need to set up for the next school year:</p>
                         <div className="space-y-2">
-                          <Step n={1} text={<>At year-end, go to <strong>Students → Year-End Classification</strong> to classify all enrolled students (promoted, repeated, withdrawn, etc.). Then click <strong>Close School Year</strong>.</>} />
-                          <Step n={2} text={<><strong>Create next year's School Year</strong> as Planned in Settings → School Year & Terms. It must exist before you can promote students or create new classes.</>} />
-                          <Step n={3} text={<>Go to <strong>Students → Promote Students</strong> to bulk-assign students to their next-year classes. Select the target school year and new level for each current class.</>} />
-                          <Step n={4} text={<>Go to <strong>Classes</strong> and create fresh classes for the new school year. Assign teachers to each class. (Don't reuse old classes — keep them for historical records.)</>} />
-                          <Step n={5} text={<>Return to Settings and activate the new school year by clicking <strong>Activate</strong> on it. The previous active year auto-closes.</>} />
-                          <Step n={6} text={<>Verify <strong>Academic Terms / Periods</strong> exist for the new year. If you added new terms, go to <strong>Billing → Setup tab → Tuition Rates</strong> to configure rates for the new terms.</>} />
-                          <Step n={7} text={<>Go to <strong>Billing → Generate Billing</strong> to create the first month's invoices for the new school year.</>} />
-                          <Step n={8} text={<>Update <strong>Holidays</strong> for the new year in Settings → Holidays if your calendar changed.</>} />
+                          <Step n={1} text={<><strong>Create next year's School Year</strong> as Planned in Settings → School Year &amp; Terms. It must exist before you can classify students or create new classes.</>} />
+                          <Step n={2} text={<>Go to <strong>Classes</strong> and create fresh classes for the new school year. Assign teachers to each class. Set the <strong>Promotion Path</strong> on each class so the system knows which level students move up to.</>} />
+                          <Step n={3} text={<>Go to <strong>Students → Year-End Classification</strong>. The system will auto-suggest outcomes based on each class's Promotion Path and your class level Seq numbers. Review, override any exceptions, and click <strong>Save Year-End Classifications</strong>.</>} />
+                          <Step n={4} text={<>Return to Settings and click <strong>Activate</strong> on the new school year. If there are unclassified students, a confirmation modal will show the count with a link back to Year-End Classification — you can proceed anyway or return to finish classifying.</>} />
+                          <Step n={5} text={<>Verify <strong>Academic Terms / Periods</strong> exist for the new year. If you added new terms, go to <strong>Billing → Setup tab → Tuition Rates</strong> to configure rates for the new terms.</>} />
+                          <Step n={6} text={<>Go to <strong>Billing → Generate Billing</strong> to create the first month's invoices for the new school year.</>} />
+                          <Step n={7} text={<>Update <strong>Holidays</strong> for the new year in Settings → Holidays if your calendar changed.</>} />
                         </div>
-                        <Tip>Create the next year as Planned several weeks before transition so you have time to set up classes and promote students without rush.</Tip>
-                        <Note><strong>Key difference:</strong> A new school year starts empty — students must be explicitly promoted or re-enrolled. Billing from the prior year remains collectible as prior-year balance.</Note>
+                        <Tip>Set the <strong>Seq</strong> (progression order) on each class level in Settings → Class Levels before running Year-End Classification. That number drives the auto-suggestions.</Tip>
+                        <Note><strong>Key difference:</strong> A new school year starts empty — students must be explicitly re-enrolled. Billing from the prior year remains collectible as prior-year balance.</Note>
                       </div>
                     ),
                   },
@@ -2515,8 +2514,29 @@ export default function SettingsPage() {
                           <Step n={3} text={<span>At year end: go to <strong>Students → Year-End Classification</strong> and classify all enrolled students. Then click <strong>Close School Year</strong>.</span>} />
                           <Step n={4} text={<span>Closing validates that all enrolled students have a year-end outcome. If any are unclassified you can still force-close with a confirmation.</span>} />
                         </div>
-                        <Tip>Create the upcoming year as Planned before running Promote Students — the target year must exist so you can assign students to next year&#39;s classes.</Tip>
-                        <Note>Closing a year does NOT require all billing to be settled. Unpaid balances from closed years remain collectible as prior-year balances.</Note>
+                        <Tip>Create the upcoming year as Planned before setting up new classes — the target year must exist so you can configure promotion paths and enroll students.</Tip>
+                        <Note>When you click Activate, if any currently-enrolled students are unclassified, a confirmation modal will appear showing the count with a direct link to <strong>Year-End Classification</strong>. You can return to classify them or proceed anyway.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "class-levels",
+                    icon: Plus,
+                    title: "Class Levels — Seq number and Year-End Classification",
+                    searchText: "class level progression order seq sequence toddler pre-kinder kinder year-end classification next level auto suggest recommended",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Class Levels define the steps in your school's educational progression (e.g. Toddler → Pre-Kinder → Kinder). The <strong>Seq</strong> number tells the system which level comes after which — it powers the auto-suggestions in Year-End Classification.</p>
+                        <p className="text-xs font-semibold text-foreground mt-2">Setting up Seq numbers</p>
+                        <div className="space-y-2">
+                          <Step n={1} text={<span>Go to <strong>Settings → Class Levels</strong>.</span>} />
+                          <Step n={2} text={<span>Each level has a <strong>Seq</strong> field. Assign sequential numbers in the order students progress: Toddler = 1, Pre-Kinder = 2, Kinder = 3, etc.</span>} />
+                          <Step n={3} text={<span>Click the save icon on each row after editing. Levels without a Seq number won't produce auto-suggestions.</span>} />
+                        </div>
+                        <p className="text-xs font-semibold text-foreground mt-2">How it's used</p>
+                        <p className="text-xs text-muted-foreground">When you run Year-End Classification, the system looks at each class's level Seq and suggests the level with Seq+1 as the recommended next level. The highest Seq level is treated as the graduating level — students there are auto-suggested as <strong>Graduate</strong>.</p>
+                        <Tip>You can still override any auto-suggestion in Year-End Classification. The Seq is just a starting point — individual exceptions are handled per student.</Tip>
+                        <Note>Seq numbers don't need to be consecutive (1, 2, 3) — they just need to be in the right relative order. Gaps are fine (10, 20, 30) if you plan to insert new levels later.</Note>
                       </div>
                     ),
                   },
@@ -2580,12 +2600,12 @@ export default function SettingsPage() {
                     searchText: "student id code format prefix padding year include generate auto",
                     body: (
                       <div className="space-y-2">
-                        <p>Controls how auto-generated student codes look (e.g. BK-0001 or BK-26-0001).</p>
+                        <p>Controls how auto-generated student codes look (e.g. SL-0001 or SL-26-0001).</p>
                         <div className="space-y-2.5 mt-2">
                           {[
-                            { label: "Prefix", desc: "Letters before the number (e.g. \"BK\" → BK-0001). Use your school initials." },
-                            { label: "Padding", desc: "How many digits the number has (e.g. 4 → BK-0001, 3 → BK-001)." },
-                            { label: "Include Year", desc: "When checked, the current 2-digit year is inserted after the prefix (e.g. BK-26-0001)." },
+                            { label: "Prefix", desc: "Letters before the number (e.g. \"SL\" → SL-0001). Use your school initials." },
+                            { label: "Padding", desc: "How many digits the number has (e.g. 4 → SL-0001, 3 → SL-001)." },
+                            { label: "Include Year", desc: "When checked, the current 2-digit year is inserted after the prefix (e.g. SL-26-0001)." },
                           ].map(({ label, desc }) => (
                             <div key={label} className="flex gap-2.5 items-start">
                               <span className="font-semibold text-xs w-20 flex-shrink-0 mt-0.5 text-foreground">{label}</span>
@@ -2685,7 +2705,7 @@ export default function SettingsPage() {
               })()}
             </div>
             <div className="px-5 py-3 border-t border-border flex-shrink-0 text-xs text-muted-foreground">
-              {helpSearch ? <span>Showing results for "<span className="font-medium text-foreground">{helpSearch}</span>"</span> : <span>10 topics · click any to expand · <button onClick={() => setHelpView("getting-started")} className="underline hover:opacity-70">Getting Started guide</button></span>}
+              {helpSearch ? <span>Showing results for "<span className="font-medium text-foreground">{helpSearch}</span>"</span> : <span>11 topics · click any to expand · <button onClick={() => setHelpView("getting-started")} className="underline hover:opacity-70">Getting Started guide</button></span>}
             </div>
             </>
             )}

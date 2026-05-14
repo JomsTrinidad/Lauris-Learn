@@ -11,7 +11,7 @@ DO $$ BEGIN RAISE NOTICE '── 092 grading_scale_assignments smoke tests ─�
 -- Mint deterministic UUIDs for the test fixture
 DO $$
 DECLARE
-  v_school_id   UUID := '00000000-0000-0000-0000-000000000001'; -- BK pilot
+  v_school_id   UUID := '00000000-0000-0000-0000-000000000001'; -- T-4
   v_set_a_id    UUID := '00000000-0000-0000-0000-000000000003'; -- existing Preschool Dev Scale
   v_set_b_id    UUID;
   v_level_id    UUID;
@@ -53,7 +53,7 @@ BEGIN
     'T-3 FAIL: grading_scale_assignments table missing';
   RAISE NOTICE 'T-3 ✓ grading_scale_assignments table exists';
 
-  -- ── T-4: BK school_default seed row inserted (if the hardcoded set exists) ──
+  -- ── T-4: school_default seed row inserted (if the hardcoded set exists) ──
   -- The seed INSERT is conditional on grading_scale_sets(000...003) existing.
   -- If the scale set was created through the UI it has a random UUID, so skip gracefully.
   SELECT COUNT(*) INTO v_count
@@ -66,8 +66,8 @@ BEGIN
       AND assignment_type = 'school_default'
       AND is_active       = true;
     ASSERT v_count = 1,
-      'T-4 FAIL: BK school_default assignment not seeded even though the scale set 000...003 exists';
-    RAISE NOTICE 'T-4 ✓ BK school_default assignment seeded';
+      'T-4 FAIL: school_default assignment not seeded even though the scale set 000...003 exists';
+    RAISE NOTICE 'T-4 ✓ school_default assignment seeded';
   ELSE
     RAISE NOTICE 'T-4 ⚠ skipped — grading_scale_set 000...003 not found (scale was created via UI with a different UUID)';
   END IF;
@@ -82,7 +82,7 @@ BEGIN
       VALUES (v_school_id, v_set_a_id, 'school_default', v_level_id);
       ASSERT false, 'T-5 FAIL: should have rejected school_default with level_id';
     ELSE
-      RAISE NOTICE 'T-5 ⚠ skipped — no class_levels exist for BK school';
+      RAISE NOTICE 'T-5 ⚠ skipped — no class_levels exist for pilot school';
     END IF;
   EXCEPTION WHEN check_violation THEN
     RAISE NOTICE 'T-5 ✓ school_default with level_id correctly rejected (check_violation)';

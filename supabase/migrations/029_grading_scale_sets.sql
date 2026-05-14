@@ -47,7 +47,7 @@ ALTER TABLE grading_scales
 CREATE INDEX IF NOT EXISTS grading_scales_set_idx
   ON grading_scales(scale_set_id);
 
--- ── Seed default set for BK pilot school ────────────────────────────────────
+-- ── Seed default set for pilot school ────────────────────────────────────
 
 -- Create a "Preschool Development Scale" set for the pilot school
 INSERT INTO grading_scale_sets (id, school_id, name, description, scale_mode, is_default)
@@ -61,7 +61,7 @@ VALUES (
 )
 ON CONFLICT (id) DO NOTHING;
 
--- Link existing BK scale items to this default set
+-- Link existing pilot school scale items to this default set
 UPDATE grading_scales
 SET scale_set_id = '00000000-0000-0000-0000-000000000003'
 WHERE school_id = '00000000-0000-0000-0000-000000000001'

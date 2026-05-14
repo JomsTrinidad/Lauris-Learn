@@ -542,10 +542,10 @@ CREATE POLICY "School members can insert progress cats"   ON progress_categories
 CREATE POLICY "School members can insert observations"    ON progress_observations FOR INSERT WITH CHECK (student_id IN (SELECT id FROM students WHERE school_id IN (SELECT school_id FROM profiles WHERE id = auth.uid())));
 
 -- ─────────────────────────────────────────
--- SEED: Pilot school "Bright Kids Learning and Tutorial Center"
+-- SEED: Pilot school
 -- Uncomment and run after schema is in place
 -- ─────────────────────────────────────────
 
--- INSERT INTO schools (id, name) VALUES ('00000000-0000-0000-0000-000000000001', 'Bright Kids Learning and Tutorial Center');
+-- INSERT INTO schools (id, name) VALUES ('00000000-0000-0000-0000-000000000001', 'Sunshine Learning Center');
 -- INSERT INTO branches (school_id, name, address) VALUES ('00000000-0000-0000-0000-000000000001', 'Main Branch', 'Your Address Here');
 -- INSERT INTO school_years (school_id, name, start_date, end_date, status) VALUES ('00000000-0000-0000-0000-000000000001', 'SY 2025–2026', '2025-06-01', '2026-03-31', 'active');

@@ -999,19 +999,35 @@ export default function BillingPage() {
 
       {/* ── Setup Tab ── */}
       {mainTab === "setup" && schoolId && (
-        <div className="space-y-6">
-          {/* Sub-tab bar */}
-          <div className="flex gap-1 p-1 bg-muted rounded-lg w-fit">
-            {([["tuition", "Tuition Rates", BookOpen], ["adjustments", "Adjustments", Tag], ["advanced", "Fee Types", Settings2]] as const).map(([sub, label, Icon]) => (
-              <button key={sub} onClick={() => setSetupSubTab(sub as SetupSubTab)}
-                className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-colors ${setupSubTab === sub ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>
-                <Icon className="w-4 h-4" />{label}
+        <div className="flex gap-6 items-start">
+          {/* Vertical nav */}
+          <nav className="w-44 flex-shrink-0 flex flex-col gap-0.5">
+            {([
+              ["tuition",      "Tuition Rates", BookOpen ],
+              ["adjustments",  "Adjustments",   Tag      ],
+              ["advanced",     "Fee Types",     Settings2],
+            ] as const).map(([sub, label, Icon]) => (
+              <button
+                key={sub}
+                onClick={() => setSetupSubTab(sub as SetupSubTab)}
+                className={`flex items-center gap-2.5 w-full px-3 py-2.5 text-sm font-medium rounded-lg text-left transition-colors ${
+                  setupSubTab === sub
+                    ? "bg-primary/10 text-primary"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                }`}
+              >
+                <Icon className="w-4 h-4 flex-shrink-0" />
+                {label}
               </button>
             ))}
+          </nav>
+
+          {/* Content */}
+          <div className="flex-1 min-w-0">
+            {setupSubTab === "tuition"      && <SetupTuitionTab schoolId={schoolId} />}
+            {setupSubTab === "adjustments"  && <SetupAdjustmentsTab schoolId={schoolId} />}
+            {setupSubTab === "advanced"     && <SetupFeeTypesTab schoolId={schoolId} schoolYearId={activeYear?.id} schoolYearName={activeYear?.name} />}
           </div>
-          {setupSubTab === "tuition" && <SetupTuitionTab schoolId={schoolId} />}
-          {setupSubTab === "adjustments" && <SetupAdjustmentsTab schoolId={schoolId} />}
-          {setupSubTab === "advanced" && <SetupFeeTypesTab schoolId={schoolId} schoolYearId={activeYear?.id} schoolYearName={activeYear?.name} />}
         </div>
       )}
 

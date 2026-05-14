@@ -148,7 +148,7 @@ CREATE TRIGGER gsa_set_updated_at
   BEFORE UPDATE ON grading_scale_assignments
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
--- ── 5. Seed BK pilot school → school_default ──────────────────────────────
+-- ── 5. Seed pilot school → school_default ──────────────────────────────
 -- Links the existing "Preschool Development Scale" set to the school's
 -- default progress-tracking grading scale.
 -- Uses WHERE NOT EXISTS so re-running is safe.

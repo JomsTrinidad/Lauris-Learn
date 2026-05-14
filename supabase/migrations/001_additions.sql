@@ -35,14 +35,14 @@ CREATE INDEX IF NOT EXISTS idx_parent_updates_class     ON parent_updates(class_
 
 -- ─────────────────────────────────────────
 -- PILOT SCHOOL SEED
--- Creates the BK school, default branch, active school year,
+-- Creates the pilot school, default branch, active school year,
 -- and default progress categories.
 -- Safe to run multiple times (uses ON CONFLICT DO NOTHING).
 -- ─────────────────────────────────────────
 
 -- Insert pilot school
 INSERT INTO schools (id, name)
-VALUES ('00000000-0000-0000-0000-000000000001', 'Bright Kids Learning and Tutorial Center')
+VALUES ('00000000-0000-0000-0000-000000000001', 'Sunshine Learning Center')
 ON CONFLICT (id) DO NOTHING;
 
 -- Insert main branch

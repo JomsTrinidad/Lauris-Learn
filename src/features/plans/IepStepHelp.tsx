@@ -46,7 +46,7 @@ const STEP_HELP: Record<WizardStep, StepHelp> = {
     ],
     examples: [
       "Meeting Purpose: Annual IEP — reviewing progress toward last year's goals",
-      "Location: SPED Resource Room, BK Main Building",
+      "Location: SPED Resource Room, Main Building",
       "Team: SPED Teacher · Parent/Guardian · Classroom Teacher · Speech-Language Therapist",
     ],
     avoid: [

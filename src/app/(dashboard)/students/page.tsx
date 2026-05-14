@@ -3244,34 +3244,53 @@ export default function StudentsPage() {
                     id: "filter-search",
                     icon: Search,
                     title: "Find a student or filter the list",
-                    searchText: "search filter find class status code name lookup narrow",
+                    searchText: "search filter find class status code name lookup narrow active students enrolled pending placement graduated withdrawn all",
                     body: (
                       <div className="space-y-2">
                         <p>Several ways to find who you're looking for:</p>
                         <div className="space-y-2 mt-2">
                           <Step n={1} text={<span><strong>Search bar</strong> — searches by student name, student code, or guardian name. Works across all statuses and classes.</span>} />
-                          <Step n={2} text={<span><strong>School Year selector</strong> — defaults to the Active year. Switch to a past year to view that year&apos;s class and enrollment status for each student.</span>} />
+                          <Step n={2} text={<span><strong>School Year selector</strong> — defaults to the Active year. Switch to a past year to see historical enrollment and class assignments for that year.</span>} />
                           <Step n={3} text={<span><strong>Class filter</strong> — shows students in a specific class only. Reflects the selected school year.</span>} />
-                          <Step n={4} text={<span><strong>Status filter</strong> — narrows to Enrolled, Waitlisted, Inquiry, Withdrawn, or Completed.</span>} />
+                          <Step n={4} text={<span><strong>Status filter</strong> — choose from: <em>Active Students</em> (default — hides completed and withdrawn), <em>Enrolled</em>, <em>Pending Placement</em> (classified but not yet enrolled for next year), <em>Graduated</em>, <em>Withdrawn</em>, or <em>All Students</em>.</span>} />
                         </div>
-                        <Note>All filters work together. To see all Waitlisted students in Kinder AM, set both the class filter and the status filter at the same time.</Note>
-                        <Note>If an amber banner says students are enrolled in multiple years simultaneously, use the Year selector to review each year&apos;s enrollments and fix any data inconsistencies.</Note>
+                        <Note>The default <strong>Active Students</strong> view hides completed and withdrawn records to keep the list clean during the school year. Use <strong>All Students</strong> to see everyone regardless of status.</Note>
+                        <Note>All filters work together. To see all enrolled students in Kinder AM, set both the class filter and the Enrolled status at the same time.</Note>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "historical-view",
+                    icon: Search,
+                    title: "Viewing a past school year",
+                    searchText: "historical view past year previous school year archive enrolled status current lifecycle banner blue",
+                    body: (
+                      <div className="space-y-2">
+                        <p>Switch the <strong>School Year</strong> selector to any past year to browse records from that time — class assignments, enrollment status, and year-end outcomes exactly as they were.</p>
+                        <div className="space-y-2 mt-2">
+                          <Step n={1} text={<span>Open the <strong>School Year</strong> dropdown at the top of the Students page and pick a past year.</span>} />
+                          <Step n={2} text={<span>A <strong>blue Historical View banner</strong> appears to remind you that the data reflects that year, not the current one.</span>} />
+                          <Step n={3} text={<span>Each student row shows their class and status <em>in that year</em>. A sub-line below the status shows their <strong>current lifecycle status</strong> (e.g. "Enrolled now", "Graduated / Alumni") so you can see where they are today.</span>} />
+                          <Step n={4} text={<span>Graduated or withdrawn students from that year are included — the default filter is set to <strong>All Students</strong> automatically.</span>} />
+                        </div>
+                        <Tip>Historical view is read-only — enrollments and classifications from past years can be reviewed here but edits should be made carefully in the relevant year's context.</Tip>
+                        <Note>Switch back to the Active year to return to the current view and resume normal operations.</Note>
                       </div>
                     ),
                   },
                   {
                     id: "promote",
                     icon: GraduationCap,
-                    title: "Review and confirm promotion outcomes at year-end",
-                    searchText: "classify classification year-end eligible retain graduate not continuing withdrawn needs review mid-year exit permanent leave end year promotion path next level section placement review recommendations exceptions outcome refresh",
+                    title: "Year-End Classification — review and confirm outcomes",
+                    searchText: "classify classification year-end eligible retain graduate not continuing withdrawn needs review mid-year exit permanent leave end year promotion path next level section placement review recommendations exceptions outcome refresh seq progression order auto-suggest",
                     body: (
                       <div className="space-y-2">
-                        <p>Promotion outcomes are pre-filled from each class&apos;s Promotion Path. Review recommendations and handle individual exceptions.</p>
+                        <p>The system auto-suggests an outcome for each student based on the class's <strong>Promotion Path</strong> and your class level <strong>Seq</strong> numbers. Review, override exceptions, and save.</p>
                         <div className="space-y-2 mt-2">
                           <Step n={1} text={<span>Open <strong>Year-End Classification</strong> and select a class.</span>} />
-                          <Step n={2} text={<span><strong>Step 1</strong> shows the Promotion Path and recommended outcome. No action needed here.</span>} />
-                          <Step n={3} text={<span>Wrong recommendation? Update the Promotion Path in <strong>Classes</strong>, then click <strong>Refresh</strong> in Step 1.</span>} />
-                          <Step n={4} text={<span><strong>Step 2</strong>: override individual students only — Retain, Needs Review, Not Continuing, Withdrawn, or Graduate as needed.</span>} />
+                          <Step n={2} text={<span><strong>Step 1</strong> shows the Promotion Path and auto-suggested outcome. The suggested next level is derived from the class level's Seq number — the level with Seq+1 is proposed as the next level. The highest Seq level auto-suggests <strong>Graduate</strong>.</span>} />
+                          <Step n={3} text={<span>Wrong suggestion? Set or update the Promotion Path in <strong>Classes</strong> and the Seq in <strong>Settings → Class Levels</strong>, then click <strong>Refresh</strong> in Step 1.</span>} />
+                          <Step n={4} text={<span><strong>Step 2</strong>: students default to the suggested outcome. Override individuals only as needed — Retain, Needs Review, Not Continuing, Withdrawn, or Graduate.</span>} />
                           <Step n={5} text={<span>Click <strong>Save Year-End Classifications</strong>.</span>} />
                         </div>
                         <div className="space-y-1.5 mt-3 pt-3 border-t border-border">
@@ -3280,12 +3299,11 @@ export default function StudentsPage() {
                           <p className="text-sm"><strong>Graduate</strong> — student finishes the program (only on graduating classes).</p>
                           <p className="text-sm"><strong>Retain</strong> — student stays in the same level next year.</p>
                           <p className="text-sm"><strong>Needs Review</strong> — outcome undecided; requires further evaluation before promotion.</p>
-                          <p className="text-sm"><strong>Not Continuing</strong> — student completed the year but will not return next school year (permanent exit after the year).</p>
-                          <p className="text-sm"><strong>Withdrawn</strong> — student left before completing the school year and may return later. Year is not treated as completed; remains eligible for future enrollment.</p>
+                          <p className="text-sm"><strong>Not Continuing</strong> — student completed the year but will not return next school year.</p>
+                          <p className="text-sm"><strong>Withdrawn</strong> — student left before completing the school year and may return later. Remains eligible for future enrollment.</p>
                         </div>
                         <Note><strong>Recommended Next Level</strong> shows a level, not a section. Section assignment happens at enrollment.</Note>
-                        <Note>Promotion Path Not Set (amber)? Edit the class in <strong>Classes</strong> first.</Note>
-                        <Tip>Classifications don&apos;t create enrollments. Enroll returning students separately.</Tip>
+                        <Tip>Classifications don&apos;t create enrollments. You still need to enroll returning students separately after classification is complete.</Tip>
                       </div>
                     ),
                   },
@@ -3296,7 +3314,7 @@ export default function StudentsPage() {
                     searchText: "student code id number generate prefix format auto",
                     body: (
                       <div className="space-y-2">
-                        <p>Student codes are optional internal reference numbers (e.g. BK-0001) used on billing statements and reports.</p>
+                        <p>Student codes are optional internal reference numbers (e.g. SL-0001) used on billing statements and reports.</p>
                         <div className="space-y-2 mt-2">
                           <Step n={1} text={<span>Codes are auto-generated when a student is saved — based on your school's code format configured in Settings.</span>} />
                           <Step n={2} text={<span>The code appears in the student list below their name. It's also searchable in the search bar.</span>} />
@@ -3375,7 +3393,7 @@ export default function StudentsPage() {
               {helpSearch ? (
                 <span>Showing results for "<span className="font-medium text-foreground">{helpSearch}</span>"</span>
               ) : (
-                <span>8 topics · click any to expand</span>
+                <span>10 topics · click any to expand</span>
               )}
             </div>
           </div>

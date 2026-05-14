@@ -30,7 +30,7 @@ CREATE POLICY "school_member_grading_scales" ON grading_scales
 
 CREATE INDEX IF NOT EXISTS grading_scales_school_idx ON grading_scales(school_id, sort_order);
 
--- Seed default grading scale for BK (pilot school)
+-- Seed default grading scale for pilot school
 INSERT INTO grading_scales (school_id, label, description, color, sort_order)
 VALUES
   ('00000000-0000-0000-0000-000000000001', 'Emerging',   'Beginning to show understanding',      '#ef4444', 1),

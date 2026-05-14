@@ -3,7 +3,7 @@
 -- Adds fee_type_prices for per-school-year pricing.
 -- Fee types now carry a price per school year so prices from one year
 -- never overwrite prices from another year.
--- Also aligns demo (BK) fee type names and mandatory flags with the spec.
+-- Also aligns demo fee type names and mandatory flags with the spec.
 
 -- ── 1. Ensure is_enrollment_mandatory column exists ───────────────────────────
 ALTER TABLE fee_types ADD COLUMN IF NOT EXISTS is_enrollment_mandatory BOOLEAN NOT NULL DEFAULT FALSE;
@@ -28,9 +28,9 @@ CREATE POLICY "school_members_fee_type_prices_all" ON fee_type_prices
     OR is_super_admin()
   );
 
--- ── 3. Refresh demo (BK) fee type names, descriptions, and mandatory flags ───
--- BK demo school: 00000000-0000-0000-0000-000000000001
--- BK active SY:   00000000-0000-0000-0000-000000000002
+-- ── 3. Refresh demo fee type names, descriptions, and mandatory flags ───
+-- demo school: 00000000-0000-0000-0000-000000000001
+-- active SY:   00000000-0000-0000-0000-000000000002
 
 DO $$ BEGIN
 
@@ -92,7 +92,7 @@ DO $$ BEGIN
 
 END $$;
 
--- ── 4. Seed school-year prices for BK SY 2025-2026 ───────────────────────────
+-- ── 4. Seed school-year prices for SY 2025-2026 ───────────────────────────
 -- Tuition Fee is intentionally excluded — its price comes from tuition_configs.
 INSERT INTO fee_type_prices (fee_type_id, school_year_id, school_id, amount)
 SELECT

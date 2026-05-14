@@ -224,10 +224,10 @@ BEGIN
 END $$;
 
 -- ─────────────────────────────────────────
--- SEED DATA – Pilot School (BK)
+-- SEED DATA – Pilot School
 -- ─────────────────────────────────────────
 
--- Set trial window for BK (14 days from now)
+-- Set trial window for pilot school (14 days from now)
 UPDATE schools
 SET trial_start_date = CURRENT_DATE,
     trial_end_date   = CURRENT_DATE + INTERVAL '14 days',
