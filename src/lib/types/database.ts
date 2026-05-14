@@ -109,11 +109,12 @@ export type Database = {
           name: string;
           kind: "core" | "sped" | "bridge" | "summer" | "mixed_age" | "enrichment" | "other";
           display_order: number;
+          progression_order: number | null;
           archived_at: string | null;
           created_at: string;
         };
-        Insert: { id?: string; school_id: string; name: string; kind?: "core" | "sped" | "bridge" | "summer" | "mixed_age" | "enrichment" | "other"; display_order?: number; archived_at?: string | null; created_at?: string };
-        Update: { id?: string; school_id?: string; name?: string; kind?: "core" | "sped" | "bridge" | "summer" | "mixed_age" | "enrichment" | "other"; display_order?: number; archived_at?: string | null };
+        Insert: { id?: string; school_id: string; name: string; kind?: "core" | "sped" | "bridge" | "summer" | "mixed_age" | "enrichment" | "other"; display_order?: number; progression_order?: number | null; archived_at?: string | null; created_at?: string };
+        Update: { id?: string; school_id?: string; name?: string; kind?: "core" | "sped" | "bridge" | "summer" | "mixed_age" | "enrichment" | "other"; display_order?: number; progression_order?: number | null; archived_at?: string | null };
         Relationships: [
           { foreignKeyName: "class_levels_school_id_fkey"; columns: ["school_id"]; isOneToOne: false; referencedRelation: "schools"; referencedColumns: ["id"] }
         ];

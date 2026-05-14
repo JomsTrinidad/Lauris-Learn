@@ -9,7 +9,7 @@ import {
   Link as LinkIcon, Copy, Check, BookOpen,
   ArrowRight, RefreshCw, Users, GraduationCap,
   HelpCircle, AlertTriangle, ChevronRight, X, UserPlus, UserCheck, FileText,
-  Share2, MoreHorizontal,
+  Share2, MoreHorizontal, Printer,
 } from "lucide-react";
 import { DatePicker } from "@/components/ui/datepicker";
 import { AvatarUpload } from "@/components/ui/avatar-upload";
@@ -124,8 +124,11 @@ interface PromoteRow {
   currentEnrollmentId: string; currentClassId: string; currentClassName: string; currentClassLevel: string;
   nextLevel: string;
   classification: ClassificationAction;
+  isTerminalLevel: boolean;
+  suggestedNextLevelName: string;
 }
 interface ClassifyResult { classified: number; errors: string[]; }
+interface LevelCatalogEntry { id: string; name: string; kind: string; progressionOrder: number | null; }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -145,11 +148,9 @@ const EMPTY_FORM: StudentForm = {
 const STATUS_OPTIONS = [
   { value: "", label: "Active Students" },
   { value: "enrolled", label: "Enrolled" },
-  { value: "waitlisted", label: "Waitlisted" },
-  { value: "inquiry", label: "Inquiry" },
-  { value: "withdrawn", label: "Withdrawn" },
-  { value: "completed", label: "Completed" },
+  { value: "__pending__", label: "Pending Placement" },
   { value: "graduated", label: "Graduated" },
+  { value: "withdrawn", label: "Withdrawn" },
   { value: "__all__", label: "All Students" },
 ];
 
@@ -355,7 +356,7 @@ function RowMenu({
       <button
         ref={btnRef}
         type="button"
-        onClick={openMenu}
+        onClick={(e) => { e.stopPropagation(); openMenu(); }}
         aria-label="More actions"
         className="flex items-center justify-center w-7 h-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
       >
@@ -418,7 +419,7 @@ function RowMenu({
 }
 
 export default function StudentsPage() {
-  const { schoolId, activeYear, userId, userRole, isReadOnly, allSchoolYears: schoolYearList } = useSchoolContext();
+  const { schoolId, schoolName, activeYear, userId, userRole, isReadOnly, allSchoolYears: schoolYearList } = useSchoolContext();
   const supabase = createClient();
   const queryClient = useQueryClient();
   const router = useRouter();
@@ -523,6 +524,7 @@ export default function StudentsPage() {
   const [promoteLoading, setPromoteLoading] = useState(false);
   const [promoteError, setPromoteError] = useState<string | null>(null);
   const [allSchoolYears, setAllSchoolYears] = useState<PromoteYear[]>([]);
+  const [levelCatalog, setLevelCatalog] = useState<LevelCatalogEntry[]>([]);
   const [sourceYearId, setSourceYearId] = useState("");
   const [targetYearId, setTargetYearId] = useState("");
   const [promoteLevel, setPromoteLevel] = useState("all");
@@ -536,16 +538,22 @@ export default function StudentsPage() {
 
   // ─── Effects ───────────────────────────────────────────────────────────────
 
-  // On mount: read ?editStudent=<id>&returnTo=<path> — open the modal immediately (before data arrives)
+  // On mount: read URL params
+  //   ?editStudent=<id>&returnTo=<path> — open edit modal immediately
+  //   ?tab=promote — switch to Year-End Classification tab
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const editId = params.get("editStudent");
     const returnTo = params.get("returnTo");
+    const tab = params.get("tab");
+    window.history.replaceState(null, "", window.location.pathname);
+    if (tab === "promote") {
+      setActiveTab("promote");
+    }
     if (editId) {
       setPendingEditStudentId(editId);
       setReturnToPath(returnTo ?? null);
       openEditCalledRef.current = false;
-      window.history.replaceState(null, "", window.location.pathname);
       // Open modal right away so the user never sees the page list
       setPendingEditLoading(true);
       setEditModalOpen(true);
@@ -1240,7 +1248,7 @@ export default function StudentsPage() {
   async function loadStudentsForPromote(srcId?: string, tgtId?: string) {
     const src = srcId ?? sourceYearId;
     const tgt = tgtId ?? targetYearId;
-    if (!src) return;
+    if (!src || !schoolId) return;
     void tgt; // target is informational only in classification flow
     setPromoteRowsLoading(true);
     setPromoteRowsError(null);
@@ -1250,18 +1258,38 @@ export default function StudentsPage() {
     setSelectedClassId("");
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: enrollments, error: enrollErr } = await (supabase as any)
-      .from("enrollments")
-      .select(`
-        id, student_id, class_id,
-        students(first_name, last_name),
-        classes(id, name, next_level, class_levels(name))
-      `)
-      .eq("school_year_id", src)
-      .eq("status", "enrolled")
-      .is("progression_status", null);
+    const sb = supabase as any;
+
+    // Load enrollments and the school's active level catalog in parallel
+    const [{ data: enrollments, error: enrollErr }, { data: levels }] = await Promise.all([
+      sb.from("enrollments")
+        .select(`
+          id, student_id, class_id,
+          students(first_name, last_name),
+          classes(id, name, next_level, class_levels(id, name, kind, progression_order))
+        `)
+        .eq("school_year_id", src)
+        .eq("status", "enrolled")
+        .is("progression_status", null),
+      sb.from("class_levels")
+        .select("id, name, kind, progression_order")
+        .eq("school_id", schoolId)
+        .is("archived_at", null),
+    ]);
 
     if (enrollErr) { setPromoteRowsError(enrollErr.message); setPromoteRowsLoading(false); return; }
+
+    // Build level catalog and compute the max progression_order for core levels
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const catalog: LevelCatalogEntry[] = ((levels ?? []) as any[]).map((l: any) => ({
+      id: l.id, name: l.name, kind: l.kind, progressionOrder: l.progression_order ?? null,
+    }));
+    setLevelCatalog(catalog);
+
+    const coreOrdered = catalog
+      .filter((l) => l.kind === "core" && l.progressionOrder != null)
+      .sort((a, b) => (a.progressionOrder ?? 0) - (b.progressionOrder ?? 0));
+    const maxCoreOrder = coreOrdered.length > 0 ? coreOrdered[coreOrdered.length - 1].progressionOrder : null;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const built: PromoteRow[] = ((enrollments ?? []) as any[]).map((e: any) => {
@@ -1269,15 +1297,47 @@ export default function StudentsPage() {
       const cls = e.classes;
       const studentName = student ? `${student.first_name} ${student.last_name}` : e.student_id;
       const nextLevel = cls?.next_level ?? "";
+      const levelMeta = cls?.class_levels as { id?: string; name?: string; kind?: string; progression_order?: number | null } | null;
+
+      // Determine classification suggestion:
+      // 1. If next_level is explicitly configured on the class → use existing sentinel logic.
+      // 2. If next_level is empty but the class has a core level with progression_order → derive from ordering.
+      let suggestedClassification: ClassificationAction = "unset";
+      let isTerminalLevel = false;
+      let suggestedNextLevelName = "";
+
+      if (nextLevel === "GRADUATE") {
+        suggestedClassification = "graduated";
+        isTerminalLevel = true;
+      } else if (nextLevel && nextLevel !== "NON_PROMOTIONAL") {
+        suggestedClassification = "eligible";
+        suggestedNextLevelName = nextLevel;
+      } else if (!nextLevel && levelMeta?.kind === "core" && levelMeta.progression_order != null) {
+        // No explicit next_level configured — derive from progression_order
+        const thisOrder = levelMeta.progression_order;
+        if (maxCoreOrder != null && thisOrder === maxCoreOrder) {
+          suggestedClassification = "graduated";
+          isTerminalLevel = true;
+        } else {
+          const nextLevel_ = coreOrdered.find((l) => (l.progressionOrder ?? 0) > thisOrder);
+          if (nextLevel_) {
+            suggestedClassification = "eligible";
+            suggestedNextLevelName = nextLevel_.name;
+          }
+        }
+      }
+
       return {
         studentId: e.student_id,
         studentName,
         currentEnrollmentId: e.id,
         currentClassId: e.class_id,
         currentClassName: cls?.name ?? "—",
-        currentClassLevel: cls?.class_levels?.name ?? "",
+        currentClassLevel: levelMeta?.name ?? "",
         nextLevel,
-        classification: (nextLevel === "GRADUATE" ? "graduated" : nextLevel && nextLevel !== "NON_PROMOTIONAL" ? "eligible" : "unset") as ClassificationAction,
+        classification: suggestedClassification,
+        isTerminalLevel,
+        suggestedNextLevelName,
       };
     });
 
@@ -1322,9 +1382,9 @@ export default function StudentsPage() {
 
     // Auto-populate notes from classification + level context
     function autoNotes(r: PromoteRow): string {
+      const nextLevelLabel = r.suggestedNextLevelName || (r.nextLevel && r.nextLevel !== "GRADUATE" && r.nextLevel !== "NON_PROMOTIONAL" ? r.nextLevel : "");
       switch (r.classification) {
-        case "eligible":             return r.nextLevel && r.nextLevel !== "GRADUATE" && r.nextLevel !== "NON_PROMOTIONAL"
-                                      ? `Eligible for ${r.nextLevel}` : "Eligible for next level";
+        case "eligible":             return nextLevelLabel ? `Eligible for ${nextLevelLabel}` : "Eligible for next level";
         case "not_eligible_retained": return `Retained in ${r.currentClassLevel || "current level"}`;
         case "not_eligible_other":   return "Requires review";
         case "graduated":            return `Graduated from ${r.currentClassLevel || "current level"}`;
@@ -1386,6 +1446,11 @@ export default function StudentsPage() {
   }
 
   // ─── Derived values ────────────────────────────────────────────────────────
+
+  // True when the admin has selected a school year that is not the currently-active one.
+  // Used to drive the historical banner, filter defaults, and row-level "current status" hints.
+  const isHistoricalView = !!viewingYearId && viewingYearId !== activeYear?.id;
+  const viewingYear = schoolYearList.find((y) => y.id === viewingYearId) ?? null;
 
   // Resolve which enrollment to display for a student given the viewing year.
   // For the active year, fall back to a "pending" state for students who were
@@ -1476,13 +1541,17 @@ export default function StudentsPage() {
     const code = (s.studentCode ?? "").toLowerCase();
     const matchSearch = !search || fullName.includes(search.toLowerCase()) || s.guardianName.toLowerCase().includes(search.toLowerCase()) || code.includes(search.toLowerCase());
 
-    // "Graduated" and "All Students" are cross-year lifecycle views — they bypass the
-    // normal year/enrollment filter and instead match on progressionStatus directly.
+    // Special-sentinel filters that bypass the normal year/enrollment filter.
     if (statusFilter === "graduated") {
       return matchSearch && s.progressionStatus === "graduated";
     }
     if (statusFilter === "__all__") {
       return matchSearch;
+    }
+    // "Pending Placement" is a computed state (no DB enrollment row yet in the active year),
+    // so it can't be matched via enrollmentStatus — match on disp.isPending instead.
+    if (statusFilter === "__pending__") {
+      return matchSearch && disp.isPending;
     }
 
     // Year filter narrows to students with an enrollment in the selected year —
@@ -1490,10 +1559,124 @@ export default function StudentsPage() {
     const matchYear = !viewingYearId || disp.enrollmentYearId === viewingYearId;
     const matchClass = !levelFilter || disp.classLevel === levelFilter;
     const matchClassFilter = !classFilter || (classFilter === "__unassigned__" ? !disp.classId : disp.classId === classFilter);
-    const matchStatus = !statusFilter || disp.enrollmentStatus === statusFilter;
     const matchReturning = !returningFilter || returningEnrolledIds.has(s.id);
+
+    // Active-year default ("Active Students"): hide completed and withdrawn enrollments
+    // so graduated/inactive records don't pollute the operational list.
+    // Historical years show all statuses by default (admin is explicitly browsing history).
+    if (!statusFilter && !isHistoricalView) {
+      const isActiveParticipant =
+        disp.isPending ||
+        (disp.enrollmentYearId === activeYear?.id &&
+          disp.enrollmentStatus !== null &&
+          disp.enrollmentStatus !== "completed" &&
+          disp.enrollmentStatus !== "withdrawn");
+      return matchSearch && isActiveParticipant && matchClass && matchClassFilter && matchReturning;
+    }
+
+    const matchStatus = !statusFilter || disp.enrollmentStatus === statusFilter;
     return matchSearch && matchYear && matchClass && matchClassFilter && matchStatus && matchReturning;
   });
+
+  function printRoster() {
+    const viewingYearName = viewingYear?.name ?? activeYear?.name ?? "—";
+    const now = new Date().toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" });
+
+    const classLabel = (() => {
+      if (!classFilter) return null;
+      if (classFilter === "__unassigned__") return "Not Assigned";
+      return classFilterOptions.find(([id]) => id === classFilter)?.[1] ?? classFilter;
+    })();
+    const statusLabel = (() => {
+      if (!statusFilter) return "Active Students";
+      if (statusFilter === "__pending__") return "Pending Placement";
+      if (statusFilter === "__all__") return "All Students";
+      return STATUS_OPTIONS.find((o) => o.value === statusFilter)?.label ?? statusFilter;
+    })();
+    const filterParts = [
+      levelFilter && `Level: ${levelFilter}`,
+      classLabel && `Class: ${classLabel}`,
+      `Status: ${statusLabel}`,
+      returningFilter && "Returning only",
+      search && `Search: "${search}"`,
+    ].filter(Boolean);
+    const filterSummary = filterParts.join(" · ") || "All Active Students";
+
+    const rows = filtered.map((s, i) => {
+      const disp = getDisplayEnrollment(s);
+      const classDisplay = disp.isPending
+        ? "Pending placement"
+        : disp.className
+          ? `${disp.className}${disp.classLevel ? ` / ${disp.classLevel}` : ""}`
+          : "—";
+      return `<tr>
+        <td>${i + 1}</td>
+        <td>
+          <strong>${s.firstName} ${s.lastName}</strong>
+          ${s.studentCode ? `<br><span class="code">${s.studentCode}</span>` : ""}
+        </td>
+        <td>${classDisplay}</td>
+        <td>
+          ${s.guardianName || "—"}
+          ${s.guardianPhone ? `<br><span class="sub">${s.guardianPhone}</span>` : ""}
+        </td>
+        <td class="center">☐</td>
+        <td></td>
+      </tr>`;
+    }).join("");
+
+    const win = window.open("", "_blank", "width=960,height=700");
+    if (!win) return;
+    win.document.write(`<!DOCTYPE html><html><head>
+      <title>Student Roster — ${schoolName}</title>
+      <style>
+        *{box-sizing:border-box;margin:0;padding:0}
+        body{font-family:Arial,sans-serif;padding:32px;color:#111;font-size:12px}
+        h1{font-size:18px;font-weight:bold}
+        .sub-head{color:#555;margin-top:3px;font-size:11px}
+        .meta{display:flex;gap:24px;margin:12px 0 4px;font-size:11px;color:#666;flex-wrap:wrap}
+        .meta strong{color:#333}
+        .count{font-size:11px;color:#555;margin-bottom:8px}
+        table{width:100%;border-collapse:collapse;margin-top:4px}
+        th{background:#f0f0f0;padding:7px 8px;text-align:left;font-size:11px;font-weight:bold;border-bottom:2px solid #ccc}
+        td{padding:6px 8px;border-bottom:1px solid #e5e5e5;vertical-align:top;font-size:12px}
+        tr:nth-child(even) td{background:#fafafa}
+        .code{color:#888;font-size:10px;font-family:monospace}
+        .sub{color:#555;font-size:10px}
+        .center{text-align:center;font-size:14px}
+        .footer{margin-top:24px;font-size:10px;color:#aaa;text-align:center;border-top:1px solid #eee;padding-top:8px}
+        @media print{
+          body{padding:0}
+          @page{size:A4 landscape;margin:12mm}
+        }
+      </style>
+    </head><body>
+      <h1>${schoolName}</h1>
+      <p class="sub-head">Student Roster · ${viewingYearName}</p>
+      <div class="meta">
+        <span><strong>Filters:</strong> ${filterSummary}</span>
+        <span><strong>Generated:</strong> ${now}</span>
+      </div>
+      <p class="count">${filtered.length} student${filtered.length !== 1 ? "s" : ""}</p>
+      <table>
+        <thead>
+          <tr>
+            <th style="width:28px">#</th>
+            <th>Student Name</th>
+            <th>Class / Level</th>
+            <th>Parent / Guardian &amp; Contact</th>
+            <th style="width:56px;text-align:center">Attend.</th>
+            <th style="width:160px">Notes</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div class="footer">Printed ${now} · ${schoolName} · ${filtered.length} student${filtered.length !== 1 ? "s" : ""}</div>
+    </body></html>`);
+    win.document.close();
+    win.focus();
+    setTimeout(() => win.print(), 350);
+  }
 
   const sourceYear = allSchoolYears.find((y) => y.id === sourceYearId);
   const targetYear = allSchoolYears.find((y) => y.id === targetYearId);
@@ -1514,9 +1697,10 @@ export default function StudentsPage() {
     return acc;
   }, []).sort((a, b) => a.currentClassName.localeCompare(b.currentClassName));
 
-  // Classes whose promotion path is unset — used for warning banner and picker badges
+  // Classes whose promotion path is truly unset — no next_level AND no progression_order suggestion.
+  // Used for the warning banner and picker badges.
   const classIdsWithMissingPath = new Set(
-    promoteRows.filter((r) => !r.nextLevel).map((r) => r.currentClassId)
+    promoteRows.filter((r) => !r.nextLevel && !r.isTerminalLevel && !r.suggestedNextLevelName).map((r) => r.currentClassId)
   );
 
   const selectedClassGroup = classBulkGroups.find((g) => g.currentClassId === selectedClassId) ?? null;
@@ -1527,8 +1711,11 @@ export default function StudentsPage() {
 
   // Derived from the class's own Promotion Path (same for all rows in the class)
   const classNextLevel = classPromoteRows[0]?.nextLevel ?? "";
-  // Graduating only when the class itself is the terminal level
-  const isGraduatingClass = classNextLevel === "GRADUATE";
+  // isTerminalLevel is true when progression_order identifies this as the final core level
+  const classIsTerminalLevel = classPromoteRows.length > 0 && classPromoteRows[0].isTerminalLevel;
+  const classSuggestedNextLevel = classPromoteRows[0]?.suggestedNextLevelName ?? "";
+  // Graduating when explicitly tagged GRADUATE or when progression_order marks it as terminal
+  const isGraduatingClass = classNextLevel === "GRADUATE" || classIsTerminalLevel;
 
   const eligibleCount   = classPromoteRows.filter((r) => r.classification === "eligible").length;
   const retainedCount   = classPromoteRows.filter((r) => r.classification === "not_eligible_retained").length;
@@ -1560,9 +1747,19 @@ export default function StudentsPage() {
             Help Topics
           </button>
           {activeTab === "students" && (
-            <Button onClick={() => { setForm(EMPTY_FORM); setFormError(null); setAddModalOpen(true); }}>
-              <Plus className="w-4 h-4" /> Add Student
-            </Button>
+            <>
+              <button
+                onClick={printRoster}
+                className="flex items-center gap-1.5 px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors border border-border"
+                title="Print filtered student roster"
+              >
+                <Printer className="w-4 h-4" />
+                Print Roster
+              </button>
+              <Button onClick={() => { setForm(EMPTY_FORM); setFormError(null); setAddModalOpen(true); }}>
+                <Plus className="w-4 h-4" /> Add Student
+              </Button>
+            </>
           )}
         </div>
       </div>
@@ -1638,6 +1835,15 @@ export default function StudentsPage() {
           )}
 
           {/* Historical year view banner */}
+          {isHistoricalView && viewingYear && (
+            <div className="flex items-start gap-3 p-3 rounded-lg border border-blue-200 bg-blue-50 text-sm">
+              <AlertTriangle className="w-4 h-4 text-blue-500 flex-shrink-0 mt-0.5" />
+              <p className="text-blue-800">
+                <strong>Historical view — {viewingYear.name}.</strong> These records reflect enrollment and status during that school year. Graduated or inactive students from that year are included.
+              </p>
+            </div>
+          )}
+
           {/* Search & Filters */}
           <div className="flex flex-col sm:flex-row gap-3">
             <div className="flex-1 relative">
@@ -1652,7 +1858,7 @@ export default function StudentsPage() {
             </div>
             <Select
               value={viewingYearId}
-              onChange={(e) => { setViewingYearId(e.target.value); setLevelFilter(""); setClassFilter(""); }}
+              onChange={(e) => { setViewingYearId(e.target.value); setLevelFilter(""); setClassFilter(""); setStatusFilter(""); }}
               className="sm:w-48"
             >
               {schoolYearList.map((y) => (
@@ -1718,7 +1924,16 @@ export default function StudentsPage() {
                       return (
                       <tr
                         key={student.id}
-                        className={`border-b border-border last:border-0 transition-colors ${
+                        tabIndex={0}
+                        role="button"
+                        onClick={() => setSelectedStudent(student)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            setSelectedStudent(student);
+                          }
+                        }}
+                        className={`border-b border-border last:border-0 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-inset ${
                           disp.isPending
                             ? "bg-amber-50/40 hover:bg-amber-50/60"
                             : "hover:bg-muted/50"
@@ -1765,26 +1980,42 @@ export default function StudentsPage() {
                           )}
                         </td>
 
-                        {/* Status — enrollment status in plain text; show year only for non-active */}
+                        {/* Status — enrollment status; + "Current: …" hint when in historical view */}
                         <td className="px-5 py-4">
-                          {disp.isPending ? (
-                            <p className="text-xs text-muted-foreground">—</p>
-                          ) : disp.enrollmentStatus ? (
-                            <div>
-                              <p className={`text-xs font-medium ${
-                                disp.enrollmentStatus === "waitlisted" ? "text-amber-700" :
-                                disp.enrollmentStatus === "withdrawn"  ? "text-muted-foreground" :
-                                "text-muted-foreground"
-                              }`}>
-                                {disp.enrollmentStatus.charAt(0).toUpperCase() + disp.enrollmentStatus.slice(1)}
-                              </p>
-                              {!isActiveYear && dispYearName && (
-                                <p className="text-xs text-muted-foreground mt-0.5">{dispYearName}</p>
-                              )}
-                            </div>
-                          ) : (
-                            <p className="text-xs text-muted-foreground">—</p>
-                          )}
+                          {(() => {
+                            // For historical rows: compute what the student's status is NOW.
+                            const currentHint = (() => {
+                              if (!isHistoricalView) return null;
+                              const activeEnroll = student.allEnrollments.find(
+                                (e) => e.schoolYearId === activeYear?.id && e.status === "enrolled"
+                              );
+                              if (activeEnroll) return "Enrolled now";
+                              const ps = student.progressionStatus;
+                              if (ps === "graduated") return "Graduated / Alumni";
+                              if (ps === "not_continuing") return "Not continuing";
+                              if (ps === "withdrawn") return "Withdrawn";
+                              if (ps === "eligible") return "Pending placement";
+                              if (ps === "not_eligible_retained") return "Retained";
+                              return null;
+                            })();
+
+                            if (disp.isPending) return <p className="text-xs text-muted-foreground">—</p>;
+                            if (!disp.enrollmentStatus) return <p className="text-xs text-muted-foreground">—</p>;
+                            return (
+                              <div>
+                                <p className={`text-xs font-medium ${
+                                  disp.enrollmentStatus === "waitlisted" ? "text-amber-700" :
+                                  disp.enrollmentStatus === "withdrawn"  ? "text-muted-foreground" :
+                                  "text-muted-foreground"
+                                }`}>
+                                  {disp.enrollmentStatus.charAt(0).toUpperCase() + disp.enrollmentStatus.slice(1)}
+                                </p>
+                                {currentHint && (
+                                  <p className="text-xs text-muted-foreground mt-0.5">{currentHint}</p>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </td>
 
                         {/* Guardian — name + phone stacked */}
@@ -1850,14 +2081,8 @@ export default function StudentsPage() {
                         </td>
 
                         {/* Actions */}
-                        <td className="px-5 py-4 text-right">
+                        <td className="px-5 py-4 text-right" onClick={(e) => e.stopPropagation()}>
                           <div className="flex items-center justify-end gap-2">
-                            <button
-                              onClick={() => setSelectedStudent(student)}
-                              className="text-primary text-sm font-medium hover:underline"
-                            >
-                              Profile
-                            </button>
                             <RowMenu
                               student={student}
                               onEdit={() => openEdit(student)}
@@ -1983,6 +2208,8 @@ export default function StudentsPage() {
                     <div className="flex flex-col gap-2">
                       {classBulkGroups.map((g) => {
                         const missingPath = classIdsWithMissingPath.has(g.currentClassId);
+                        const firstRow = promoteRows.find((r) => r.currentClassId === g.currentClassId);
+                        const isTerminal = firstRow?.isTerminalLevel ?? false;
                         return (
                           <button
                             key={g.currentClassId}
@@ -1991,8 +2218,10 @@ export default function StudentsPage() {
                           >
                             <div className="flex items-center gap-2">
                               {missingPath && <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />}
+                              {isTerminal && <GraduationCap className="w-3.5 h-3.5 text-green-600 flex-shrink-0" />}
                               <span className="text-sm font-medium">{g.currentClassName}</span>
                               {g.currentClassLevel && <span className="text-xs text-muted-foreground">({g.currentClassLevel})</span>}
+                              {isTerminal && <span className="text-xs text-green-700 font-medium">Graduating level</span>}
                             </div>
                             <span className="text-xs text-muted-foreground">{g.studentCount} student{g.studentCount !== 1 ? "s" : ""} →</span>
                           </button>
@@ -2031,19 +2260,23 @@ export default function StudentsPage() {
                                 <span className="font-medium">
                                   {classNextLevel === "GRADUATE" ? "Graduate / Moving Up"
                                     : classNextLevel === "NON_PROMOTIONAL" ? "Non-promotional"
-                                    : classNextLevel || <span className="text-amber-600">⚠ Not set</span>}
+                                    : classNextLevel ? classNextLevel
+                                    : classIsTerminalLevel ? <span className="text-green-700">Final Level (by progression order)</span>
+                                    : classSuggestedNextLevel ? <span className="text-primary">{classSuggestedNextLevel} (by progression order)</span>
+                                    : <span className="text-amber-600">⚠ Not set</span>}
                                 </span>
                               </p>
                               <p>
                                 <span className="text-muted-foreground">Recommended Outcome: </span>
                                 <span className={`font-medium ${
-                                  classNextLevel === "GRADUATE" ? "text-green-700" :
+                                  isGraduatingClass ? "text-green-700" :
                                   classNextLevel === "NON_PROMOTIONAL" ? "text-amber-600" :
-                                  classNextLevel ? "text-primary" : "text-amber-600"
+                                  (classNextLevel || classSuggestedNextLevel) ? "text-primary" : "text-amber-600"
                                 }`}>
-                                  {classNextLevel === "GRADUATE" ? "Graduated / Moving Up"
+                                  {isGraduatingClass ? "Graduating / Completed Final Level"
                                     : classNextLevel === "NON_PROMOTIONAL" ? "Needs Review"
                                     : classNextLevel ? `Eligible for ${classNextLevel}`
+                                    : classSuggestedNextLevel ? `Eligible for ${classSuggestedNextLevel}`
                                     : "Promotion Path Not Set"}
                                 </span>
                               </p>

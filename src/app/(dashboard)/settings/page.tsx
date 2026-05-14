@@ -66,6 +66,7 @@ interface ClassLevel {
   name: string;
   kind: ClassLevelKind;
   displayOrder: number;
+  progressionOrder: number | null;
   archivedAt: string | null;
 }
 
@@ -271,6 +272,12 @@ export default function SettingsPage() {
   const [closeYearUnclassified, setCloseYearUnclassified] = useState<{ id: string; name: string }[]>([]);
   const [closeYearForce, setCloseYearForce] = useState(false);
 
+  // Activate year confirmation modal (replaces browser confirm() so we can include an action link)
+  const [activateConfirm, setActivateConfirm] = useState<{
+    yearId: string; currentYearName: string; unclassifiedCount: number;
+  } | null>(null);
+  const [activateChecking, setActivateChecking] = useState(false);
+
   // Enrollment balance policy
   const [balancePolicy, setBalancePolicy] = useState<"warn" | "block" | "allow">("warn");
   const [iepWorkflowMode, setIepWorkflowMode] = useState<"simple_review" | "admin_approval_required">("simple_review");
@@ -299,7 +306,7 @@ export default function SettingsPage() {
   const [classLevels, setClassLevels] = useState<ClassLevel[]>([]);
   const [classLevelModal, setClassLevelModal] = useState(false);
   const [editingClassLevel, setEditingClassLevel] = useState<ClassLevel | null>(null);
-  const [classLevelForm, setClassLevelForm] = useState<{ name: string; kind: ClassLevelKind }>({ name: "", kind: "core" });
+  const [classLevelForm, setClassLevelForm] = useState<{ name: string; kind: ClassLevelKind; progressionOrder: string }>({ name: "", kind: "core", progressionOrder: "" });
   const [classLevelFormError, setClassLevelFormError] = useState<string | null>(null);
   const [classLevelShowArchived, setClassLevelShowArchived] = useState(false);
   const [classLevelInUseCounts, setClassLevelInUseCounts] = useState<Record<string, number>>({});
@@ -361,7 +368,7 @@ export default function SettingsPage() {
         sb.from("schools").select("student_code_prefix, student_code_padding, student_code_include_year, logo_url, primary_color, accent_color, report_footer_text, text_size_scale, spacing_scale").eq("id", schoolId).single(),
         sb.from("grading_scales").select("id, scale_set_id, label, description, color, min_score, max_score, sort_order").eq("school_id", schoolId).order("sort_order"),
         sb.from("grading_scale_sets").select("id, name, description, scale_mode, is_default").eq("school_id", schoolId).order("name"),
-        sb.from("class_levels").select("id, name, kind, display_order, archived_at").eq("school_id", schoolId).order("display_order").order("name"),
+        sb.from("class_levels").select("id, name, kind, display_order, progression_order, archived_at").eq("school_id", schoolId).order("display_order").order("name"),
         sb.from("classes").select("level_id").eq("school_id", schoolId).not("level_id", "is", null),
         sb.from("grading_scale_assignments").select("id, grading_scale_set_id, assignment_type, level_id, domain_id, student_id, is_active").eq("school_id", schoolId),
         sb.from("progress_categories").select("id, name").eq("school_id", schoolId).order("name"),
@@ -426,6 +433,7 @@ export default function SettingsPage() {
       name: l.name,
       kind: l.kind as ClassLevelKind,
       displayOrder: l.display_order ?? 0,
+      progressionOrder: l.progression_order ?? null,
       archivedAt: l.archived_at ?? null,
     })));
 
@@ -613,16 +621,35 @@ export default function SettingsPage() {
     if (syForm.status === "active") refreshCtx();
   }
 
-  // Activate a planned year: close the current active year (if any), then open the selected one.
+  // Activate a planned year: check for unclassified students, then either proceed directly
+  // or surface a modal so the admin can navigate to Year-End Classification first.
   async function activateSy(id: string) {
     if (!schoolId) return;
     const currentActive = schoolYears.find((sy) => sy.status === "active");
     if (currentActive) {
-      const msg = `This will close "${currentActive.name}" and activate the selected year. Proceed?`;
-      if (!confirm(msg)) return;
+      setActivateChecking(true);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { count } = await (supabase as any)
+        .from("enrollments")
+        .select("id", { count: "exact", head: true })
+        .eq("school_year_id", currentActive.id)
+        .eq("status", "enrolled")
+        .is("progression_status", null);
+      setActivateChecking(false);
+      const unclassifiedCount = count ?? 0;
+      // Always go through the modal so the admin sees a clear transition confirmation.
+      setActivateConfirm({ yearId: id, currentYearName: currentActive.name, unclassifiedCount });
+      return;
     }
+    // No current active year — activate immediately.
+    await performActivateSy(id);
+  }
+
+  async function performActivateSy(id: string) {
+    if (!schoolId) return;
     await supabase.from("school_years").update({ status: "closed" }).eq("school_id", schoolId).eq("status", "active");
     await supabase.from("school_years").update({ status: "active" }).eq("id", id);
+    setActivateConfirm(null);
     await load();
     refreshCtx();
   }
@@ -852,13 +879,13 @@ export default function SettingsPage() {
   // ── Class Levels ──
   function openAddClassLevel() {
     setEditingClassLevel(null);
-    setClassLevelForm({ name: "", kind: "core" });
+    setClassLevelForm({ name: "", kind: "core", progressionOrder: "" });
     setClassLevelFormError(null);
     setClassLevelModal(true);
   }
   function openEditClassLevel(l: ClassLevel) {
     setEditingClassLevel(l);
-    setClassLevelForm({ name: l.name, kind: l.kind });
+    setClassLevelForm({ name: l.name, kind: l.kind, progressionOrder: l.progressionOrder != null ? String(l.progressionOrder) : "" });
     setClassLevelFormError(null);
     setClassLevelModal(true);
   }
@@ -866,20 +893,33 @@ export default function SettingsPage() {
     if (!schoolId) return;
     const name = classLevelForm.name.trim();
     if (!name) { setClassLevelFormError("Name is required."); return; }
+    // Parse progression_order — only valid for core kind, must be a positive integer
+    let progressionOrderVal: number | null = null;
+    if (classLevelForm.kind === "core" && classLevelForm.progressionOrder.trim() !== "") {
+      const parsed = parseInt(classLevelForm.progressionOrder.trim(), 10);
+      if (isNaN(parsed) || parsed < 1) { setClassLevelFormError("Progression order must be a positive whole number (e.g. 1, 2, 3)."); return; }
+      progressionOrderVal = parsed;
+    }
     setSaving(true);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const sb = supabase as any;
     if (editingClassLevel) {
       const { error: err } = await sb.from("class_levels")
-        .update({ name, kind: classLevelForm.kind })
+        .update({ name, kind: classLevelForm.kind, progression_order: progressionOrderVal })
         .eq("id", editingClassLevel.id);
-      if (err) { setClassLevelFormError(err.message); setSaving(false); return; }
+      if (err) {
+        setClassLevelFormError(err.code === "23505"
+          ? "Another core level already uses that progression order number. Choose a different number."
+          : err.message);
+        setSaving(false); return;
+      }
     } else {
       const nextOrder = classLevels.length > 0
         ? Math.max(...classLevels.map((l) => l.displayOrder)) + 1
         : 0;
       const { error: err } = await sb.from("class_levels").insert({
         school_id: schoolId, name, kind: classLevelForm.kind, display_order: nextOrder,
+        progression_order: progressionOrderVal,
       });
       if (err) {
         setClassLevelFormError(err.code === "23505"
@@ -1492,8 +1532,12 @@ export default function SettingsPage() {
                           <div className="flex items-center gap-2 flex-shrink-0">
                             {/* Lifecycle action buttons */}
                             {(sy.status === "planned" || sy.status === "draft") && (
-                              <button onClick={() => activateSy(sy.id)} className="text-xs text-primary hover:underline font-medium">
-                                Activate
+                              <button
+                                onClick={() => activateSy(sy.id)}
+                                disabled={activateChecking}
+                                className="text-xs text-primary hover:underline font-medium disabled:opacity-50"
+                              >
+                                {activateChecking ? "Checking…" : "Activate"}
                               </button>
                             )}
                             {sy.status === "active" && (
@@ -1720,6 +1764,7 @@ export default function SettingsPage() {
                             <th className="text-left px-4 py-3 font-medium text-muted-foreground w-16">Order</th>
                             <th className="text-left px-4 py-3 font-medium text-muted-foreground">Name</th>
                             <th className="text-left px-4 py-3 font-medium text-muted-foreground">Kind</th>
+                            <th className="text-left px-4 py-3 font-medium text-muted-foreground">Seq</th>
                             <th className="text-left px-4 py-3 font-medium text-muted-foreground">In Use</th>
                             <th className="text-left px-4 py-3 font-medium text-muted-foreground">Status</th>
                             <th className="text-right px-4 py-3" />
@@ -1757,6 +1802,15 @@ export default function SettingsPage() {
                                   <td className="px-4 py-3">
                                     <Badge variant="default">{kindMeta?.label ?? l.kind}</Badge>
                                   </td>
+                                  <td className="px-4 py-3 text-xs">
+                                    {l.kind === "core" && l.progressionOrder != null ? (
+                                      <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-primary/10 text-primary font-semibold text-[10px]">
+                                        {l.progressionOrder}
+                                      </span>
+                                    ) : (
+                                      <span className="text-muted-foreground">—</span>
+                                    )}
+                                  </td>
                                   <td className="px-4 py-3 text-muted-foreground text-xs">
                                     {inUse} class{inUse !== 1 ? "es" : ""}
                                   </td>
@@ -1792,6 +1846,7 @@ export default function SettingsPage() {
                   </Card>
                   <div className="text-xs text-muted-foreground space-y-1">
                     <p>• <strong>Core</strong> levels form the main promotion sequence. Non-core kinds (SPED, bridge, summer, mixed-age, enrichment) sit outside the standard year-end progression.</p>
+                    <p>• <strong>Seq</strong> — the numbered progression order for Core levels (e.g. Toddler=1, Pre-Kinder=2, Kinder=3). The highest number is treated as the graduating/final level in Year-End Classification. Leave blank for non-core levels.</p>
                     <p>• Renaming a level here automatically updates every class that uses it.</p>
                     <p>• Archive instead of delete when a level is no longer offered but past classes still reference it.</p>
                   </div>
@@ -2707,6 +2762,52 @@ export default function SettingsPage() {
         </div>
       </Modal>
 
+      {/* Activate School Year Confirmation Modal */}
+      <Modal
+        open={!!activateConfirm}
+        onClose={() => setActivateConfirm(null)}
+        title="Activate School Year"
+      >
+        {activateConfirm && (
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              This will close <strong>{activateConfirm.currentYearName}</strong> and activate the selected year.
+            </p>
+
+            {activateConfirm.unclassifiedCount > 0 && (
+              <div className="flex gap-3 p-3 bg-orange-50 border border-orange-200 rounded-lg">
+                <AlertTriangle className="w-5 h-5 text-orange-500 flex-shrink-0 mt-0.5" />
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-orange-800">
+                    {activateConfirm.unclassifiedCount} enrolled student{activateConfirm.unclassifiedCount !== 1 ? "s have" : " has"} not been classified for year-end in <strong>{activateConfirm.currentYearName}</strong>.
+                  </p>
+                  <p className="text-xs text-orange-700">
+                    Classifying students before activating the new year keeps your records accurate and helps auto-suggest promotion or graduation in the next cycle.
+                  </p>
+                  <a
+                    href="/students?tab=promote"
+                    className="inline-flex items-center gap-1.5 text-xs font-medium text-orange-800 underline underline-offset-2 hover:text-orange-900"
+                  >
+                    Go to Year-End Classification →
+                  </a>
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-1">
+              <ModalCancelButton />
+              <Button
+                variant="destructive"
+                onClick={() => performActivateSy(activateConfirm.yearId)}
+                disabled={saving}
+              >
+                {activateConfirm.unclassifiedCount > 0 ? "Proceed Anyway" : "Activate"}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
       {/* Close School Year Modal */}
       <Modal open={closeYearModal} onClose={() => setCloseYearModal(false)} title="Close School Year">
         <div className="space-y-4">
@@ -3064,7 +3165,7 @@ export default function SettingsPage() {
           </div>
           <div>
             <label className="block text-sm font-medium mb-1">Kind *</label>
-            <Select value={classLevelForm.kind} onChange={(e) => setClassLevelForm({ ...classLevelForm, kind: e.target.value as ClassLevelKind })}>
+            <Select value={classLevelForm.kind} onChange={(e) => setClassLevelForm({ ...classLevelForm, kind: e.target.value as ClassLevelKind, progressionOrder: e.target.value !== "core" ? "" : classLevelForm.progressionOrder })}>
               {CLASS_LEVEL_KINDS.map((k) => (
                 <option key={k.value} value={k.value}>{k.label}</option>
               ))}
@@ -3073,6 +3174,22 @@ export default function SettingsPage() {
               {CLASS_LEVEL_KINDS.find((k) => k.value === classLevelForm.kind)?.hint}
             </p>
           </div>
+          {classLevelForm.kind === "core" && (
+            <div>
+              <label className="block text-sm font-medium mb-1">Progression Order</label>
+              <Input
+                type="number"
+                min="1"
+                step="1"
+                value={classLevelForm.progressionOrder}
+                onChange={(e) => setClassLevelForm({ ...classLevelForm, progressionOrder: e.target.value })}
+                placeholder="e.g. 1, 2, 3 — leave blank if not in sequence"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Determines the core-level progression sequence. The highest number is treated as the graduating/final level during Year-End Classification. Leave blank to exclude this level from sequence-based suggestions.
+              </p>
+            </div>
+          )}
           <div className="flex justify-end gap-2 pt-2">
             <ModalCancelButton />
             <Button onClick={saveClassLevel} disabled={saving || !classLevelForm.name.trim()}>
