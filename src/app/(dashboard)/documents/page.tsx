@@ -1063,11 +1063,11 @@ function DocumentsHelpDrawer({
               <p className="font-semibold text-foreground">Save Draft — always allowed</p>
               <p className="text-muted-foreground">No fields are required. Use it to save work in progress at any point.</p>
             </div>
-            <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800 p-3 space-y-1">
+            <div className="rounded-lg border border-amber-300 bg-amber-100 p-3 space-y-1">
               <p className="font-semibold text-foreground">Save &amp; Share (Submit for Review)</p>
               <p className="text-muted-foreground">Requires the planning minimum: student, meeting purpose, meeting date (or TBD), present levels of need, at least one goal or N/A, and at least one support/barrier or N/A.</p>
             </div>
-            <div className="rounded-lg border border-green-200 bg-green-50 dark:bg-green-950/20 dark:border-green-800 p-3 space-y-1">
+            <div className="rounded-lg border border-green-300 bg-green-100 p-3 space-y-1">
               <p className="font-semibold text-foreground">Approve / Finalize</p>
               <p className="text-muted-foreground">Requires everything above, plus team recommendations (or N/A), discussion notes (or N/A), progress entries (or N/A), agreements, unresolved concerns, and next-review commitments (each or N/A).</p>
             </div>
