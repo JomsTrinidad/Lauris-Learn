@@ -1416,6 +1416,41 @@ export type Database = {
         ];
       };
     };
+      audit_logs: {
+        Row: {
+          id: string;
+          school_id: string | null;
+          actor_user_id: string | null;
+          actor_role: string | null;
+          table_name: string;
+          record_id: string | null;
+          action: "INSERT" | "UPDATE" | "DELETE";
+          old_values: Json | null;
+          new_values: Json | null;
+          created_at: string;
+        };
+        Insert: { id?: string; school_id?: string | null; actor_user_id?: string | null; actor_role?: string | null; table_name: string; record_id?: string | null; action: "INSERT" | "UPDATE" | "DELETE"; old_values?: Json | null; new_values?: Json | null; created_at?: string };
+        Update: { id?: string; school_id?: string | null; actor_user_id?: string | null; actor_role?: string | null; table_name?: string; record_id?: string | null; action?: "INSERT" | "UPDATE" | "DELETE"; old_values?: Json | null; new_values?: Json | null; created_at?: string };
+        Relationships: [
+          { foreignKeyName: "audit_logs_school_id_fkey"; columns: ["school_id"]; isOneToOne: false; referencedRelation: "schools"; referencedColumns: ["id"] }
+        ];
+      };
+      impersonation_audit_log: {
+        Row: {
+          id: string;
+          actor_id: string;
+          actor_email: string;
+          target_school_id: string;
+          target_school_name: string;
+          event_type: "impersonation_started" | "impersonation_ended";
+          occurred_at: string;
+        };
+        Insert: { id?: string; actor_id: string; actor_email: string; target_school_id: string; target_school_name: string; event_type: "impersonation_started" | "impersonation_ended"; occurred_at?: string };
+        Update: { id?: string; actor_id?: string; actor_email?: string; target_school_id?: string; target_school_name?: string; event_type?: "impersonation_started" | "impersonation_ended"; occurred_at?: string };
+        Relationships: [
+          { foreignKeyName: "impersonation_audit_log_target_school_id_fkey"; columns: ["target_school_id"]; isOneToOne: false; referencedRelation: "schools"; referencedColumns: ["id"] }
+        ];
+      };
     Views: Record<string, never>;
     Functions: {
       log_document_access: {

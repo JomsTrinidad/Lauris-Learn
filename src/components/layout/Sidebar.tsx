@@ -17,6 +17,7 @@ import {
   Star,
   ShieldCheck,
   FileText,
+  History,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -70,6 +71,7 @@ const navSections: NavSection[] = [
   {
     label: "System",
     items: [
+      { path: "/activity", label: "Activity Log", icon: History, adminOnly: true },
       { path: "/settings", label: "Settings", icon: Settings, adminOnly: true },
     ],
   },
