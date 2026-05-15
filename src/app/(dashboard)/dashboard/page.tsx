@@ -127,6 +127,7 @@ export default function DashboardPage() {
   const [lastUpdateAt, setLastUpdateAt] = useState<string | null>(null);
   const [complexDataError, setComplexDataError] = useState<string | null>(null);
   const [updatesLoaded, setUpdatesLoaded] = useState(false);
+  const [todayHolidayName, setTodayHolidayName] = useState<string | null>(null);
 
   // Profile created at for Getting Started 2-month window
   const [profileCreatedAt, setProfileCreatedAt] = useState<string | null>(null);
@@ -177,6 +178,13 @@ export default function DashboardPage() {
     try {
       setComplexDataError(null);
       const today = new Date().toISOString().split("T")[0];
+
+      // Check if today is a no-class holiday (used to suppress attendance nags)
+      if (schoolId) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: hDay } = await (supabase as any).from("holidays").select("name").eq("school_id", schoolId).eq("date", today).eq("is_no_class", true).maybeSingle();
+        setTodayHolidayName((hDay as { name: string } | null)?.name ?? null);
+      }
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
       const yesterdayStr = yesterday.toISOString().split("T")[0];
@@ -426,6 +434,9 @@ export default function DashboardPage() {
     (cls) => !isClassMarked(cls) && cls.totalEnrolled > 0
   );
 
+  const todayIsWeekend = (() => { const d = new Date().getDay(); return d === 0 || d === 6; })();
+  const todayIsNoClass = todayIsWeekend || !!todayHolidayName;
+
   const todayStr = new Date().toISOString().split("T")[0];
   const noUpdatesToday = !lastUpdateAt || lastUpdateAt.split("T")[0] < todayStr;
   const noUpdatesRecently =
@@ -435,7 +446,7 @@ export default function DashboardPage() {
 
   const computedItems: AttentionItem[] = [];
 
-  if (unmarkedClasses.length > 0) {
+  if (!todayIsNoClass && unmarkedClasses.length > 0) {
     computedItems.push({
       id: "unmarked_att",
       category: "needs_input",
@@ -469,7 +480,7 @@ export default function DashboardPage() {
     });
   }
 
-  if (updatesLoaded && noUpdatesRecently && todayClasses.length > 0) {
+  if (!todayIsNoClass && updatesLoaded && noUpdatesRecently && todayClasses.length > 0) {
     computedItems.push({
       id: "no_updates",
       category: "needs_input",
@@ -663,7 +674,17 @@ export default function DashboardPage() {
               <div className="flex items-start justify-between gap-3 h-full">
                 <div className="flex-1 min-w-0">
                   <p className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Attendance Today</p>
-                  {todayClasses.length === 0 ? (
+                  {todayIsWeekend ? (
+                    <>
+                      <p className="text-2xl font-bold mt-1">—</p>
+                      <p className="text-xs text-muted-foreground mt-1">Weekend</p>
+                    </>
+                  ) : todayHolidayName ? (
+                    <>
+                      <p className="text-2xl font-bold mt-1">—</p>
+                      <p className="text-xs text-muted-foreground mt-1">{todayHolidayName} — no class</p>
+                    </>
+                  ) : todayClasses.length === 0 ? (
                     <>
                       <p className="text-2xl font-bold mt-1">—</p>
                       <p className="text-xs text-muted-foreground mt-1">No classes today</p>
@@ -739,7 +760,13 @@ export default function DashboardPage() {
           <CardHeader className="flex flex-row items-center justify-between py-4 border-b border-border">
             <div>
               <h2 className="text-base font-semibold text-[var(--theme-accent)]">Classes Requiring Action</h2>
-              <p className="text-xs text-muted-foreground mt-0.5">Mark attendance as classes meet</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {todayIsWeekend
+                  ? "Today is a weekend — attendance not expected"
+                  : todayHolidayName
+                  ? `${todayHolidayName} today — no class scheduled`
+                  : "Mark attendance as classes meet"}
+              </p>
             </div>
             <Link
               href="/attendance"

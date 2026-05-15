@@ -1436,6 +1436,20 @@ export default function SettingsPage() {
             <Card>
               <CardHeader><h2>School Information</h2></CardHeader>
               <CardContent className="space-y-4">
+                <div className="grid md:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Region</label>
+                    <Input value={schoolInfo.region} onChange={(e) => setSchoolInfo({ ...schoolInfo, region: e.target.value })} placeholder="e.g. Region IV-A" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Schools Division</label>
+                    <Input value={schoolInfo.schoolsDivision} onChange={(e) => setSchoolInfo({ ...schoolInfo, schoolsDivision: e.target.value })} placeholder="e.g. Division of Laguna" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">District</label>
+                    <Input value={schoolInfo.district} onChange={(e) => setSchoolInfo({ ...schoolInfo, district: e.target.value })} placeholder="e.g. Calamba District I" />
+                  </div>
+                </div>
                 <div>
                   <label className="block text-sm font-medium mb-1">School Name</label>
                   <Input value={schoolInfo.schoolName} onChange={(e) => setSchoolInfo({ ...schoolInfo, schoolName: e.target.value })} />
@@ -1451,20 +1465,6 @@ export default function SettingsPage() {
                 <div>
                   <label className="block text-sm font-medium mb-1">Telephone Number</label>
                   <Input value={schoolInfo.phone} onChange={(e) => setSchoolInfo({ ...schoolInfo, phone: e.target.value })} placeholder="+63 2 1234 5678" />
-                </div>
-                <div className="grid md:grid-cols-3 gap-3">
-                  <div>
-                    <label className="block text-sm font-medium mb-1">Region</label>
-                    <Input value={schoolInfo.region} onChange={(e) => setSchoolInfo({ ...schoolInfo, region: e.target.value })} placeholder="e.g. Region IV-A" />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-1">Schools Division</label>
-                    <Input value={schoolInfo.schoolsDivision} onChange={(e) => setSchoolInfo({ ...schoolInfo, schoolsDivision: e.target.value })} placeholder="e.g. Division of Laguna" />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-1">District</label>
-                    <Input value={schoolInfo.district} onChange={(e) => setSchoolInfo({ ...schoolInfo, district: e.target.value })} placeholder="e.g. Calamba District I" />
-                  </div>
                 </div>
                 <div className="flex justify-end pt-2">
                   <Button onClick={saveSchoolInfo} disabled={saving}>{saving ? "Saving…" : "Save Changes"}</Button>

@@ -58,6 +58,11 @@ function getTodayStr() {
   return new Date().toISOString().split("T")[0];
 }
 
+function isWeekend(dateStr: string): boolean {
+  const dow = new Date(dateStr + "T00:00:00").getDay();
+  return dow === 0 || dow === 6;
+}
+
 export default function AttendancePage() {
   const { schoolId, activeYear, isHistoricalView, viewingYear } = useSchoolContext();
   const supabase = createClient();
@@ -83,6 +88,8 @@ export default function AttendancePage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [weekendOverride, setWeekendOverride] = useState(false);
+  const [weekendEvent, setWeekendEvent] = useState<string | null>(null);
 
   // Load classes on mount or when the viewed year changes
   useEffect(() => {
@@ -126,6 +133,17 @@ export default function AttendancePage() {
     setLoadingStudents(true);
     setSaved(false);
     setError(null);
+
+    // Reset weekend guardrail on every date/class change
+    setWeekendOverride(false);
+    setWeekendEvent(null);
+
+    // If weekend, check for a school event on this date to provide contextual copy
+    if (isWeekend(selectedDate) && schoolId) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const evRes = await supabase.from("events").select("title").eq("school_id", schoolId).eq("event_date", selectedDate).limit(1).maybeSingle() as any;
+      if (evRes.data?.title) setWeekendEvent(evRes.data.title as string);
+    }
 
     // Check for holiday
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -245,6 +263,7 @@ export default function AttendancePage() {
   }, [view, loadSummary]);
 
   function markAllPresent() {
+    if (isWeekend(selectedDate) && !weekendOverride) return;
     setSaved(false);
     setStudents((prev) => prev.map((s) => ({ ...s, status: "present" as AttendanceStatus })));
   }
@@ -264,6 +283,7 @@ export default function AttendancePage() {
       setError("Attendance records cannot be saved while viewing a historical school year.");
       return;
     }
+    if (isWeekend(selectedDate) && !weekendOverride) return;
     setSaving(true);
     setError(null);
 
@@ -291,6 +311,8 @@ export default function AttendancePage() {
     setTimeout(() => setSaved(false), 3000);
     await loadAttendance();
   }
+
+  const weekendBlocked = isWeekend(selectedDate) && !weekendOverride;
 
   const counts = STATUS_OPTIONS.reduce(
     (acc, opt) => ({ ...acc, [opt.value!]: students.filter((s) => s.status === opt.value).length }),
@@ -493,6 +515,28 @@ export default function AttendancePage() {
         </div>
       </div>
 
+      {/* Weekend guardrail */}
+      {isWeekend(selectedDate) && !weekendOverride && (
+        <div className="flex items-start gap-3 px-4 py-3.5 bg-amber-50 border border-amber-200 rounded-lg text-sm">
+          <Calendar className="w-4 h-4 flex-shrink-0 mt-0.5 text-amber-700" />
+          <div className="flex-1 min-w-0">
+            <p className="font-medium text-amber-800">Weekend attendance</p>
+            <p className="mt-0.5 text-amber-700">
+              {weekendEvent
+                ? `Weekend attendance may apply because "${weekendEvent}" is scheduled.`
+                : "Attendance is usually tracked on school days. Continue only if this date has a scheduled school activity or make-up class."}
+            </p>
+            <button
+              type="button"
+              onClick={() => setWeekendOverride(true)}
+              className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-amber-100 hover:bg-amber-200 text-amber-800 border border-amber-300 transition-colors"
+            >
+              Proceed with weekend attendance
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Parent-reported absences callout */}
       {absenceNotifs.length > 0 && (
         <div className="flex items-start gap-3 px-4 py-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
@@ -545,7 +589,8 @@ export default function AttendancePage() {
               {students.length > 0 && (
                 <button
                   onClick={markAllPresent}
-                  className="flex items-center gap-1.5 text-xs bg-green-50 text-green-700 hover:bg-green-100 border border-green-200 px-2.5 py-1 rounded-lg transition-colors"
+                  disabled={weekendBlocked}
+                  className={`flex items-center gap-1.5 text-xs bg-green-50 text-green-700 border border-green-200 px-2.5 py-1 rounded-lg transition-colors ${weekendBlocked ? "opacity-40 cursor-not-allowed" : "hover:bg-green-100"}`}
                   title="Mark all students as Present"
                 >
                   <CheckSquare className="w-3.5 h-3.5" />
@@ -603,9 +648,10 @@ export default function AttendancePage() {
                         <button
                           key={String(opt.value)}
                           onClick={() => setStatus(student.studentId, opt.value)}
+                          disabled={weekendBlocked}
                           className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
                             student.status === opt.value ? opt.active : opt.inactive
-                          }`}
+                          } ${weekendBlocked ? "opacity-40 cursor-not-allowed pointer-events-none" : ""}`}
                         >
                           {opt.label}
                         </button>
@@ -613,9 +659,10 @@ export default function AttendancePage() {
 
                       <button
                         onClick={() => setNoteStudentId(noteStudentId === student.studentId ? null : student.studentId)}
+                        disabled={weekendBlocked}
                         className={`ml-1 p-2 rounded-lg transition-colors ${
                           student.note ? "text-primary bg-blue-50" : "text-muted-foreground hover:bg-accent"
-                        }`}
+                        } ${weekendBlocked ? "opacity-40 cursor-not-allowed" : ""}`}
                         title="Add note"
                       >
                         <MessageSquare className="w-4 h-4" />
@@ -912,12 +959,17 @@ export default function AttendancePage() {
 
       {/* Sticky save — marking view only */}
       {view === "marking" && (
-        <div className="sticky bottom-4 flex justify-end">
+        <div className="sticky bottom-4 flex items-center justify-end gap-3">
+          {weekendBlocked && students.length > 0 && (
+            <p className="text-xs text-muted-foreground max-w-xs text-right">
+              Confirm weekend attendance to start marking records for this date.
+            </p>
+          )}
           <Button
             onClick={handleSave}
             size="lg"
             className={`shadow-lg ${saved ? "bg-green-500" : ""}`}
-            disabled={saving || students.length === 0 || isHistoricalView}
+            disabled={saving || students.length === 0 || isHistoricalView || weekendBlocked}
             title={isHistoricalView ? "Switch to the active school year to save attendance." : undefined}
           >
             {saved ? (
