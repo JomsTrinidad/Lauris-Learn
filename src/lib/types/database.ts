@@ -145,11 +145,12 @@ export type Database = {
           notes: string | null;
           is_active: boolean;
           child_profile_id: string | null;
+          alternate_contact_number: string | null;
           created_at: string;
           updated_at: string;
         };
-        Insert: { id?: string; school_id: string; first_name: string; last_name: string; date_of_birth?: string | null; gender?: string | null; photo_url?: string | null; notes?: string | null; is_active?: boolean; child_profile_id?: string | null; created_at?: string; updated_at?: string };
-        Update: { id?: string; school_id?: string; first_name?: string; last_name?: string; date_of_birth?: string | null; gender?: string | null; photo_url?: string | null; notes?: string | null; is_active?: boolean; child_profile_id?: string | null; updated_at?: string };
+        Insert: { id?: string; school_id: string; first_name: string; last_name: string; date_of_birth?: string | null; gender?: string | null; photo_url?: string | null; notes?: string | null; is_active?: boolean; child_profile_id?: string | null; alternate_contact_number?: string | null; created_at?: string; updated_at?: string };
+        Update: { id?: string; school_id?: string; first_name?: string; last_name?: string; date_of_birth?: string | null; gender?: string | null; photo_url?: string | null; notes?: string | null; is_active?: boolean; child_profile_id?: string | null; alternate_contact_number?: string | null; updated_at?: string };
         Relationships: [
           { foreignKeyName: "students_school_id_fkey"; columns: ["school_id"]; isOneToOne: false; referencedRelation: "schools"; referencedColumns: ["id"] },
           { foreignKeyName: "students_child_profile_id_fkey"; columns: ["child_profile_id"]; isOneToOne: false; referencedRelation: "child_profiles"; referencedColumns: ["id"] }

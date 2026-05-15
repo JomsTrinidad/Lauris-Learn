@@ -38,6 +38,7 @@ export function Header({
   const [yearMenuOpen, setYearMenuOpen] = useState(false);
   const router = useRouter();
   const yearMenuRef = useRef<HTMLDivElement>(null);
+  const userMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -50,6 +51,18 @@ export function Header({
       return () => document.removeEventListener("mousedown", handleClickOutside);
     }
   }, [yearMenuOpen]);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+        setUserMenuOpen(false);
+      }
+    }
+    if (userMenuOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [userMenuOpen]);
 
   async function handleSignOut() {
     const supabase = createClient();
@@ -148,7 +161,7 @@ export function Header({
         </div>
 
         {/* User menu */}
-        <div className="relative" onMouseLeave={() => setUserMenuOpen(false)}>
+        <div className="relative" ref={userMenuRef}>
           <button
             onClick={() => setUserMenuOpen(!userMenuOpen)}
             className="flex items-center gap-2.5 px-3 py-1.5 bg-muted rounded-lg hover:bg-accent transition-colors"

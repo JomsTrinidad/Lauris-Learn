@@ -2334,16 +2334,19 @@ export default function SettingsPage() {
               <div>
                 <h2>Accessibility</h2>
                 <p className="text-sm text-muted-foreground mt-1">
-                  Customize your school&apos;s colors and theme, and adjust readability settings for parents and staff.
+                  Customize your school&apos;s theme and adjust readability settings for parents and staff.
                 </p>
               </div>
               {brandingError && <ErrorAlert message={brandingError} />}
 
-              {/* Colors & Theme */}
+              {/* Theme */}
               <Card>
                 <CardHeader>
                   <div className="flex items-center justify-between">
-                    <h3>Colors &amp; Theme</h3>
+                    <div>
+                      <h3>Theme</h3>
+                      <p className="text-xs text-muted-foreground mt-0.5">Controls the app&apos;s overall tone — nav indicator, focus rings, and accent surfaces.</p>
+                    </div>
                     <button
                       onClick={resetBrandingToDefaults}
                       className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-destructive transition-colors"
@@ -2354,40 +2357,8 @@ export default function SettingsPage() {
                 </CardHeader>
                 <CardContent className="space-y-6">
 
-                  {/* Primary color */}
-                  <div>
-                    <label className="block text-sm font-medium mb-2">Primary Color</label>
-                    <p className="text-xs text-muted-foreground mb-2">Your school&apos;s main brand color — used for CTA buttons, links, and core highlights.</p>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="color"
-                        value={brandingForm.primaryColor}
-                        onChange={(e) => setBrandingForm({ ...brandingForm, primaryColor: e.target.value })}
-                        className="w-10 h-9 rounded border border-border cursor-pointer flex-shrink-0 p-0.5"
-                      />
-                      <Input
-                        value={brandingForm.primaryColor}
-                        maxLength={7}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          if (/^#[0-9A-Fa-f]{0,6}$/.test(v)) setBrandingForm({ ...brandingForm, primaryColor: v });
-                        }}
-                        className="font-mono text-xs w-32"
-                      />
-                    </div>
-                    {brandingForm.primaryColor.length === 7 && contrastRatio(brandingForm.primaryColor, "#ffffff") < 3 && (
-                      <p className="text-xs text-amber-600 mt-1">⚠ Low contrast — may be hard to read on white backgrounds.</p>
-                    )}
-                  </div>
-
                   {/* Theme preset */}
-                  <div>
-                    <label className="block text-sm font-medium mb-1">Theme</label>
-                    <p className="text-xs text-muted-foreground mb-3">
-                      Controls the app&apos;s overall tone — nav indicator, focus rings, and accent surfaces.
-                      Selecting a theme sets a matching primary color; adjust it above if you prefer a custom shade.
-                    </p>
-                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                       {THEMES.map((theme) => {
                         const isSelected = brandingForm.themeKey === theme.key;
                         return (
@@ -2427,12 +2398,25 @@ export default function SettingsPage() {
                         );
                       })}
                     </div>
-                  </div>
 
                 </CardContent>
               </Card>
 
-              {/* B. Accessibility */}
+              {/* Live Preview */}
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center gap-2">
+                    <h3>Preview</h3>
+                    <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-muted text-muted-foreground uppercase tracking-wider">Not interactive</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5">Reflects your current theme, text size, and spacing selections.</p>
+                </CardHeader>
+                <CardContent>
+                  <BrandingPreview form={brandingForm} />
+                </CardContent>
+              </Card>
+
+              {/* Readability Settings */}
               <Card>
                 <CardHeader>
                   <div className="flex items-center justify-between">
@@ -2501,14 +2485,6 @@ export default function SettingsPage() {
                     </div>
                   </div>
 
-                  {/* Live preview */}
-                  <div>
-                    <div className="flex items-center gap-2 mb-3">
-                      <label className="text-sm font-medium">Live Preview</label>
-                      <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-muted text-muted-foreground uppercase tracking-wider">Not interactive</span>
-                    </div>
-                    <BrandingPreview form={brandingForm} />
-                  </div>
                 </CardContent>
               </Card>
 
@@ -2805,12 +2781,11 @@ export default function SettingsPage() {
                         <p>Customize how the app looks for your school — changes apply immediately across the admin and parent portal.</p>
                         <div className="space-y-2 mt-2">
                           <Step n={1} text={<span><strong>Logo &amp; Report Footer</strong> — in <strong>School Information → School Identity</strong>. Upload your logo (JPG/PNG) and set the footer text for printed reports.</span>} />
-                          <Step n={2} text={<span><strong>Primary Color &amp; Theme</strong> — in <strong>Accessibility → Colors &amp; Theme</strong>. Choose a curated theme to set the app&apos;s overall tone; themes auto-suggest a matching primary color you can override.</span>} />
-                          <Step n={3} text={<span><strong>Text Size</strong> and <strong>Spacing</strong> — in <strong>Accessibility → Readability Settings</strong>. Helps parents who find the default text size hard to read.</span>} />
-                          <Step n={4} text={<span>Check the <strong>Live Preview</strong> before saving.</span>} />
+                          <Step n={2} text={<span><strong>Theme</strong> — in <strong>Accessibility → Theme</strong>. Choose a curated theme to set the app&apos;s overall tone — nav indicator, focus rings, and accent surfaces.</span>} />
+                          <Step n={3} text={<span>Check the <strong>Preview</strong> — it updates live as you change theme, text size, and spacing.</span>} />
+                          <Step n={4} text={<span><strong>Text Size</strong> and <strong>Spacing</strong> — in <strong>Accessibility → Readability Settings</strong>. Helps parents who find the default text size hard to read.</span>} />
                           <Step n={5} text={<span>Click <strong>Save Changes</strong>.</span>} />
                         </div>
-                        <Tip>If the colors look off in the live preview, use the contrast indicator to ensure text remains readable. A contrast ratio below 4.5:1 fails accessibility standards.</Tip>
                       </div>
                     ),
                   },

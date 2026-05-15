@@ -16,6 +16,7 @@ export interface StudentRow {
   medical_conditions: string | null;
   emergency_contact_name: string | null;
   emergency_contact_phone: string | null;
+  alternate_contact_number: string | null;
   authorized_pickups: string | null;
   primary_language: string | null;
   special_needs: string | null;
@@ -75,7 +76,7 @@ export function useStudentsList(schoolId: string | null) {
         .select(`
           id, first_name, last_name, date_of_birth, gender,
           student_code, preferred_name, photo_url, child_profile_id,
-          allergies, medical_conditions, emergency_contact_name, emergency_contact_phone,
+          allergies, medical_conditions, emergency_contact_name, emergency_contact_phone, alternate_contact_number,
           authorized_pickups, primary_language, special_needs, teacher_notes, admin_notes,
           guardians(id, full_name, relationship, phone, email, is_primary, communication_preference),
           enrollments(id, status, class_id, school_year_id, academic_period_id, start_date, end_date, created_at, progression_status, progression_notes, classes(name, next_level, class_levels(name)), academic_periods(name), school_years(name))

@@ -145,6 +145,7 @@ interface Student {
   guardianEmail: string; guardianRelationship: string; guardianCommPref: CommPref | null;
   allergies: string | null; medicalConditions: string | null;
   emergencyContactName: string | null; emergencyContactPhone: string | null;
+  alternateContactNumber: string | null;
   authorizedPickups: string | null; primaryLanguage: string | null;
   specialNeeds: string | null; teacherNotes: string | null; adminNotes: string | null;
   progressionStatus: string | null; progressionNotes: string | null;
@@ -163,7 +164,7 @@ interface StudentForm {
   enrollmentStatus: string; parentName: string; relationship: string;
   contact: string; email: string; commPref: CommPref;
   allergies: string; medicalConditions: string; emergencyContactName: string;
-  emergencyContactPhone: string; specialNeeds: string; teacherNotes: string;
+  emergencyContactPhone: string; alternateContactNumber: string; specialNeeds: string; teacherNotes: string;
   adminNotes: string; authorizedPickups: string; primaryLanguage: string;
   progressionStatus: string; progressionNotes: string; photoUrl: string;
   lrn: string;
@@ -201,7 +202,7 @@ const EMPTY_FORM: StudentForm = {
   parentName: "", relationship: "Mother", contact: "", email: "",
   commPref: "app",
   allergies: "", medicalConditions: "", emergencyContactName: "",
-  emergencyContactPhone: "", specialNeeds: "", teacherNotes: "", adminNotes: "",
+  emergencyContactPhone: "", alternateContactNumber: "", specialNeeds: "", teacherNotes: "", adminNotes: "",
   authorizedPickups: "", primaryLanguage: "",
   progressionStatus: "", progressionNotes: "",
   photoUrl: "",
@@ -765,6 +766,7 @@ export default function StudentsPage() {
             medicalConditions: sx.medical_conditions ?? null,
             emergencyContactName: sx.emergency_contact_name ?? null,
             emergencyContactPhone: sx.emergency_contact_phone ?? null,
+            alternateContactNumber: (sx as any).alternate_contact_number ?? null,
             authorizedPickups: sx.authorized_pickups ?? null,
             primaryLanguage: sx.primary_language ?? null,
             specialNeeds: sx.special_needs ?? null,
@@ -906,6 +908,7 @@ export default function StudentsPage() {
         medical_conditions: form.medicalConditions.trim() || null,
         emergency_contact_name: form.emergencyContactName.trim() || null,
         emergency_contact_phone: form.emergencyContactPhone.trim() || null,
+        alternate_contact_number: form.alternateContactNumber.trim() || null,
         authorized_pickups: form.authorizedPickups.trim() || null,
         primary_language: form.primaryLanguage.trim() || null,
         special_needs: form.specialNeeds.trim() || null,
@@ -1035,6 +1038,7 @@ export default function StudentsPage() {
       allergies: student.allergies ?? "", medicalConditions: student.medicalConditions ?? "",
       emergencyContactName: student.emergencyContactName ?? "",
       emergencyContactPhone: student.emergencyContactPhone ?? "",
+      alternateContactNumber: student.alternateContactNumber ?? "",
       authorizedPickups: student.authorizedPickups ?? "",
       primaryLanguage: student.primaryLanguage ?? "",
       specialNeeds: student.specialNeeds ?? "",
@@ -1068,6 +1072,7 @@ export default function StudentsPage() {
         medical_conditions: editForm.medicalConditions.trim() || null,
         emergency_contact_name: editForm.emergencyContactName.trim() || null,
         emergency_contact_phone: editForm.emergencyContactPhone.trim() || null,
+        alternate_contact_number: editForm.alternateContactNumber.trim() || null,
         authorized_pickups: editForm.authorizedPickups.trim() || null,
         primary_language: editForm.primaryLanguage.trim() || null,
         special_needs: editForm.specialNeeds.trim() || null,
@@ -3343,6 +3348,10 @@ export default function StudentsPage() {
                       </div>
                     </div>
                     <div>
+                      <label className="block text-xs font-medium text-muted-foreground mb-1">Alternate Contact Number</label>
+                      <Input value={editForm.alternateContactNumber} onChange={(e) => setEditForm({ ...editForm, alternateContactNumber: e.target.value })} placeholder="Secondary phone number" />
+                    </div>
+                    <div>
                       <label className="block text-xs font-medium text-muted-foreground mb-1">Authorized Pickup Persons</label>
                       <Textarea value={editForm.authorizedPickups} onChange={(e) => setEditForm({ ...editForm, authorizedPickups: e.target.value })} rows={2} placeholder="Names allowed to pick up the child (besides guardian)" />
                     </div>
@@ -3582,6 +3591,10 @@ export default function StudentsPage() {
                 <label className="block text-sm font-medium mb-1">Emergency Contact Phone</label>
                 <Input value={form.emergencyContactPhone} onChange={(e) => setForm({ ...form, emergencyContactPhone: e.target.value })} placeholder="09XXXXXXXXX" />
               </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Alternate Contact Number</label>
+              <Input value={form.alternateContactNumber} onChange={(e) => setForm({ ...form, alternateContactNumber: e.target.value })} placeholder="Secondary phone number" />
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">Authorized Pickup Persons</label>
