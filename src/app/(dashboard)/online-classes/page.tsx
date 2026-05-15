@@ -122,7 +122,7 @@ function getMeetHost(url: string): string {
 function StatusBadge({ status }: { status: SessionStatus }) {
   if (status === "live") {
     return (
-      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-green-500 text-white animate-pulse">
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-[var(--theme-accent)] text-white animate-pulse">
         🔴 Live
       </span>
     );
@@ -188,7 +188,7 @@ function SessionCard({ session, copiedId, onUpdateStatus, onCopyLink }: SessionC
   return (
     <Card className={cn(
       "overflow-hidden transition-shadow hover:shadow-md",
-      session.status === "live" && "ring-2 ring-green-400/40 border-green-200",
+      session.status === "live" && "ring-2 ring-[var(--theme-accent-muted)] border-[var(--theme-accent)]",
     )}>
       <CardContent className="p-5">
         <div className="flex flex-col gap-3">
@@ -421,7 +421,7 @@ export default function OnlineClassesPage() {
       {/* ── Header ── */}
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1>Online Classes</h1>
+          <h1 className="text-[var(--theme-accent)]">Online Classes</h1>
           <p className="text-muted-foreground text-sm mt-1">Schedule and manage online class sessions</p>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
@@ -443,16 +443,16 @@ export default function OnlineClassesPage() {
           label="Live Now"
           count={liveCount}
           icon={<Radio className="w-4 h-4" />}
-          colorClass="text-green-600"
-          bgClass="bg-green-100"
+          colorClass="text-[var(--theme-accent)]"
+          bgClass="bg-[var(--theme-accent-muted)]"
           pulse
         />
         <SummaryCard
           label="Today"
           count={todayCount}
           icon={<Calendar className="w-4 h-4" />}
-          colorClass="text-blue-600"
-          bgClass="bg-blue-100"
+          colorClass="text-[var(--theme-accent)]"
+          bgClass="bg-[var(--theme-accent-muted)]"
           isActive={activeTab === "today"}
           onClick={() => setActiveTab("today")}
         />
@@ -460,8 +460,8 @@ export default function OnlineClassesPage() {
           label="Upcoming"
           count={upcomingCount}
           icon={<Clock className="w-4 h-4" />}
-          colorClass="text-orange-600"
-          bgClass="bg-orange-100"
+          colorClass="text-[var(--theme-accent)]"
+          bgClass="bg-[var(--theme-accent-muted)]"
           isActive={activeTab === "upcoming"}
           onClick={() => setActiveTab("upcoming")}
         />
@@ -469,8 +469,8 @@ export default function OnlineClassesPage() {
           label="Completed"
           count={completedCount}
           icon={<Check className="w-4 h-4" />}
-          colorClass="text-gray-600"
-          bgClass="bg-gray-100"
+          colorClass="text-muted-foreground"
+          bgClass="bg-muted"
           isActive={activeTab === "completed"}
           onClick={() => setActiveTab("completed")}
         />

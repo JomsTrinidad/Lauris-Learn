@@ -20,7 +20,8 @@
   --destructive-foreground: #ffffff;
   --border: #e2e8f0;
   --input-background: #ffffff;
-  --ring: #4a90e2;
+  /* --ring follows --theme-accent so focus rings use the theme colour, not primary */
+  --ring: var(--theme-accent);
   --radius: 0.75rem;
   --sidebar: #ffffff;
   --sidebar-foreground: #2d3748;
@@ -29,6 +30,12 @@
   --sidebar-accent: #f7fafc;
   --sidebar-accent-foreground: #2d3748;
   --sidebar-border: #e2e8f0;
+
+  /* ── Semantic theme tokens (calm-blue defaults; overridden at runtime by BrandingApplier) ── */
+  --theme-accent:        #2563a8;
+  --theme-accent-muted:  #dbeafe;
+  --theme-accent-subtle: #eff6ff;
+  --theme-indicator:     #2563a8;
 }
 
 @theme inline {

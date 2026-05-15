@@ -1876,7 +1876,7 @@ export default function StudentsPage() {
       {/* Page header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1>Students</h1>
+          <h1 className="text-[var(--theme-accent)]">Students</h1>
           <p className="text-muted-foreground text-sm mt-1">Manage student information and enrollment</p>
         </div>
         <div className="flex items-center gap-2">
@@ -2849,8 +2849,8 @@ export default function StudentsPage() {
                 {/* Personal Information */}
                 <div className="rounded-xl border border-border bg-card shadow-sm">
                   <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border">
-                    <div className="w-7 h-7 rounded-lg bg-blue-100 flex items-center justify-center shrink-0">
-                      <Users className="w-3.5 h-3.5 text-blue-600" />
+                    <div className="w-7 h-7 rounded-lg bg-[var(--theme-accent-muted)] flex items-center justify-center shrink-0">
+                      <Users className="w-3.5 h-3.5 text-[var(--theme-accent)]" />
                     </div>
                     <span className="text-sm font-semibold">Personal Information</span>
                   </div>
@@ -2877,8 +2877,8 @@ export default function StudentsPage() {
                 {/* Parent / Guardian */}
                 <div className="rounded-xl border border-border bg-card shadow-sm">
                   <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border">
-                    <div className="w-7 h-7 rounded-lg bg-emerald-100 flex items-center justify-center shrink-0">
-                      <UserCheck className="w-3.5 h-3.5 text-emerald-600" />
+                    <div className="w-7 h-7 rounded-lg bg-[var(--theme-accent-muted)] flex items-center justify-center shrink-0">
+                      <UserCheck className="w-3.5 h-3.5 text-[var(--theme-accent)]" />
                     </div>
                     <span className="text-sm font-semibold">Parent / Guardian</span>
                   </div>
@@ -2916,8 +2916,8 @@ export default function StudentsPage() {
                 {/* Health & Medical */}
                 <div className="rounded-xl border border-border bg-card shadow-sm">
                   <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border">
-                    <div className="w-7 h-7 rounded-lg bg-rose-100 flex items-center justify-center shrink-0">
-                      <Heart className="w-3.5 h-3.5 text-rose-500" />
+                    <div className="w-7 h-7 rounded-lg bg-[var(--theme-accent-muted)] flex items-center justify-center shrink-0">
+                      <Heart className="w-3.5 h-3.5 text-[var(--theme-accent)]" />
                     </div>
                     <span className="text-sm font-semibold">Health & Medical</span>
                   </div>
@@ -2952,8 +2952,8 @@ export default function StudentsPage() {
                 {/* Emergency Contact & Pickups */}
                 <div className="rounded-xl border border-border bg-card shadow-sm">
                   <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border">
-                    <div className="w-7 h-7 rounded-lg bg-amber-100 flex items-center justify-center shrink-0">
-                      <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                    <div className="w-7 h-7 rounded-lg bg-[var(--theme-accent-muted)] flex items-center justify-center shrink-0">
+                      <AlertTriangle className="w-3.5 h-3.5 text-[var(--theme-accent)]" />
                     </div>
                     <span className="text-sm font-semibold">Emergency Contact & Pickups</span>
                   </div>
@@ -2978,8 +2978,8 @@ export default function StudentsPage() {
                 {/* Notes */}
                 <div className="rounded-xl border border-border bg-card shadow-sm">
                   <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border">
-                    <div className="w-7 h-7 rounded-lg bg-violet-100 flex items-center justify-center shrink-0">
-                      <FileText className="w-3.5 h-3.5 text-violet-600" />
+                    <div className="w-7 h-7 rounded-lg bg-[var(--theme-accent-muted)] flex items-center justify-center shrink-0">
+                      <FileText className="w-3.5 h-3.5 text-[var(--theme-accent)]" />
                     </div>
                     <span className="text-sm font-semibold">Notes</span>
                   </div>
@@ -3195,8 +3195,8 @@ export default function StudentsPage() {
                 {/* Personal Information */}
                 <div className="rounded-xl border border-border bg-card shadow-sm">
                   <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border">
-                    <div className="w-7 h-7 rounded-lg bg-blue-100 flex items-center justify-center shrink-0">
-                      <Users className="w-3.5 h-3.5 text-blue-600" />
+                    <div className="w-7 h-7 rounded-lg bg-[var(--theme-accent-muted)] flex items-center justify-center shrink-0">
+                      <Users className="w-3.5 h-3.5 text-[var(--theme-accent)]" />
                     </div>
                     <span className="text-sm font-semibold">Personal Information</span>
                   </div>
@@ -3238,8 +3238,8 @@ export default function StudentsPage() {
                 {/* Parent / Guardian */}
                 <div className="rounded-xl border border-border bg-card shadow-sm">
                   <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border">
-                    <div className="w-7 h-7 rounded-lg bg-emerald-100 flex items-center justify-center shrink-0">
-                      <UserCheck className="w-3.5 h-3.5 text-emerald-600" />
+                    <div className="w-7 h-7 rounded-lg bg-[var(--theme-accent-muted)] flex items-center justify-center shrink-0">
+                      <UserCheck className="w-3.5 h-3.5 text-[var(--theme-accent)]" />
                     </div>
                     <span className="text-sm font-semibold">Parent / Guardian</span>
                   </div>
@@ -3281,8 +3281,8 @@ export default function StudentsPage() {
                 {/* Government Identifiers */}
                 <div className="rounded-xl border border-border bg-card shadow-sm">
                   <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border">
-                    <div className="w-7 h-7 rounded-lg bg-orange-100 flex items-center justify-center shrink-0">
-                      <Hash className="w-3.5 h-3.5 text-orange-600" />
+                    <div className="w-7 h-7 rounded-lg bg-[var(--theme-accent-muted)] flex items-center justify-center shrink-0">
+                      <Hash className="w-3.5 h-3.5 text-[var(--theme-accent)]" />
                     </div>
                     <span className="text-sm font-semibold">Government Identifiers</span>
                   </div>
@@ -3296,8 +3296,8 @@ export default function StudentsPage() {
                 {/* Health & Medical */}
                 <div className="rounded-xl border border-border bg-card shadow-sm">
                   <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border">
-                    <div className="w-7 h-7 rounded-lg bg-rose-100 flex items-center justify-center shrink-0">
-                      <Heart className="w-3.5 h-3.5 text-rose-500" />
+                    <div className="w-7 h-7 rounded-lg bg-[var(--theme-accent-muted)] flex items-center justify-center shrink-0">
+                      <Heart className="w-3.5 h-3.5 text-[var(--theme-accent)]" />
                     </div>
                     <span className="text-sm font-semibold">Health & Medical</span>
                   </div>
@@ -3326,8 +3326,8 @@ export default function StudentsPage() {
                 {/* Emergency Contact & Pickups */}
                 <div className="rounded-xl border border-border bg-card shadow-sm">
                   <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border">
-                    <div className="w-7 h-7 rounded-lg bg-amber-100 flex items-center justify-center shrink-0">
-                      <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                    <div className="w-7 h-7 rounded-lg bg-[var(--theme-accent-muted)] flex items-center justify-center shrink-0">
+                      <AlertTriangle className="w-3.5 h-3.5 text-[var(--theme-accent)]" />
                     </div>
                     <span className="text-sm font-semibold">Emergency Contact & Pickups</span>
                   </div>
@@ -3352,8 +3352,8 @@ export default function StudentsPage() {
                 {/* Notes */}
                 <div className="rounded-xl border border-border bg-card shadow-sm">
                   <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border">
-                    <div className="w-7 h-7 rounded-lg bg-violet-100 flex items-center justify-center shrink-0">
-                      <FileText className="w-3.5 h-3.5 text-violet-600" />
+                    <div className="w-7 h-7 rounded-lg bg-[var(--theme-accent-muted)] flex items-center justify-center shrink-0">
+                      <FileText className="w-3.5 h-3.5 text-[var(--theme-accent)]" />
                     </div>
                     <span className="text-sm font-semibold">Notes</span>
                   </div>
@@ -3372,8 +3372,8 @@ export default function StudentsPage() {
                 {/* Year-End Classification — admin-toned, visually distinct */}
                 <div className="rounded-xl border border-border bg-muted/40 shadow-sm">
                   <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border">
-                    <div className="w-7 h-7 rounded-lg bg-sky-100 flex items-center justify-center shrink-0">
-                      <GraduationCap className="w-3.5 h-3.5 text-sky-600" />
+                    <div className="w-7 h-7 rounded-lg bg-[var(--theme-accent-muted)] flex items-center justify-center shrink-0">
+                      <GraduationCap className="w-3.5 h-3.5 text-[var(--theme-accent)]" />
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-semibold">Year-End Classification</span>

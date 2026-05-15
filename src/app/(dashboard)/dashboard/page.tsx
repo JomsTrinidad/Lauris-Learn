@@ -501,7 +501,7 @@ export default function DashboardPage() {
       {/* Header */}
       <div className="flex items-start justify-between gap-4 pb-2">
         <div>
-          <h1>Dashboard</h1>
+          <h1 className="text-[var(--theme-accent)]">Dashboard</h1>
           {!activeYear && (
             <div className="mt-2 px-4 py-2 bg-yellow-50 border border-yellow-200 rounded-lg text-sm text-yellow-700">
               No active school year. Go to{" "}
@@ -532,8 +532,8 @@ export default function DashboardPage() {
             </button>
           )}
           <div className="text-right hidden sm:block">
-            <p className="text-base font-semibold text-foreground">{day}</p>
-            <p className="text-sm text-muted-foreground">{date}</p>
+            <p className="text-base font-semibold text-[var(--theme-accent)]">{day}</p>
+            <p className="text-sm text-[var(--theme-accent)] opacity-70">{date}</p>
           </div>
         </div>
       </div>
@@ -626,7 +626,7 @@ export default function DashboardPage() {
                   <p className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Total Students</p>
                   <p className="text-2xl font-bold mt-1">{totalEnrolled}</p>
                 </div>
-                <div className="bg-blue-500 p-2 rounded-lg text-white shrink-0">
+                <div className="bg-primary p-2 rounded-lg text-primary-foreground shrink-0">
                   <Users className="w-4 h-4" />
                 </div>
               </div>
@@ -657,7 +657,7 @@ export default function DashboardPage() {
                     {attendanceTrend === "up" ? "↑" : attendanceTrend === "down" ? "↓" : ""}
                   </p>
                 </div>
-                <div className="bg-green-500 p-2 rounded-lg text-white shrink-0">
+                <div className="bg-primary p-2 rounded-lg text-primary-foreground shrink-0">
                   <UserCheck className="w-4 h-4" />
                 </div>
               </div>
@@ -678,11 +678,7 @@ export default function DashboardPage() {
                     </p>
                   )}
                 </div>
-                <div
-                  className={`${
-                    (statsQuery.data?.overdueCount ?? 0) > 0 ? "bg-red-500" : "bg-orange-500"
-                  } p-2 rounded-lg text-white shrink-0`}
-                >
+                <div className="bg-primary p-2 rounded-lg text-primary-foreground shrink-0">
                   <AlertCircle className="w-4 h-4" />
                 </div>
               </div>
@@ -699,7 +695,7 @@ export default function DashboardPage() {
                   <p className="text-2xl font-bold mt-1">{statsQuery.data?.upcomingEvents ?? 0}</p>
                   <p className="text-xs text-muted-foreground mt-1">Next 30 days</p>
                 </div>
-                <div className="bg-purple-500 p-2 rounded-lg text-white shrink-0">
+                <div className="bg-primary p-2 rounded-lg text-primary-foreground shrink-0">
                   <Calendar className="w-4 h-4" />
                 </div>
               </div>
@@ -713,7 +709,7 @@ export default function DashboardPage() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between py-4 border-b border-border">
             <div>
-              <h2 className="text-base font-semibold">Classes Requiring Action</h2>
+              <h2 className="text-base font-semibold text-[var(--theme-accent)]">Classes Requiring Action</h2>
               <p className="text-xs text-muted-foreground mt-0.5">Mark attendance as classes meet</p>
             </div>
             <Link
@@ -882,7 +878,7 @@ export default function DashboardPage() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between py-4 border-b border-border">
             <div>
-              <h2 className="text-base font-semibold">Parent Communication</h2>
+              <h2 className="text-base font-semibold text-[var(--theme-accent)]">Parent Communication</h2>
               {lastUpdateAt && (
                 <p className="text-xs text-muted-foreground mt-0.5">
                   Last update {timeAgo(lastUpdateAt)}
@@ -930,7 +926,7 @@ export default function DashboardPage() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between py-4 border-b border-border">
             <div>
-              <h2 className="text-base font-semibold">Financial Watchlist</h2>
+              <h2 className="text-base font-semibold text-[var(--theme-accent)]">Financial Watchlist</h2>
               <p className="text-xs text-muted-foreground mt-0.5">Accounts requiring follow-up</p>
             </div>
             <Link
@@ -1031,7 +1027,7 @@ export default function DashboardPage() {
           <Card>
             <CardHeader className="flex flex-row items-center justify-between py-4 border-b border-border">
               <div>
-                <h2 className="text-base font-semibold">Student Support</h2>
+                <h2 className="text-base font-semibold text-[var(--theme-accent)]">Student Support</h2>
                 <p className="text-xs text-muted-foreground mt-0.5">Risk & growth</p>
               </div>
               <Link

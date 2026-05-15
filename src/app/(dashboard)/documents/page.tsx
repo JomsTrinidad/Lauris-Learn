@@ -249,7 +249,7 @@ export default function DocumentsPage() {
         <div>
           <div className="flex items-center gap-2">
             <FileText className="w-6 h-6 text-primary" />
-            <h1 className="text-2xl font-semibold">Document Coordination</h1>
+            <h1 className="text-2xl font-semibold text-[var(--theme-accent)]">Document Coordination</h1>
           </div>
           <p className="text-sm text-muted-foreground mt-1 max-w-2xl">
             IEPs, therapy reports, medical certificates, and other coordinated
@@ -526,9 +526,9 @@ function ViewTab({
       type="button"
       onClick={onClick}
       className={cn(
-        "inline-flex items-center gap-1.5 px-3 py-2 text-sm border-b-2 transition-colors -mb-px",
+        "inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors -mb-px",
         active
-          ? "border-primary text-foreground font-medium"
+          ? "border-primary text-primary"
           : "border-transparent text-muted-foreground hover:text-foreground",
       )}
     >

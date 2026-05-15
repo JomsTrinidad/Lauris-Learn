@@ -207,7 +207,7 @@ export default function FinancePage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1>Finance Setup</h1>
+        <h1 className="text-[var(--theme-accent)]">Finance Setup</h1>
         <p className="text-sm text-muted-foreground mt-1">Configure fee types, tuition rates, discounts, and student credits.</p>
       </div>
 

@@ -1516,7 +1516,7 @@ export default function EnrollmentPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1>Enrollment Hub</h1>
+          <h1 className="text-[var(--theme-accent)]">Enrollment Hub</h1>
           <p className="text-muted-foreground text-sm mt-1">Manage new admissions and returning student re-enrollment</p>
         </div>
         <div className="flex gap-2">

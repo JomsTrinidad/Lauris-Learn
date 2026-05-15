@@ -43,8 +43,8 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
   const [selectedChildId, setSelectedChildId] = useState<string | null>(null);
   const [schoolName, setSchoolName] = useState("");
   const [schoolId, setSchoolId] = useState<string | null>(null);
-  const [branding, setBranding] = useState<Pick<BrandingConfig, "primaryColor" | "accentColor" | "textSizeScale" | "spacingScale">>({
-    primaryColor: null, accentColor: null, textSizeScale: "default", spacingScale: "default",
+  const [branding, setBranding] = useState<Pick<BrandingConfig, "primaryColor" | "themeKey" | "textSizeScale" | "spacingScale">>({
+    primaryColor: null, themeKey: null, textSizeScale: "default", spacingScale: "default",
   });
   const [showMore, setShowMore] = useState(false);
   const mainRef = useRef<HTMLElement>(null);
@@ -120,7 +120,7 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
       setSchoolName((school as any)?.name ?? "");
       setBranding({
         primaryColor: (school as any)?.primary_color ?? null,
-        accentColor:  (school as any)?.accent_color  ?? null,
+        themeKey:     (school as any)?.accent_color  ?? null,
         textSizeScale: ((school as any)?.text_size_scale ?? "default") as BrandingConfig["textSizeScale"],
         spacingScale:  ((school as any)?.spacing_scale  ?? "default") as BrandingConfig["spacingScale"],
       });

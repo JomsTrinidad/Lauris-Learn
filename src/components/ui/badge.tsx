@@ -2,6 +2,7 @@ import { cn } from "@/lib/utils";
 
 type Variant =
   | "default"
+  | "info"
   | "enrolled" | "waitlisted" | "inquiry" | "withdrawn" | "completed"
   | "paid" | "partial" | "unpaid" | "overdue" | "cancelled" | "refunded" | "waived"
   | "present" | "late" | "absent" | "excused"
@@ -11,11 +12,13 @@ type Variant =
 
 const variantMap: Record<Variant, string> = {
   default:     "bg-gray-100 text-gray-700",
+  // Informational / theme-accented — driven by CSS variables so it follows the school's theme
+  info:        "bg-[var(--theme-accent-muted)] text-[var(--theme-accent)]",
   enrolled:    "bg-green-100 text-green-700",
   waitlisted:  "bg-yellow-100 text-yellow-700",
   inquiry:     "bg-blue-100 text-blue-700",
   withdrawn:   "bg-gray-100 text-gray-600",
-  completed:   "bg-purple-100 text-purple-700",
+  completed:   "bg-gray-100 text-gray-600",
   paid:        "bg-green-100 text-green-700",
   partial:     "bg-yellow-100 text-yellow-700",
   unpaid:      "bg-red-100 text-red-700",

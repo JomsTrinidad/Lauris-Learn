@@ -580,7 +580,7 @@ export default function ParentUpdatesPage() {
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1>Parent Updates</h1>
+          <h1 className="text-[var(--theme-accent)]">Parent Updates</h1>
           <p className="text-muted-foreground text-sm mt-1">Share updates with parents about class activities</p>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">

@@ -304,7 +304,7 @@ export default function AttendancePage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1>Attendance</h1>
+          <h1 className="text-[var(--theme-accent)]">Attendance</h1>
           <p className="text-muted-foreground text-sm mt-1">Quick and easy daily attendance tracking</p>
         </div>
         <button

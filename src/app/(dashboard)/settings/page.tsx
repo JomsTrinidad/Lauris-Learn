@@ -16,6 +16,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { PageSpinner, ErrorAlert } from "@/components/ui/spinner";
 import { createClient } from "@/lib/supabase/client";
 import { useSchoolContext } from "@/contexts/SchoolContext";
+import { THEMES, DEFAULT_THEME_KEY, resolveTheme } from "@/lib/themes";
 import { GetStartedGuide } from "@/components/GetStartedGuide";
 
 type SchoolYearStatus = "draft" | "active" | "archived" | "planned" | "closed";
@@ -80,7 +81,7 @@ const CLASS_LEVEL_KINDS: { value: ClassLevelKind; label: string; hint: string }[
   { value: "other",       label: "Other",       hint: "Anything else" },
 ];
 
-const SECTIONS = ["School Information", "Policies & Workflows", "School Year & Terms", "Holidays", "Teachers", "Class Levels", "Student IDs", "Grading", "Branding & Accessibility"] as const;
+const SECTIONS = ["School Information", "Policies & Workflows", "School Year & Terms", "Holidays", "Teachers", "Class Levels", "Student IDs", "Grading", "Accessibility"] as const;
 type Section = (typeof SECTIONS)[number];
 
 const SESSION_KEY = "settings_active_section";
@@ -88,8 +89,9 @@ const SESSION_KEY = "settings_active_section";
 function getSavedSection(): Section {
   if (typeof window === "undefined") return "School Information";
   const saved = sessionStorage.getItem(SESSION_KEY);
-  // Remap legacy section names after the Academic Periods merge
+  // Remap legacy section names
   if (saved === "School Years" || saved === "Academic Periods") return "School Year & Terms";
+  if (saved === "Branding & Accessibility") return "Accessibility";
   return (SECTIONS as readonly string[]).includes(saved ?? "") ? (saved as Section) : "School Information";
 }
 
@@ -153,7 +155,7 @@ interface ProgressCategory {
 
 interface BrandingForm {
   primaryColor: string;
-  accentColor: string;
+  themeKey: string;
   reportFooterText: string;
   textSizeScale: "default" | "large" | "extra_large";
   spacingScale: "compact" | "default" | "relaxed";
@@ -161,7 +163,7 @@ interface BrandingForm {
 
 const BRANDING_DEFAULTS: BrandingForm = {
   primaryColor: "#4a90e2",
-  accentColor: "#81c784",
+  themeKey: DEFAULT_THEME_KEY,
   reportFooterText: "",
   textSizeScale: "default",
   spacingScale: "default",
@@ -191,17 +193,19 @@ function contrastRatio(hex1: string, hex2: string): number {
 function BrandingPreview({ form }: { form: BrandingForm }) {
   const scale = form.textSizeScale === "extra_large" ? 1.22 : form.textSizeScale === "large" ? 1.09 : 1;
   const lh    = form.spacingScale  === "relaxed"     ? 1.85 : form.spacingScale  === "compact" ? 1.4 : 1.6;
+  const theme = resolveTheme(form.themeKey);
   return (
     <div
-      className="border border-border rounded-xl p-5 bg-muted/20 space-y-4"
+      className="border border-border rounded-xl p-5 bg-muted/20 space-y-4 pointer-events-none select-none"
       style={{ fontSize: `${scale}rem`, lineHeight: lh }}
     >
+      {/* Primary CTA buttons */}
       <div className="flex items-center gap-3">
         <span
           className="px-4 py-2 rounded-lg text-white font-medium text-sm"
           style={{ backgroundColor: form.primaryColor }}
         >
-          Save Changes
+          Enroll Student
         </span>
         <span
           className="px-4 py-2 rounded-lg font-medium text-sm border"
@@ -210,25 +214,43 @@ function BrandingPreview({ form }: { form: BrandingForm }) {
           Cancel
         </span>
       </div>
-      <p className="text-foreground">
-        This is how body text will appear in the parent portal and on student-facing pages. Readable text makes a difference for parents checking updates daily.
-      </p>
-      <div className="border border-border rounded-lg p-3 bg-card space-y-1">
+      {/* Sidebar active-item preview */}
+      <div className="rounded-lg overflow-hidden border border-border bg-card">
+        <div
+          className="flex items-center gap-2.5 px-3 py-2 text-sm font-medium"
+          style={{
+            boxShadow: `inset 3px 0 0 ${theme.accent}`,
+            backgroundColor: theme.accentSubtle,
+            color: theme.accent,
+          }}
+        >
+          <span className="w-3.5 h-3.5 rounded-sm bg-current opacity-60 flex-shrink-0" />
+          <span>Dashboard</span>
+        </div>
+        <div className="flex items-center gap-2.5 px-3 py-2 text-sm text-muted-foreground">
+          <span className="w-3.5 h-3.5 rounded-sm bg-muted-foreground/30 flex-shrink-0" />
+          <span>Students</span>
+        </div>
+      </div>
+      {/* Info badge + body text */}
+      <div className="border border-border rounded-lg p-3 bg-card space-y-1.5">
         <p className="font-semibold text-sm" style={{ color: form.primaryColor }}>
           Student Name · Class 1A
         </p>
         <p className="text-sm text-muted-foreground">Tuition — October 2025</p>
         <span
-          className="inline-block text-xs font-medium px-2 py-0.5 rounded-full text-white"
-          style={{ backgroundColor: form.accentColor }}
+          className="inline-block text-xs font-medium px-2 py-0.5 rounded-full"
+          style={{ backgroundColor: theme.accentMuted, color: theme.accent }}
         >
-          Paid
+          Draft
         </span>
       </div>
+      {/* Focus ring on input */}
       <input
         readOnly
         value="Sample form field — parent contact number"
-        className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background text-foreground"
+        className="w-full border rounded-lg px-3 py-2 text-sm bg-background text-foreground outline-none"
+        style={{ borderColor: theme.accent, boxShadow: `0 0 0 2px ${theme.accentMuted}` }}
       />
     </div>
   );
@@ -460,7 +482,7 @@ export default function SettingsPage() {
       setLogoUrl(cr.logo_url ?? null);
       setBrandingForm({
         primaryColor:    cr.primary_color     ?? BRANDING_DEFAULTS.primaryColor,
-        accentColor:     cr.accent_color      ?? BRANDING_DEFAULTS.accentColor,
+        themeKey:        resolveTheme(cr.accent_color).key,
         reportFooterText: cr.report_footer_text ?? "",
         textSizeScale:   cr.text_size_scale   ?? "default",
         spacingScale:    cr.spacing_scale     ?? "default",
@@ -1261,6 +1283,11 @@ export default function SettingsPage() {
     await load();
   }
 
+  // ── Toast ─────────────────────────────────────────────────────────────────
+
+  const [toast, setToast] = useState<string | null>(null);
+  function showToast(msg: string) { setToast(msg); setTimeout(() => setToast(null), 3500); }
+
   // ── Branding & Accessibility ──────────────────────────────────────────────
 
   async function saveBranding() {
@@ -1309,7 +1336,7 @@ export default function SettingsPage() {
         // previously saved logo when logoUrl state happens to be null on remount.
         ...(logoChanged ? { logo_url: newLogoUrl } : {}),
         primary_color:      brandingForm.primaryColor !== BRANDING_DEFAULTS.primaryColor ? brandingForm.primaryColor : null,
-        accent_color:       brandingForm.accentColor  !== BRANDING_DEFAULTS.accentColor  ? brandingForm.accentColor  : null,
+        accent_color:       brandingForm.themeKey     !== DEFAULT_THEME_KEY              ? brandingForm.themeKey     : null,
         report_footer_text: brandingForm.reportFooterText || null,
         text_size_scale:    brandingForm.textSizeScale,
         spacing_scale:      brandingForm.spacingScale,
@@ -1323,11 +1350,12 @@ export default function SettingsPage() {
         if (logoChanged) setLogoRemoved(false);
         patchBranding({
           ...(logoChanged ? { logoUrl: newLogoUrl } : {}),
-          primaryColor:  payload.primary_color as string | null,
-          accentColor:   payload.accent_color  as string | null,
+          primaryColor: payload.primary_color as string | null,
+          themeKey:     payload.accent_color  as string | null,
           textSizeScale: brandingForm.textSizeScale,
           spacingScale:  brandingForm.spacingScale,
         });
+        showToast("Changes applied — the new theme is live across the app.");
       }
     } finally {
       setBrandingSaving(false);
@@ -1336,13 +1364,13 @@ export default function SettingsPage() {
 
   async function resetBrandingToDefaults() {
     if (!schoolId || !confirm("Reset all branding to app defaults?")) return;
-    setBrandingForm((prev) => ({ ...prev, primaryColor: BRANDING_DEFAULTS.primaryColor, accentColor: BRANDING_DEFAULTS.accentColor, reportFooterText: "" }));
+    setBrandingForm((prev) => ({ ...prev, primaryColor: BRANDING_DEFAULTS.primaryColor, themeKey: BRANDING_DEFAULTS.themeKey, reportFooterText: "" }));
     setLogoUrl(null);
     setLogoFile(null);
     setLogoRemoved(false);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (supabase as any).from("schools").update({ logo_url: null, primary_color: null, accent_color: null, report_footer_text: null }).eq("id", schoolId);
-    patchBranding({ logoUrl: null, primaryColor: null, accentColor: null });
+    patchBranding({ logoUrl: null, primaryColor: null, themeKey: null });
   }
 
   async function resetAccessibilityToDefaults() {
@@ -1359,7 +1387,7 @@ export default function SettingsPage() {
   if (!schoolId) {
     return (
       <div className="space-y-4">
-        <h1>Settings</h1>
+        <h1 className="text-[var(--theme-accent)]">Settings</h1>
         <ErrorAlert message="Your account is not linked to a school yet. Ask your Super Admin to assign you to a school." />
       </div>
     );
@@ -1371,7 +1399,7 @@ export default function SettingsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1>Settings</h1>
+          <h1 className="text-[var(--theme-accent)]">Settings</h1>
           <p className="text-muted-foreground text-sm mt-1">Configure your school, school years, and holidays</p>
         </div>
         <div className="flex items-center gap-2">
@@ -1471,6 +1499,90 @@ export default function SettingsPage() {
                     </Button>
                   </div>
                 )}
+              </CardContent>
+            </Card>
+          )}
+
+          {activeSection === "School Information" && (
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <h3>School Identity</h3>
+                  <button
+                    onClick={resetBrandingToDefaults}
+                    className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-destructive transition-colors"
+                  >
+                    <RotateCcw className="w-3 h-3" /> Reset to defaults
+                  </button>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {brandingError && <ErrorAlert message={brandingError} />}
+
+                {/* Logo */}
+                <div>
+                  <label className="block text-sm font-medium mb-2">School Logo</label>
+                  <div className="flex items-start gap-4">
+                    <div className="w-20 h-20 rounded-xl border border-border flex items-center justify-center bg-muted overflow-hidden flex-shrink-0">
+                      {(logoFile || logoUrl) ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={logoFile ? URL.createObjectURL(logoFile) : logoUrl!}
+                          alt="School logo"
+                          className="w-full h-full object-contain p-1"
+                        />
+                      ) : (
+                        <span className="text-3xl select-none">🏫</span>
+                      )}
+                    </div>
+                    <div className="space-y-2">
+                      <label className="cursor-pointer">
+                        <input
+                          type="file"
+                          accept="image/png,image/jpeg,image/jpg,image/webp"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            if (file.size > 2 * 1024 * 1024) { setBrandingError("Logo must be under 2 MB."); return; }
+                            setBrandingError(null);
+                            setLogoFile(file);
+                          }}
+                        />
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-border rounded-lg text-sm hover:bg-accent cursor-pointer transition-colors">
+                          <Upload className="w-3.5 h-3.5" />
+                          {logoFile ? "Change logo" : logoUrl ? "Replace logo" : "Upload logo"}
+                        </span>
+                      </label>
+                      {(logoUrl || logoFile) && (
+                        <button
+                          onClick={() => { setLogoUrl(null); setLogoFile(null); setLogoRemoved(true); }}
+                          className="block text-xs text-muted-foreground hover:text-destructive transition-colors"
+                        >
+                          Remove logo
+                        </button>
+                      )}
+                      <p className="text-xs text-muted-foreground">PNG, JPG, or WEBP · Max 2 MB · Displayed in the sidebar and parent portal header.</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Report footer */}
+                <div>
+                  <label className="block text-sm font-medium mb-1">Report Footer Text</label>
+                  <Textarea
+                    value={brandingForm.reportFooterText}
+                    onChange={(e) => setBrandingForm({ ...brandingForm, reportFooterText: e.target.value })}
+                    placeholder={"e.g. Sunshine Learning Center · Tel: 09XXXXXXXXX\nRegistered address: 123 Main St, City"}
+                    rows={4}
+                    className="resize-none"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">Printed at the bottom of billing statements and progress reports.</p>
+                </div>
+
+                <div className="flex justify-end pt-2">
+                  <Button onClick={saveBranding} disabled={saving}>{saving ? "Saving…" : "Save Changes"}</Button>
+                </div>
               </CardContent>
             </Card>
           )}
@@ -2216,22 +2328,22 @@ export default function SettingsPage() {
             </>
           )}
 
-          {/* ── Branding & Accessibility ── */}
-          {activeSection === "Branding & Accessibility" && (
+          {/* ── Accessibility ── */}
+          {activeSection === "Accessibility" && (
             <div className="space-y-6">
               <div>
-                <h2>Branding &amp; Accessibility</h2>
+                <h2>Accessibility</h2>
                 <p className="text-sm text-muted-foreground mt-1">
-                  Customize your school&apos;s colors and logo, and adjust readability settings for parents and staff.
+                  Customize your school&apos;s colors and theme, and adjust readability settings for parents and staff.
                 </p>
               </div>
               {brandingError && <ErrorAlert message={brandingError} />}
 
-              {/* A. Branding */}
+              {/* Colors & Theme */}
               <Card>
                 <CardHeader>
                   <div className="flex items-center justify-between">
-                    <h3>Branding</h3>
+                    <h3>Colors &amp; Theme</h3>
                     <button
                       onClick={resetBrandingToDefaults}
                       className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-destructive transition-colors"
@@ -2242,98 +2354,81 @@ export default function SettingsPage() {
                 </CardHeader>
                 <CardContent className="space-y-6">
 
-                  {/* Logo */}
+                  {/* Primary color */}
                   <div>
-                    <label className="block text-sm font-medium mb-2">School Logo</label>
-                    <div className="flex items-start gap-4">
-                      <div className="w-20 h-20 rounded-xl border border-border flex items-center justify-center bg-muted overflow-hidden flex-shrink-0">
-                        {(logoFile || logoUrl) ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={logoFile ? URL.createObjectURL(logoFile) : logoUrl!}
-                            alt="School logo"
-                            className="w-full h-full object-contain p-1"
-                          />
-                        ) : (
-                          <span className="text-3xl select-none">🏫</span>
-                        )}
-                      </div>
-                      <div className="space-y-2">
-                        <label className="cursor-pointer">
-                          <input
-                            type="file"
-                            accept="image/png,image/jpeg,image/jpg,image/webp"
-                            className="hidden"
-                            onChange={(e) => {
-                              const file = e.target.files?.[0];
-                              if (!file) return;
-                              if (file.size > 2 * 1024 * 1024) { setBrandingError("Logo must be under 2 MB."); return; }
-                              setBrandingError(null);
-                              setLogoFile(file);
-                            }}
-                          />
-                          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-border rounded-lg text-sm hover:bg-accent cursor-pointer transition-colors">
-                            <Upload className="w-3.5 h-3.5" />
-                            {logoFile ? "Change logo" : logoUrl ? "Replace logo" : "Upload logo"}
-                          </span>
-                        </label>
-                        {(logoUrl || logoFile) && (
+                    <label className="block text-sm font-medium mb-2">Primary Color</label>
+                    <p className="text-xs text-muted-foreground mb-2">Your school&apos;s main brand color — used for CTA buttons, links, and core highlights.</p>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="color"
+                        value={brandingForm.primaryColor}
+                        onChange={(e) => setBrandingForm({ ...brandingForm, primaryColor: e.target.value })}
+                        className="w-10 h-9 rounded border border-border cursor-pointer flex-shrink-0 p-0.5"
+                      />
+                      <Input
+                        value={brandingForm.primaryColor}
+                        maxLength={7}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (/^#[0-9A-Fa-f]{0,6}$/.test(v)) setBrandingForm({ ...brandingForm, primaryColor: v });
+                        }}
+                        className="font-mono text-xs w-32"
+                      />
+                    </div>
+                    {brandingForm.primaryColor.length === 7 && contrastRatio(brandingForm.primaryColor, "#ffffff") < 3 && (
+                      <p className="text-xs text-amber-600 mt-1">⚠ Low contrast — may be hard to read on white backgrounds.</p>
+                    )}
+                  </div>
+
+                  {/* Theme preset */}
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Theme</label>
+                    <p className="text-xs text-muted-foreground mb-3">
+                      Controls the app&apos;s overall tone — nav indicator, focus rings, and accent surfaces.
+                      Selecting a theme sets a matching primary color; adjust it above if you prefer a custom shade.
+                    </p>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                      {THEMES.map((theme) => {
+                        const isSelected = brandingForm.themeKey === theme.key;
+                        return (
                           <button
-                            onClick={() => { setLogoUrl(null); setLogoFile(null); setLogoRemoved(true); }}
-                            className="block text-xs text-muted-foreground hover:text-destructive transition-colors"
+                            key={theme.key}
+                            type="button"
+                            onClick={() => setBrandingForm({ ...brandingForm, themeKey: theme.key, primaryColor: theme.recommendedPrimary })}
+                            className={`relative flex items-center gap-3 p-3 rounded-xl border-2 text-left transition-colors ${
+                              isSelected
+                                ? "border-primary bg-primary/5"
+                                : "border-border hover:border-muted-foreground/40"
+                            }`}
                           >
-                            Remove logo
+                            {/* Mini app-chrome preview: top = sidebar active row, bottom = primary button */}
+                            <div className="w-9 h-9 rounded-lg flex-shrink-0 border border-border/50 overflow-hidden flex flex-col">
+                              <div
+                                className="flex-1 flex items-center px-1.5 gap-1"
+                                style={{ backgroundColor: theme.accentSubtle, boxShadow: `inset 2px 0 0 ${theme.accent}` }}
+                              >
+                                <div className="w-1.5 h-1.5 rounded-[2px] flex-shrink-0" style={{ backgroundColor: theme.accent, opacity: 0.85 }} />
+                                <div className="h-1 rounded-full flex-1" style={{ backgroundColor: theme.accent, opacity: 0.35 }} />
+                              </div>
+                              <div className="h-3 flex items-center px-1.5 bg-[#f1f5f9]">
+                                <div className="w-full h-1.5 rounded-sm" style={{ backgroundColor: theme.recommendedPrimary }} />
+                              </div>
+                            </div>
+                            <div className="min-w-0">
+                              <div className={`text-xs font-semibold leading-tight ${isSelected ? "text-primary" : "text-foreground"}`}>
+                                {theme.name}
+                              </div>
+                              <div className="text-xs text-muted-foreground leading-tight mt-0.5">{theme.description}</div>
+                            </div>
+                            {isSelected && (
+                              <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-primary" />
+                            )}
                           </button>
-                        )}
-                        <p className="text-xs text-muted-foreground">PNG, JPG, or WEBP · Max 2 MB · Displayed in the sidebar and parent portal header.</p>
-                      </div>
+                        );
+                      })}
                     </div>
                   </div>
 
-                  {/* Colors */}
-                  <div className="grid grid-cols-2 gap-6">
-                    {(["primaryColor", "accentColor"] as const).map((field) => {
-                      const label = field === "primaryColor" ? "Primary Color" : "Accent Color";
-                      const hex = brandingForm[field];
-                      const lowContrast = field === "primaryColor" && hex.length === 7 && contrastRatio(hex, "#ffffff") < 3;
-                      return (
-                        <div key={field}>
-                          <label className="block text-sm font-medium mb-2">{label}</label>
-                          <div className="flex items-center gap-2">
-                            <input
-                              type="color"
-                              value={hex}
-                              onChange={(e) => setBrandingForm({ ...brandingForm, [field]: e.target.value })}
-                              className="w-10 h-9 rounded border border-border cursor-pointer flex-shrink-0 p-0.5"
-                            />
-                            <Input
-                              value={hex}
-                              maxLength={7}
-                              onChange={(e) => {
-                                const v = e.target.value;
-                                if (/^#[0-9A-Fa-f]{0,6}$/.test(v)) setBrandingForm({ ...brandingForm, [field]: v });
-                              }}
-                              className="font-mono text-xs"
-                            />
-                          </div>
-                          {lowContrast && (
-                            <p className="text-xs text-amber-600 mt-1">⚠ Low contrast — may be hard to read on white backgrounds.</p>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  {/* Report footer */}
-                  <div>
-                    <label className="block text-sm font-medium mb-1">Report Footer Text</label>
-                    <Input
-                      value={brandingForm.reportFooterText}
-                      onChange={(e) => setBrandingForm({ ...brandingForm, reportFooterText: e.target.value })}
-                      placeholder="e.g. Sunshine Learning Center · Tel: 09XXXXXXXXX"
-                    />
-                    <p className="text-xs text-muted-foreground mt-1">Printed at the bottom of billing statements and progress reports.</p>
-                  </div>
                 </CardContent>
               </Card>
 
@@ -2408,7 +2503,10 @@ export default function SettingsPage() {
 
                   {/* Live preview */}
                   <div>
-                    <label className="block text-sm font-medium mb-3">Live Preview</label>
+                    <div className="flex items-center gap-2 mb-3">
+                      <label className="text-sm font-medium">Live Preview</label>
+                      <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-muted text-muted-foreground uppercase tracking-wider">Not interactive</span>
+                    </div>
                     <BrandingPreview form={brandingForm} />
                   </div>
                 </CardContent>
@@ -2706,13 +2804,11 @@ export default function SettingsPage() {
                       <div className="space-y-2">
                         <p>Customize how the app looks for your school — changes apply immediately across the admin and parent portal.</p>
                         <div className="space-y-2 mt-2">
-                          <Step n={1} text={<span>Click <strong>Branding &amp; Accessibility</strong> in the left nav.</span>} />
-                          <Step n={2} text={<span><strong>Logo</strong> — click the school logo area to upload an image (JPG/PNG, compressed automatically).</span>} />
-                          <Step n={3} text={<span><strong>Primary Color</strong> — the main UI color (buttons, active states, links). Use your school's brand color.</span>} />
-                          <Step n={4} text={<span><strong>Accent Color</strong> — secondary color used for highlights and badges.</span>} />
-                          <Step n={5} text={<span><strong>Text Size</strong> and <strong>Spacing</strong> — accessibility adjustments for parents who find the default size hard to read. Default → Large → Extra Large.</span>} />
-                          <Step n={6} text={<span>Check the <strong>Live Preview</strong> at the bottom before saving.</span>} />
-                          <Step n={7} text={<span>Click <strong>Save Changes</strong>.</span>} />
+                          <Step n={1} text={<span><strong>Logo &amp; Report Footer</strong> — in <strong>School Information → School Identity</strong>. Upload your logo (JPG/PNG) and set the footer text for printed reports.</span>} />
+                          <Step n={2} text={<span><strong>Primary Color &amp; Theme</strong> — in <strong>Accessibility → Colors &amp; Theme</strong>. Choose a curated theme to set the app&apos;s overall tone; themes auto-suggest a matching primary color you can override.</span>} />
+                          <Step n={3} text={<span><strong>Text Size</strong> and <strong>Spacing</strong> — in <strong>Accessibility → Readability Settings</strong>. Helps parents who find the default text size hard to read.</span>} />
+                          <Step n={4} text={<span>Check the <strong>Live Preview</strong> before saving.</span>} />
+                          <Step n={5} text={<span>Click <strong>Save Changes</strong>.</span>} />
                         </div>
                         <Tip>If the colors look off in the live preview, use the contrast indicator to ensure text remains readable. A contrast ratio below 4.5:1 fails accessibility standards.</Tip>
                       </div>
@@ -3338,6 +3434,13 @@ export default function SettingsPage() {
         </div>
       </Modal>
 
+      {/* ── Toast ── */}
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-foreground text-background text-sm font-medium px-5 py-3 rounded-xl shadow-lg animate-in fade-in slide-in-from-bottom-2">
+          <Check className="w-4 h-4 flex-shrink-0 text-green-400" />
+          {toast}
+        </div>
+      )}
     </div>
   );
 }

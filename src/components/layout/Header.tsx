@@ -92,7 +92,7 @@ export function Header({
           </Link>
         ) : (
           !sidebarOpen && schoolName && (
-            <span className="hidden sm:block text-sm font-semibold text-foreground">{schoolName}</span>
+            <span className="hidden sm:block text-sm font-bold text-[var(--theme-accent)]">{schoolName}</span>
           )
         )}
       </div>
@@ -160,7 +160,7 @@ export function Header({
               }
             </div>
             <div className="hidden sm:block text-left">
-              <p className="text-sm font-medium leading-tight">{userName}</p>
+              <p className="text-sm font-medium leading-tight text-[var(--theme-accent)]">{userName}</p>
               <p className="text-xs text-muted-foreground leading-tight">{userRole}</p>
             </div>
             <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />

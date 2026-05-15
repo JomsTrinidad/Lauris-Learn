@@ -219,25 +219,26 @@ function attendanceStatus(studentIdx: number, dayIdx: number): "present" | "late
 }
 
 // Deterministic billing status based on month index (0=oldest)
+// Tuned for a healthy demo narrative: prior months almost fully cleared,
+// only a modest outstanding tail on the most recent month.
 function billingStatus(monthIdx: number, totalMonths: number, studentIdx: number): "unpaid" | "partial" | "paid" | "overdue" {
-  const recency = totalMonths - 1 - monthIdx; // 0=oldest, higher=more recent
+  const recency = totalMonths - 1 - monthIdx; // 0 = most recent month
   const variant = (studentIdx * 11 + monthIdx * 7) % 10;
   if (recency >= 2) {
-    // older months: mostly paid
-    return variant < 8 ? "paid" : "partial";
+    // older months: nearly all collected
+    return variant < 9 ? "paid" : "partial";
   }
   if (recency === 1) {
-    // one month back: mixed
-    if (variant < 5) return "paid";
-    if (variant < 7) return "partial";
-    if (variant < 9) return "unpaid";
-    return "overdue";
+    // one month back: mostly paid, a few still outstanding, none overdue
+    if (variant < 7) return "paid";
+    if (variant < 9) return "partial";
+    return "unpaid";
   }
-  // current month: mostly unpaid/partial
-  if (variant < 3) return "paid";
-  if (variant < 6) return "partial";
+  // most recent month: healthy rate — majority paid/partial, small unpaid tail
+  if (variant < 5) return "paid";
+  if (variant < 8) return "partial";
   if (variant < 9) return "unpaid";
-  return "overdue";
+  return "overdue"; // at most 1-in-10 on the newest month only
 }
 
 // ─── Scenario configs ─────────────────────────────────────────────────────────
@@ -863,8 +864,10 @@ export async function generateDemoData(
         const amountDue = tuition + 500;
         activeMonths.forEach((month, mIdx) => {
           const bStatus = mIdx === 0
-            ? (i % 3 === 0 ? "paid" : i % 3 === 1 ? "partial" : "unpaid")
-            : "unpaid";
+            // June (prior month): mostly settled — 67% paid, 33% partial
+            ? (i % 3 < 2 ? "paid" : "partial")
+            // July (current month): actively being collected — 40% paid, 40% partial, 20% unpaid
+            : (i % 5 < 2 ? "paid" : i % 5 < 4 ? "partial" : "unpaid");
           activeBillingRows.push({
             school_id: schoolId,
             student_id: enr.student_id,

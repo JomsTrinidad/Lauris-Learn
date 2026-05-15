@@ -554,7 +554,7 @@ export default function ProgressPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1>Progress Tracking</h1>
+          <h1 className="text-[var(--theme-accent)]">Progress Tracking</h1>
           <p className="text-muted-foreground text-sm mt-1">Track student growth across developmental domains</p>
         </div>
         <div className="flex items-center gap-2">

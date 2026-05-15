@@ -27,7 +27,8 @@ export interface ActiveYear {
 export interface BrandingConfig {
   logoUrl: string | null;
   primaryColor: string | null;
-  accentColor: string | null;
+  /** Curated theme preset key (e.g. "calm-blue"). Stored in schools.accent_color column. */
+  themeKey: string | null;
   textSizeScale: "default" | "large" | "extra_large";
   spacingScale: "compact" | "default" | "relaxed";
 }
@@ -66,7 +67,7 @@ export interface SchoolContextValue {
 const DEFAULT_BRANDING: BrandingConfig = {
   logoUrl: null,
   primaryColor: null,
-  accentColor: null,
+  themeKey: null,
   textSizeScale: "default",
   spacingScale: "default",
 };
@@ -234,7 +235,7 @@ export function SchoolProvider({ children }: { children: ReactNode }) {
         branding: {
           logoUrl: (school as any)?.logo_url ?? null,
           primaryColor: (school as any)?.primary_color ?? null,
-          accentColor: (school as any)?.accent_color ?? null,
+          themeKey: (school as any)?.accent_color ?? null,
           textSizeScale: ((school as any)?.text_size_scale ?? "default") as BrandingConfig["textSizeScale"],
           spacingScale: ((school as any)?.spacing_scale ?? "default") as BrandingConfig["spacingScale"],
         },

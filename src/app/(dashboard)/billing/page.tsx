@@ -781,7 +781,7 @@ export default function BillingPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1>Billing</h1>
+          <h1 className="text-[var(--theme-accent)]">Billing</h1>
           <p className="text-muted-foreground text-sm mt-1">Track tuition payments and billing setup</p>
         </div>
         <div className="flex gap-2">
