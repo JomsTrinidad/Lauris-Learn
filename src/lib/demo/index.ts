@@ -731,6 +731,29 @@ export async function generateDemoData(
   });
   await batchInsert(admin, "enrollments", enrollRows);
 
+  // Backfill student_class_assignments for archived-year enrollments.
+  {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: arcEnrollData } = await (admin as any)
+      .from("enrollments")
+      .select("id, student_id, class_id, school_year_id, enrolled_at")
+      .eq("school_year_id", archivedYearId)
+      .in("student_id", studentIds);
+    if (arcEnrollData?.length) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await batchInsert(admin, "student_class_assignments", (arcEnrollData as any[]).map((e) => ({
+        enrollment_id:   e.id,
+        class_id:        e.class_id,
+        student_id:      e.student_id,
+        school_year_id:  e.school_year_id,
+        assignment_kind: "initial",
+        start_date:      (e.enrolled_at ?? "2025-06-01").slice(0, 10),
+        end_date:        null,
+        change_reason:   "Seeded by demo",
+      })));
+    }
+  }
+
   // ── 11.5. Year-end classifications on archived year enrollments ─────────────
   // Pre-classify students so the demo shows realistic year-end outcomes.
   // Indices 0–3 get specific special cases; everyone else is eligible.
@@ -804,6 +827,32 @@ export async function generateDemoData(
   if (activeEnrollRows.length) {
     await batchInsert(admin, "enrollments", activeEnrollRows);
 
+    // Backfill student_class_assignments for active-year enrollments.
+    // Use today's date so attendance queries can find students immediately,
+    // regardless of the school year's nominal start date.
+    {
+      const today = new Date().toISOString().slice(0, 10);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: actEnrollData } = await (admin as any)
+        .from("enrollments")
+        .select("id, student_id, class_id, school_year_id")
+        .eq("school_year_id", schoolYearId)
+        .in("student_id", studentIds);
+      if (actEnrollData?.length) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await batchInsert(admin, "student_class_assignments", (actEnrollData as any[]).map((e) => ({
+          enrollment_id:   e.id,
+          class_id:        e.class_id,
+          student_id:      e.student_id,
+          school_year_id:  e.school_year_id,
+          assignment_kind: "initial",
+          start_date:      today,
+          end_date:        null,
+          change_reason:   "Seeded by demo",
+        })));
+      }
+    }
+
     if (!cfg.trialNewMode) {
       // Add 2 billing months for the active year to show ongoing payments
       const activeMonths = ["2026-06-01", "2026-07-01"];
@@ -857,6 +906,82 @@ export async function generateDemoData(
       });
       if (activePayRows.length) await batchInsert(admin, "payments", activePayRows, 150);
       activeEnrollPaymentCount = activePayRows.length;
+    }
+  }
+
+  // ── 11.7. New-student entry-level enrollment (active year) ─────────────────
+  // One genuinely new student at the entry level (Toddler, Nursery, etc.) —
+  // not promoted from the archived year. Demonstrates the new-student path in
+  // the Enrollment Hub (shows up as status='enrolled' in enrollment_inquiries).
+  {
+    // Entry level = the level that no other class promotes INTO.
+    const allNextLevels = new Set(cfg.classes.map((c) => c.nextLevel));
+    const entryClassIdx = cfg.classes.findIndex((c) => !allNextLevels.has(c.level));
+    const entryNextClassId = entryClassIdx >= 0 ? nextClassIds[entryClassIdx] : null;
+
+    if (entryNextClassId) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: newStuData } = await (admin as any)
+        .from("students")
+        .insert({
+          school_id:     schoolId,
+          first_name:    "Sofia",
+          last_name:     "Cruz",
+          date_of_birth: "2023-03-15",
+          gender:        "Female",
+          is_active:     true,
+        })
+        .select("id")
+        .single();
+      const newStudentId: string | null = (newStuData as any)?.id ?? null;
+
+      if (newStudentId) {
+        const today = new Date().toISOString().slice(0, 10);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: newEnrollData } = await (admin as any)
+          .from("enrollments")
+          .insert({
+            student_id:         newStudentId,
+            class_id:           entryNextClassId,
+            school_year_id:     schoolYearId,
+            academic_period_id: regularPeriodId,
+            status:             "enrolled",
+            enrolled_at:        new Date().toISOString(),
+          })
+          .select("id")
+          .single();
+        const newEnrollId: string | null = (newEnrollData as any)?.id ?? null;
+
+        if (newEnrollId) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (admin as any).from("student_class_assignments").insert({
+            enrollment_id:   newEnrollId,
+            class_id:        entryNextClassId,
+            student_id:      newStudentId,
+            school_year_id:  schoolYearId,
+            assignment_kind: "initial",
+            start_date:      today,
+            end_date:        null,
+            change_reason:   "Seeded by demo — new student",
+          });
+        }
+
+        // Enrollment inquiry at status='enrolled' so the Enrollment Hub shows
+        // this student as a new inbound walk-in.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (admin as any).from("enrollment_inquiries").insert({
+          school_id:      schoolId,
+          child_name:     "Sofia Cruz",
+          parent_name:    "Maria Cruz",
+          contact:        "09181234567",
+          email:          `new.entry.${batchId}@example.com`,
+          desired_class:  cfg.classes[entryClassIdx].name,
+          school_year_id: schoolYearId,
+          inquiry_source: "walk-in",
+          status:         "enrolled",
+          notes:          "New student. First time enrolling.",
+        });
+      }
     }
   }
 

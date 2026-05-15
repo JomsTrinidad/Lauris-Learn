@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient as createServerClient } from "@/lib/supabase/server";
-import { createAdminClient, insertAuditLog } from "@/lib/supabase/admin";
+import { createAdminClient, insertAuditLog, insertEnrollmentTransition } from "@/lib/supabase/admin";
 
 const VALID_CLASSIFICATIONS = [
   "eligible",
@@ -89,9 +89,9 @@ export async function POST(req: NextRequest) {
   const uniqueEnrollmentIds = [...new Set(parsedClassify.map((r) => r.enrollmentId))];
   const { data: validEnrollments } = await admin
     .from("enrollments")
-    .select("id, students!inner(school_id)")
+    .select("id, school_year_id, students!inner(school_id)")
     .in("id", uniqueEnrollmentIds) as {
-      data: Array<{ id: string; students: { school_id: string } }> | null;
+      data: Array<{ id: string; school_year_id: string; students: { school_id: string } }> | null;
     };
 
   const validEnrollSet = new Set(
@@ -105,6 +105,24 @@ export async function POST(req: NextRequest) {
       { error: `Enrollment for "${invalidEnroll.studentName}" does not belong to your school.` },
       { status: 403 }
     );
+  }
+
+  // Year-end classification is only allowed on the active school year.
+  // Classifying historical enrollments would corrupt the progression record.
+  const uniqueYearIds = [...new Set((validEnrollments ?? []).map((e) => e.school_year_id))];
+  if (uniqueYearIds.length > 0) {
+    const { data: yearRows } = await admin
+      .from("school_years")
+      .select("id, status")
+      .in("id", uniqueYearIds) as { data: Array<{ id: string; status: string }> | null };
+
+    const nonActive = (yearRows ?? []).find((y) => y.status !== "active");
+    if (nonActive) {
+      return NextResponse.json(
+        { error: "Year-end classification is only allowed for the active school year." },
+        { status: 422 }
+      );
+    }
   }
 
   // --- All validation passed — process classifications ---
@@ -142,6 +160,15 @@ export async function POST(req: NextRequest) {
           progression_status: row.classificationStatus,
           source:             "year_end_classification",
         },
+      });
+      await insertEnrollmentTransition(admin, {
+        enrollmentId:           row.enrollmentId,
+        transitionKind:         "progression_classified",
+        fromStatus:             "enrolled",
+        toStatus:               enrollmentStatus,
+        toProgressionStatus:    row.classificationStatus,
+        changedBy:              user.id,
+        changeReason:           row.notes || null,
       });
     }
   }

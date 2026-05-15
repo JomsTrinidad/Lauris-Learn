@@ -9,7 +9,7 @@ import {
   Link as LinkIcon, Copy, Check, BookOpen,
   ArrowRight, RefreshCw, Users, GraduationCap,
   HelpCircle, AlertTriangle, ChevronRight, X, UserPlus, UserCheck, FileText,
-  Share2, MoreHorizontal, Printer,
+  Share2, MoreHorizontal, Printer, Heart, Hash,
 } from "lucide-react";
 import { DatePicker } from "@/components/ui/datepicker";
 import { AvatarUpload } from "@/components/ui/avatar-upload";
@@ -31,6 +31,7 @@ import { ShareIdentityWithClinicModal } from "@/features/clinic-sharing/ShareIde
 import { getSchoolOrganizationId } from "@/features/clinic-sharing/queries";
 import { useStudentsList, useStudentsClasses } from "@/lib/hooks";
 import { reportError, generateRequestId } from "@/lib/monitoring";
+import { insertEnrollmentTransitionClient } from "@/lib/enrollment-transitions";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -57,8 +58,70 @@ function calcAge(dob: string | null): string {
   if (months < 0) { years--; months += 12; }
   if (years < 0) return "—";
   if (years === 0) return `${months} mo${months !== 1 ? "s" : ""}`;
-  if (months === 0) return `${years} yr${years !== 1 ? "s" : ""}`;
-  return `${years} yr${years !== 1 ? "s" : ""} ${months} mo`;
+  return `${years} yr${years !== 1 ? "s" : ""} ${months} mo${months !== 1 ? "s" : ""}`;
+}
+
+function diffYM(fromStr: string, toStr: string): { years: number; months: number } {
+  const f = new Date(fromStr + "T00:00:00");
+  const t = new Date(toStr + "T00:00:00");
+  let years = t.getFullYear() - f.getFullYear();
+  let months = t.getMonth() - f.getMonth();
+  if (t.getDate() < f.getDate()) months--;
+  if (months < 0) { years--; months += 12; }
+  return { years: Math.max(0, years), months: Math.max(0, months) };
+}
+
+function fmtYM(years: number, months: number): string {
+  if (years === 0 && months === 0) return "< 1 mo";
+  if (years === 0) return `${months} mo${months !== 1 ? "s" : ""}`;
+  return `${years} yr${years !== 1 ? "s" : ""} ${months} mo${months !== 1 ? "s" : ""}`;
+}
+
+function calcTenure(
+  enrollments: EnrollmentEntry[],
+  schoolYears: { id: string; startDate: string; endDate: string }[],
+): { text: string; gapText: string | null } {
+  if (enrollments.length === 0) return { text: "—", gapText: null };
+
+  const syMap = new Map(schoolYears.map((sy) => [sy.id, sy]));
+  const today = new Date().toISOString().slice(0, 10);
+
+  // Resolve date intervals — enrollment dates take priority, school year dates are the fallback
+  const intervals = enrollments
+    .map((e) => {
+      const sy = syMap.get(e.schoolYearId);
+      const start = e.startDate ?? sy?.startDate ?? null;
+      const end = e.status === "enrolled" ? today : (e.endDate ?? sy?.endDate ?? null);
+      if (!start || !end) return null;
+      return { start, end };
+    })
+    .filter((i): i is { start: string; end: string } => i !== null)
+    .sort((a, b) => a.start.localeCompare(b.start));
+
+  if (intervals.length === 0) return { text: "—", gapText: null };
+
+  const { years, months } = diffYM(intervals[0].start, intervals[intervals.length - 1].end);
+  if (years < 0) return { text: "—", gapText: null };
+  const text = fmtYM(years, months);
+
+  // Gaps: any break between consecutive intervals longer than 90 days (more than a summer break)
+  let totalGapDays = 0;
+  let gapCount = 0;
+  for (let i = 0; i < intervals.length - 1; i++) {
+    const prevEnd = new Date(intervals[i].end + "T00:00:00");
+    const nextStart = new Date(intervals[i + 1].start + "T00:00:00");
+    const gapDays = (nextStart.getTime() - prevEnd.getTime()) / 86_400_000;
+    if (gapDays > 90) { totalGapDays += gapDays; gapCount++; }
+  }
+
+  let gapText: string | null = null;
+  if (gapCount > 0) {
+    const gapMonths = Math.round(totalGapDays / 30.44);
+    const gd = fmtYM(Math.floor(gapMonths / 12), gapMonths % 12);
+    gapText = gapCount === 1 ? `${gd} gap` : `${gapCount} gaps (${gd} total)`;
+  }
+
+  return { text, gapText };
 }
 
 interface AcademicPeriod { id: string; name: string; }
@@ -419,7 +482,7 @@ function RowMenu({
 }
 
 export default function StudentsPage() {
-  const { schoolId, schoolName, activeYear, userId, userRole, isReadOnly, allSchoolYears: schoolYearList } = useSchoolContext();
+  const { schoolId, schoolName, activeYear, viewingYear: ctxViewingYear, userId, userRole, isReadOnly, allSchoolYears: schoolYearList } = useSchoolContext();
   const supabase = createClient();
   const queryClient = useQueryClient();
   const router = useRouter();
@@ -430,7 +493,7 @@ export default function StudentsPage() {
 
   // Use cached query hooks for students and classes
   const studentsQuery = useStudentsList(schoolId);
-  const classesQuery = useStudentsClasses(schoolId, activeYear?.id || null);
+  const classesQuery = useStudentsClasses(schoolId, (ctxViewingYear?.id ?? activeYear?.id) || null);
 
   // Helper to invalidate both students and classes queries
   const invalidateAll = useCallback(() => {
@@ -536,6 +599,15 @@ export default function StudentsPage() {
   const [promoteResult, setPromoteResult] = useState<ClassifyResult | null>(null);
   const [selectedClassId, setSelectedClassId] = useState("");
 
+  // Year completion snapshots (historical view only)
+  // Keyed by student_id; populated when viewing a closed historical year.
+  const [yearCompletions, setYearCompletions] = useState<Record<string, {
+    completionStatus: string;
+    progressionStatus: string | null;
+    finalClassName: string | null;
+    finalLevelName: string | null;
+  }>>({});
+
   // ─── Effects ───────────────────────────────────────────────────────────────
 
   // On mount: read URL params
@@ -580,6 +652,47 @@ export default function StudentsPage() {
     Promise.all([loadCodeConfig(), loadAcademicPeriods()]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [schoolId, activeYear?.id]);
+
+  // Sync Header year-switcher (global context) into the page's local year filter.
+  // When the user picks a non-active year from the Header dropdown, show that
+  // year's enrollment data on this page without needing the in-page year picker.
+  useEffect(() => {
+    if (ctxViewingYear?.id) setViewingYearId(ctxViewingYear.id);
+  }, [ctxViewingYear?.id]);
+
+  // Load year-end completion snapshots when viewing a historical year.
+  // Clears when returning to the active year.
+  // Note: isHistoricalView is derived lower in this component; we compute
+  // the same predicate inline here to avoid a TDZ reference.
+  useEffect(() => {
+    const inHistoricalView = !!viewingYearId && viewingYearId !== activeYear?.id;
+    if (!inHistoricalView || !viewingYearId || !schoolId) {
+      setYearCompletions({});
+      return;
+    }
+    loadYearCompletions(viewingYearId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewingYearId, activeYear?.id, schoolId]);
+
+  async function loadYearCompletions(yearId: string) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data } = await (supabase as any)
+      .from("school_year_completions")
+      .select("student_id, completion_status, progression_status, final_class_name, final_level_name")
+      .eq("school_year_id", yearId)
+      .eq("school_id", schoolId);
+    const map: Record<string, { completionStatus: string; progressionStatus: string | null; finalClassName: string | null; finalLevelName: string | null }> = {};
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ((data ?? []) as any[]).forEach((row: any) => {
+      map[row.student_id] = {
+        completionStatus: row.completion_status,
+        progressionStatus: row.progression_status,
+        finalClassName: row.final_class_name,
+        finalLevelName: row.final_level_name,
+      };
+    });
+    setYearCompletions(map);
+  }
 
   // Transform hook data into students state
   useEffect(() => {
@@ -1015,7 +1128,18 @@ export default function StudentsPage() {
     }
     if (editingStudent.enrollmentId) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (supabase as any).from("enrollments").update(progressionPayload).eq("id", editingStudent.enrollmentId);
+      const { error: progErr } = await (supabase as any).from("enrollments").update(progressionPayload).eq("id", editingStudent.enrollmentId);
+      if (!progErr && editForm.progressionStatus) {
+        await insertEnrollmentTransitionClient(supabase, {
+          enrollmentId:        editingStudent.enrollmentId,
+          transitionKind:      "progression_classified",
+          fromStatus:          "enrolled",
+          toStatus:            progressionPayload.status ?? "enrolled",
+          toProgressionStatus: editForm.progressionStatus,
+          changedBy:           userId ?? null,
+          changeReason:        editForm.progressionNotes.trim() || null,
+        });
+      }
     }
 
     if (editPhotoFile) {
@@ -1068,7 +1192,15 @@ export default function StudentsPage() {
   async function handleUpdateEnrollmentStatus(enrollmentId: string, newStatus: string) {
     setEnrollmentStatusUpdating(enrollmentId);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (supabase as any).from("enrollments").update({ status: newStatus }).eq("id", enrollmentId);
+    const { error: upErr } = await (supabase as any).from("enrollments").update({ status: newStatus }).eq("id", enrollmentId);
+    if (!upErr) {
+      await insertEnrollmentTransitionClient(supabase, {
+        enrollmentId,
+        transitionKind: "status_change",
+        toStatus:       newStatus,
+        changedBy:      userId ?? null,
+      });
+    }
     setEnrollmentStatusUpdating(null);
     invalidateAll();
   }
@@ -1089,6 +1221,15 @@ export default function StudentsPage() {
       .eq("id", graduateTarget.enrollmentId);
     setGraduateSaving(false);
     if (error) { setGraduateError(error.message); return; }
+    await insertEnrollmentTransitionClient(supabase, {
+      enrollmentId:        graduateTarget.enrollmentId,
+      transitionKind:      "progression_classified",
+      fromStatus:          "enrolled",
+      toStatus:            "completed",
+      toProgressionStatus: "graduated",
+      changedBy:           userId ?? null,
+      changeReason:        graduationNote.trim() || null,
+    });
     setGraduateTarget(null);
     setGraduationDate("");
     setGraduationNote("");
@@ -1459,8 +1600,8 @@ export default function StudentsPage() {
   // year filter at the start of the new school year.
   const effectiveViewingYearId = viewingYearId || activeYear?.id || null;
   const CONTINUING_CLASSIFICATIONS = new Set(["eligible", "not_eligible_retained", "not_eligible_other"]);
-  function getDisplayEnrollment(s: Student) {
-    const yearId = effectiveViewingYearId;
+  function getDisplayEnrollment(s: Student, overrideYearId?: string | null) {
+    const yearId = overrideYearId !== undefined ? overrideYearId : effectiveViewingYearId;
     if (!yearId) {
       return { classId: s.classId, className: s.className, classLevel: s.classLevel, enrollmentStatus: s.enrollmentStatus, enrollmentYearId: s.enrollmentYearId, isPending: false };
     }
@@ -1756,7 +1897,11 @@ export default function StudentsPage() {
                 <Printer className="w-4 h-4" />
                 Print Roster
               </button>
-              <Button onClick={() => { setForm(EMPTY_FORM); setFormError(null); setAddModalOpen(true); }}>
+              <Button
+                disabled={isHistoricalView}
+                title={isHistoricalView ? "Switch to the active school year to add students." : undefined}
+                onClick={() => { setForm(EMPTY_FORM); setFormError(null); setAddModalOpen(true); }}
+              >
                 <Plus className="w-4 h-4" /> Add Student
               </Button>
             </>
@@ -1834,16 +1979,6 @@ export default function StudentsPage() {
             </div>
           )}
 
-          {/* Historical year view banner */}
-          {isHistoricalView && viewingYear && (
-            <div className="flex items-start gap-3 p-3 rounded-lg border border-blue-200 bg-blue-50 text-sm">
-              <AlertTriangle className="w-4 h-4 text-blue-500 flex-shrink-0 mt-0.5" />
-              <p className="text-blue-800">
-                <strong>Historical view — {viewingYear.name}.</strong> These records reflect enrollment and status during that school year. Graduated or inactive students from that year are included.
-              </p>
-            </div>
-          )}
-
           {/* Search & Filters */}
           <div className="flex flex-col sm:flex-row gap-3">
             <div className="flex-1 relative">
@@ -1888,6 +2023,16 @@ export default function StudentsPage() {
               </button>
             )}
           </div>
+
+          {/* Historical year view banner */}
+          {isHistoricalView && viewingYear && (
+            <div className="flex items-start gap-3 p-3 rounded-lg border border-blue-200 bg-blue-50 text-sm">
+              <AlertTriangle className="w-4 h-4 text-blue-500 flex-shrink-0 mt-0.5" />
+              <p className="text-blue-800">
+                <strong>Historical view — {viewingYear.name}.</strong> These records reflect enrollment and status during that school year. Graduated or inactive students from that year are included.
+              </p>
+            </div>
+          )}
 
           {/* Table */}
           <Card className="overflow-hidden">
@@ -2088,6 +2233,7 @@ export default function StudentsPage() {
                               onEdit={() => openEdit(student)}
                               onGraduate={
                                 userRole === "school_admin" &&
+                                !isHistoricalView &&
                                 student.progressionStatus === "eligible" &&
                                 student.recommendedNextLevel === "GRADUATE"
                                   ? () => {
@@ -2452,7 +2598,8 @@ export default function StudentsPage() {
                     </div>
                     <Button
                       onClick={handleClassifyConfirm}
-                      disabled={isReadOnly || promoteSaving || classifiedCount === 0}
+                      disabled={isReadOnly || isHistoricalView || promoteSaving || classifiedCount === 0}
+                      title={isHistoricalView ? "Switch to the active school year to run year-end classification." : undefined}
                       className="min-w-[200px]"
                     >
                       {promoteSaving ? (
@@ -2511,243 +2658,421 @@ export default function StudentsPage() {
       {/* ── Modals (students tab) ─────────────────────────────────────────── */}
 
       {/* Student Profile Modal */}
-      <Modal open={!!selectedStudent} onClose={() => setSelectedStudent(null)} title="Student Profile" className="max-w-xl">
+      <Modal open={!!selectedStudent} onClose={() => setSelectedStudent(null)} title="Student Profile" className="max-w-3xl">
         {selectedStudent && (() => {
-          const selDisp = getDisplayEnrollment(selectedStudent);
+          const selDisp = getDisplayEnrollment(selectedStudent, activeYear?.id ?? null);
           return (
-          <div className="space-y-5">
-            <div className="flex items-center gap-4">
-              <div className="w-14 h-14 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xl font-semibold overflow-hidden">
-                {selectedStudent.photoUrl
-                  ? <img src={selectedStudent.photoUrl} alt={selectedStudent.firstName} className="w-full h-full object-cover" />
-                  : getInitials(`${selectedStudent.firstName} ${selectedStudent.lastName}`)
-                }
-              </div>
-              <div>
-                <h3 className="text-lg font-semibold">
-                  {selectedStudent.firstName} {selectedStudent.lastName}
-                  {selectedStudent.preferredName && (
-                    <span className="ml-2 text-sm font-normal text-muted-foreground">"{selectedStudent.preferredName}"</span>
-                  )}
-                </h3>
-                {selDisp.classId ? (
-                  <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-primary/10 text-primary mt-1">
-                    {selDisp.className}
-                    {selDisp.classLevel && <span className="text-primary/60">· {selDisp.classLevel}</span>}
-                  </span>
-                ) : (
-                  <span className="text-xs text-muted-foreground mt-1 inline-block">Not Enrolled</span>
-                )}
-                {(selectedStudent.studentCode || selectedStudent.lrn) && (
-                  <div className="flex flex-wrap gap-1 mt-1.5">
-                    {selectedStudent.studentCode && (
-                      <p className="text-xs font-mono text-muted-foreground bg-muted px-2 py-0.5 rounded inline-block">
-                        ID: {selectedStudent.studentCode}
-                      </p>
-                    )}
-                    {selectedStudent.lrn && (
-                      <p className="text-xs font-mono text-muted-foreground bg-muted px-2 py-0.5 rounded inline-block">
-                        LRN: {selectedStudent.lrn}
-                      </p>
+          <div className="flex flex-col -mx-6 -mb-6">
+            {/* Two-column layout */}
+            <div className="flex min-h-0 border-b border-border">
+
+              {/* ── Left sidebar ─────────────────────────── */}
+              <div className="w-[220px] shrink-0 border-r border-border px-5 pt-5 pb-5 overflow-y-auto flex flex-col gap-4 max-h-[65vh] [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full">
+                {/* Avatar + name */}
+                <div className="flex flex-col items-center gap-2 text-center">
+                  <div className="w-20 h-20 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-2xl font-semibold overflow-hidden ring-4 ring-primary/10">
+                    {selectedStudent.photoUrl
+                      ? <img src={selectedStudent.photoUrl} alt={selectedStudent.firstName} className="w-full h-full object-cover" />
+                      : getInitials(`${selectedStudent.firstName} ${selectedStudent.lastName}`)
+                    }
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-semibold leading-snug">
+                      {selectedStudent.firstName} {selectedStudent.lastName}
+                    </h3>
+                    {selectedStudent.preferredName && (
+                      <p className="text-xs text-muted-foreground mt-0.5">"{selectedStudent.preferredName}"</p>
                     )}
                   </div>
-                )}
+                  {selDisp.classId ? (
+                    <span className="inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full bg-primary/10 text-primary">
+                      {selDisp.className}
+                      {selDisp.classLevel && <span className="text-primary/60">· {selDisp.classLevel}</span>}
+                    </span>
+                  ) : !selDisp.enrollmentStatus ? (
+                    <span className="text-xs text-muted-foreground">Not Enrolled</span>
+                  ) : null}
+                  {selDisp.enrollmentStatus && (
+                    <Badge variant={selDisp.enrollmentStatus as "enrolled" | "completed" | "withdrawn" | "waitlisted" | "inquiry"}>{selDisp.enrollmentStatus}</Badge>
+                  )}
+                </div>
+
+                {/* Key stats */}
+                {(() => {
+                  const tenure = calcTenure(selectedStudent.allEnrollments, schoolYearList);
+                  return (
+                    <div className="border-t border-border pt-3 space-y-2 text-xs">
+                      <div className="flex justify-between gap-2">
+                        <span className="text-muted-foreground shrink-0">Age</span>
+                        <span className="font-medium">{calcAge(selectedStudent.dateOfBirth)}</span>
+                      </div>
+                      {selectedStudent.gender && (
+                        <div className="flex justify-between gap-2">
+                          <span className="text-muted-foreground shrink-0">Gender</span>
+                          <span className="font-medium">{selectedStudent.gender}</span>
+                        </div>
+                      )}
+                      {selectedStudent.dateOfBirth && (
+                        <div className="flex justify-between gap-2">
+                          <span className="text-muted-foreground shrink-0">Born</span>
+                          <span className="font-medium tabular-nums">{selectedStudent.dateOfBirth}</span>
+                        </div>
+                      )}
+                      {tenure.text !== "—" && (
+                        <div className="flex justify-between gap-2">
+                          <span className="text-muted-foreground shrink-0">Tenure</span>
+                          <div className="text-right">
+                            <span className="font-medium">{tenure.text}</span>
+                            {tenure.gapText && (
+                              <p className="text-[10px] text-amber-600 mt-0.5">{tenure.gapText}</p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* Enrollments */}
+                <div className="border-t border-border pt-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Enrollments</p>
+                    {!isHistoricalView && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEnrollmentModal(selectedStudent);
+                          setEnrollmentForm({ periodId: "", classId: "", status: "enrolled", startDate: "", endDate: "" });
+                          setEnrollmentFormError(null);
+                          setSelectedStudent(null);
+                        }}
+                        className="text-[10px] text-primary hover:underline flex items-center gap-0.5"
+                      >
+                        <Plus className="w-2.5 h-2.5" /> New Enrollment
+                      </button>
+                    )}
+                  </div>
+                  {selectedStudent.allEnrollments.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No enrollments yet.</p>
+                  ) : (
+                    <div className="space-y-1">
+                      {selectedStudent.allEnrollments.map((e) => {
+                        const isCurrent = e.schoolYearId === activeYear?.id;
+                        if (isCurrent) {
+                          return (
+                            <div key={e.id} className="rounded-lg border border-primary/30 bg-primary/5 px-2.5 py-2 space-y-1">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[9px] font-semibold uppercase tracking-wide text-primary bg-primary/10 px-1.5 py-0.5 rounded-full leading-none shrink-0">Current</span>
+                                <Badge variant={e.status as "enrolled" | "completed" | "withdrawn" | "waitlisted" | "inquiry"} className="text-[10px] leading-none px-1.5 py-0.5">{e.status}</Badge>
+                              </div>
+                              <p className="text-xs font-semibold leading-snug">{e.className}</p>
+                              {e.schoolYearName && (
+                                <p className="text-[10px] text-muted-foreground">
+                                  {e.schoolYearName}{e.periodName ? ` · ${e.periodName}` : ""}
+                                </p>
+                              )}
+                            </div>
+                          );
+                        }
+                        return (
+                          <div key={e.id} className="flex items-center gap-1.5 px-1 py-1">
+                            <span className="w-1 h-1 rounded-full bg-border shrink-0" />
+                            <span className="text-[11px] text-muted-foreground truncate flex-1 min-w-0">{e.className}</span>
+                            <Badge variant={e.status as "enrolled" | "completed" | "withdrawn" | "waitlisted" | "inquiry"} className="text-[9px] leading-none px-1.5 py-0.5 shrink-0">{e.status}</Badge>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Identifiers — lightweight metadata rows */}
+                <div className="border-t border-border pt-3">
+                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">Identifiers</p>
+                  {!selectedStudent.studentCode && !selectedStudent.lrn ? (
+                    <p className="text-xs text-muted-foreground italic">No identifiers assigned</p>
+                  ) : (
+                    <div className="space-y-1.5 text-xs">
+                      <div className="flex justify-between gap-2">
+                        <span className="text-muted-foreground shrink-0">Student ID</span>
+                        <span className={cn("font-mono text-right truncate", !selectedStudent.studentCode && "text-muted-foreground")}>
+                          {selectedStudent.studentCode ?? "—"}
+                        </span>
+                      </div>
+                      <div className="flex justify-between gap-2">
+                        <span className="text-muted-foreground shrink-0">LRN</span>
+                        <span className={cn("font-mono text-right truncate", !selectedStudent.lrn && "text-muted-foreground")}>
+                          {selectedStudent.lrn ?? "—"}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Parent Portal Access */}
+                <div className="border-t border-border pt-3 space-y-2">
+                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Parent Portal</p>
+                  {inviteStudent?.id === selectedStudent.id && inviteLink ? (
+                    <div className="space-y-1.5 text-xs">
+                      <p className="text-muted-foreground">Share with guardian:</p>
+                      <div className="flex items-center gap-1">
+                        <input readOnly value={inviteLink} className="flex-1 min-w-0 text-xs border border-border rounded-lg px-2 py-1.5 bg-muted font-mono truncate" />
+                        <button
+                          type="button"
+                          onClick={copyInviteLink}
+                          className="shrink-0 flex items-center gap-1 px-2 py-1.5 border border-border rounded-lg hover:bg-accent transition-colors"
+                        >
+                          {inviteCopied ? <Check className="w-3 h-3 text-green-600" /> : <Copy className="w-3 h-3" />}
+                        </button>
+                      </div>
+                      {inviteCopied && <p className="text-[10px] text-green-600 font-medium">Copied!</p>}
+                      <p className="text-[10px] text-muted-foreground">Expires in 30 days.</p>
+                    </div>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="w-full text-xs h-7 gap-1"
+                      onClick={() => { setInviteStudent(selectedStudent); setInviteLink(null); handleGenerateInvite(selectedStudent); }}
+                      disabled={inviteGenerating}
+                    >
+                      <LinkIcon className="w-3 h-3 shrink-0" />
+                      {inviteGenerating ? "Generating…" : "Generate Invite Link"}
+                    </Button>
+                  )}
+                </div>
               </div>
-              <div className="ml-auto">
-                {selectedStudent.enrollmentStatus && <Badge variant={selectedStudent.enrollmentStatus}>{selectedStudent.enrollmentStatus}</Badge>}
+
+              {/* ── Right content ─────────────────────────── */}
+              <div className="flex-1 px-5 pt-5 pb-5 overflow-y-auto space-y-3 max-h-[65vh] [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full">
+
+                {/* Personal Information */}
+                <div className="rounded-xl border border-border bg-card shadow-sm">
+                  <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border">
+                    <div className="w-7 h-7 rounded-lg bg-blue-100 flex items-center justify-center shrink-0">
+                      <Users className="w-3.5 h-3.5 text-blue-600" />
+                    </div>
+                    <span className="text-sm font-semibold">Personal Information</span>
+                  </div>
+                  <div className="px-4 py-3 grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Date of Birth</p>
+                      <p className={cn("mt-0.5", !selectedStudent.dateOfBirth && "text-muted-foreground italic text-xs")}>
+                        {selectedStudent.dateOfBirth ?? "Not recorded"}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Age</p>
+                      <p className="mt-0.5">{calcAge(selectedStudent.dateOfBirth)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Gender</p>
+                      <p className={cn("mt-0.5", !selectedStudent.gender && "text-muted-foreground italic text-xs")}>
+                        {selectedStudent.gender ?? "Not recorded"}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Parent / Guardian */}
+                <div className="rounded-xl border border-border bg-card shadow-sm">
+                  <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border">
+                    <div className="w-7 h-7 rounded-lg bg-emerald-100 flex items-center justify-center shrink-0">
+                      <UserCheck className="w-3.5 h-3.5 text-emerald-600" />
+                    </div>
+                    <span className="text-sm font-semibold">Parent / Guardian</span>
+                  </div>
+                  <div className="px-4 py-3 grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Name</p>
+                      <p className={cn("mt-0.5 font-medium", !selectedStudent.guardianName && "text-muted-foreground italic text-xs font-normal")}>
+                        {selectedStudent.guardianName || "Not provided"}
+                      </p>
+                      {selectedStudent.guardianRelationship && (
+                        <p className="text-xs text-muted-foreground mt-0.5">{selectedStudent.guardianRelationship}</p>
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Phone</p>
+                      <p className={cn("mt-0.5", !selectedStudent.guardianPhone && "text-muted-foreground italic text-xs")}>
+                        {selectedStudent.guardianPhone || "Not provided"}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Email</p>
+                      <p className={cn("mt-0.5", !selectedStudent.guardianEmail && "text-muted-foreground italic text-xs")}>
+                        {selectedStudent.guardianEmail || "Not provided"}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Comm. Preference</p>
+                      <p className={cn("mt-0.5", !selectedStudent.guardianCommPref && "text-muted-foreground italic text-xs")}>
+                        {selectedStudent.guardianCommPref ? COMM_PREF_LABELS[selectedStudent.guardianCommPref] : "Not set"}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Health & Medical */}
+                <div className="rounded-xl border border-border bg-card shadow-sm">
+                  <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border">
+                    <div className="w-7 h-7 rounded-lg bg-rose-100 flex items-center justify-center shrink-0">
+                      <Heart className="w-3.5 h-3.5 text-rose-500" />
+                    </div>
+                    <span className="text-sm font-semibold">Health & Medical</span>
+                  </div>
+                  <div className="px-4 py-3 grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Allergies</p>
+                      <p className={cn("mt-0.5", !selectedStudent.allergies && "text-muted-foreground italic text-xs")}>
+                        {selectedStudent.allergies || "None recorded"}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Medical Conditions</p>
+                      <p className={cn("mt-0.5", !selectedStudent.medicalConditions && "text-muted-foreground italic text-xs")}>
+                        {selectedStudent.medicalConditions || "None recorded"}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Special Needs</p>
+                      <p className={cn("mt-0.5", !selectedStudent.specialNeeds && "text-muted-foreground italic text-xs")}>
+                        {selectedStudent.specialNeeds || "None recorded"}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Primary Language</p>
+                      <p className={cn("mt-0.5", !selectedStudent.primaryLanguage && "text-muted-foreground italic text-xs")}>
+                        {selectedStudent.primaryLanguage || "Not specified"}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Emergency Contact & Pickups */}
+                <div className="rounded-xl border border-border bg-card shadow-sm">
+                  <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border">
+                    <div className="w-7 h-7 rounded-lg bg-amber-100 flex items-center justify-center shrink-0">
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                    </div>
+                    <span className="text-sm font-semibold">Emergency Contact & Pickups</span>
+                  </div>
+                  <div className="px-4 py-3 grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Emergency Contact</p>
+                      <p className={cn("mt-0.5", !selectedStudent.emergencyContactName && "text-muted-foreground italic text-xs")}>
+                        {selectedStudent.emergencyContactName
+                          ? `${selectedStudent.emergencyContactName}${selectedStudent.emergencyContactPhone ? ` · ${selectedStudent.emergencyContactPhone}` : ""}`
+                          : "Not provided"}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Authorized Pickups</p>
+                      <p className={cn("mt-0.5", !selectedStudent.authorizedPickups && "text-muted-foreground italic text-xs")}>
+                        {selectedStudent.authorizedPickups || "Not specified"}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Notes */}
+                <div className="rounded-xl border border-border bg-card shadow-sm">
+                  <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border">
+                    <div className="w-7 h-7 rounded-lg bg-violet-100 flex items-center justify-center shrink-0">
+                      <FileText className="w-3.5 h-3.5 text-violet-600" />
+                    </div>
+                    <span className="text-sm font-semibold">Notes</span>
+                  </div>
+                  <div className="px-4 py-3 space-y-3 text-sm">
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1.5">Teacher Notes</p>
+                      {selectedStudent.teacherNotes
+                        ? <p className="bg-yellow-50 border border-yellow-200 rounded-lg px-3 py-2 text-yellow-900">{selectedStudent.teacherNotes}</p>
+                        : <p className="text-muted-foreground italic text-xs">No teacher notes recorded.</p>
+                      }
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1.5">Admin Notes <span className="normal-case font-normal">(internal)</span></p>
+                      {selectedStudent.adminNotes
+                        ? <p className="bg-muted border border-border rounded-lg px-3 py-2">{selectedStudent.adminNotes}</p>
+                        : <p className="text-muted-foreground italic text-xs">No admin notes recorded.</p>
+                      }
+                    </div>
+                  </div>
+                </div>
+
+                {/* Year-End Classification (conditional) */}
+                {selectedStudent.progressionStatus && (() => {
+                  const ps = selectedStudent.progressionStatus;
+                  const color =
+                    ps === "eligible"              ? "bg-green-100 text-green-700" :
+                    ps === "not_eligible_retained" ? "bg-amber-100 text-amber-700" :
+                    ps === "not_eligible_other"    ? "bg-orange-100 text-orange-700" :
+                    ps === "graduated"             ? "bg-muted text-muted-foreground" :
+                    ps === "not_continuing"        ? "bg-rose-100 text-rose-700" :
+                    ps === "withdrawn"             ? "bg-red-100 text-red-700" :
+                                                     "bg-muted text-muted-foreground";
+                  const label =
+                    ps === "eligible"              ? "Eligible" :
+                    ps === "not_eligible_retained" ? "Retained" :
+                    ps === "not_eligible_other"    ? "Needs Review" :
+                    ps === "graduated"             ? "Graduated" :
+                    ps === "not_continuing"        ? "Not Continuing" :
+                    ps === "withdrawn"             ? "Withdrawn" :
+                      ps.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+                  const completion = yearCompletions[selectedStudent.id];
+                  return (
+                    <div className="rounded-xl border border-border bg-card shadow-sm">
+                      <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border">
+                        <div className="w-7 h-7 rounded-lg bg-sky-100 flex items-center justify-center shrink-0">
+                          <GraduationCap className="w-3.5 h-3.5 text-sky-600" />
+                        </div>
+                        <span className="text-sm font-semibold">Year-End Classification</span>
+                      </div>
+                      <div className="px-4 py-3 text-sm space-y-1.5">
+                        <span className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-medium ${color}`}>{label}</span>
+                        {selectedStudent.progressionNotes && (
+                          <p className="text-muted-foreground text-xs">{selectedStudent.progressionNotes}</p>
+                        )}
+                        {completion && isHistoricalView && (
+                          <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                            <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" />
+                            Snapshotted at year close
+                            {completion.finalLevelName && (
+                              <span> · {completion.finalLevelName}{completion.finalClassName ? ` · ${completion.finalClassName}` : ""}</span>
+                            )}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
+                {/* No progression_status but a snapshot exists: unclassified at close */}
+                {!selectedStudent.progressionStatus && isHistoricalView && yearCompletions[selectedStudent.id]?.completionStatus === "enrolled_at_close" && (
+                  <div className="rounded-xl border border-border bg-card shadow-sm">
+                    <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border">
+                      <div className="w-7 h-7 rounded-lg bg-sky-100 flex items-center justify-center shrink-0">
+                        <GraduationCap className="w-3.5 h-3.5 text-sky-600" />
+                      </div>
+                      <span className="text-sm font-semibold">Year-End Classification</span>
+                    </div>
+                    <div className="px-4 py-3 text-sm space-y-1.5">
+                      <span className="inline-block px-2.5 py-0.5 rounded-full text-xs font-medium bg-muted text-muted-foreground">
+                        No classification recorded
+                      </span>
+                      <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                        <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
+                        Enrolled at year close — was not classified before the year ended
+                      </p>
+                    </div>
+                  </div>
+                )}
+
               </div>
             </div>
 
-            <SectionToggle title="Personal Information" defaultOpen>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-                <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Date of Birth</p>
-                  <p className={cn("mt-0.5", !selectedStudent.dateOfBirth && "text-muted-foreground")}>{selectedStudent.dateOfBirth ?? "—"}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Age</p>
-                  <p className="mt-0.5">{calcAge(selectedStudent.dateOfBirth)}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Gender</p>
-                  <p className={cn("mt-0.5", !selectedStudent.gender && "text-muted-foreground")}>{selectedStudent.gender ?? "—"}</p>
-                </div>
-              </div>
-            </SectionToggle>
-
-            <SectionToggle title="Parent / Guardian" defaultOpen>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-                <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Name</p>
-                  <p className="mt-0.5">{selectedStudent.guardianName}</p>
-                  {selectedStudent.guardianRelationship && (
-                    <p className="text-xs text-muted-foreground">{selectedStudent.guardianRelationship}</p>
-                  )}
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Phone</p>
-                  <p className={cn("mt-0.5", !selectedStudent.guardianPhone && "text-muted-foreground")}>{selectedStudent.guardianPhone || "—"}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Email</p>
-                  <p className={cn("mt-0.5", !selectedStudent.guardianEmail && "text-muted-foreground")}>{selectedStudent.guardianEmail || "—"}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Comm. Preference</p>
-                  <p className={cn("mt-0.5", !selectedStudent.guardianCommPref && "text-muted-foreground")}>{selectedStudent.guardianCommPref ? COMM_PREF_LABELS[selectedStudent.guardianCommPref] : "—"}</p>
-                </div>
-              </div>
-            </SectionToggle>
-
-            <SectionToggle title="Health & Medical" defaultOpen>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-                <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Allergies</p>
-                  <p className={cn("mt-0.5", !selectedStudent.allergies && "text-muted-foreground")}>{selectedStudent.allergies || "—"}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Medical Conditions</p>
-                  <p className={cn("mt-0.5", !selectedStudent.medicalConditions && "text-muted-foreground")}>{selectedStudent.medicalConditions || "—"}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Special Needs</p>
-                  <p className={cn("mt-0.5", !selectedStudent.specialNeeds && "text-muted-foreground")}>{selectedStudent.specialNeeds || "—"}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Primary Language</p>
-                  <p className={cn("mt-0.5", !selectedStudent.primaryLanguage && "text-muted-foreground")}>{selectedStudent.primaryLanguage || "—"}</p>
-                </div>
-              </div>
-            </SectionToggle>
-
-            <SectionToggle title="Emergency Contact & Pickups" defaultOpen>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-                <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Emergency Contact</p>
-                  <p className={cn("mt-0.5", !selectedStudent.emergencyContactName && "text-muted-foreground")}>
-                    {selectedStudent.emergencyContactName
-                      ? `${selectedStudent.emergencyContactName}${selectedStudent.emergencyContactPhone ? ` · ${selectedStudent.emergencyContactPhone}` : ""}`
-                      : "—"}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Authorized Pickups</p>
-                  <p className={cn("mt-0.5", !selectedStudent.authorizedPickups && "text-muted-foreground")}>{selectedStudent.authorizedPickups || "—"}</p>
-                </div>
-              </div>
-            </SectionToggle>
-
-            <SectionToggle title="Notes" defaultOpen>
-              <div className="space-y-3 text-sm">
-                <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Teacher Notes</p>
-                  {selectedStudent.teacherNotes
-                    ? <p className="bg-yellow-50 border border-yellow-200 rounded px-3 py-2 text-yellow-900">{selectedStudent.teacherNotes}</p>
-                    : <p className="text-muted-foreground">—</p>
-                  }
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Admin Notes <span className="normal-case font-normal">(internal)</span></p>
-                  {selectedStudent.adminNotes
-                    ? <p className="bg-muted border border-border rounded px-3 py-2">{selectedStudent.adminNotes}</p>
-                    : <p className="text-muted-foreground">—</p>
-                  }
-                </div>
-              </div>
-            </SectionToggle>
-
-            {selectedStudent.progressionStatus && (() => {
-              const ps = selectedStudent.progressionStatus;
-              const color =
-                ps === "eligible"              ? "bg-green-100 text-green-700" :
-                ps === "not_eligible_retained" ? "bg-amber-100 text-amber-700" :
-                ps === "not_eligible_other"    ? "bg-orange-100 text-orange-700" :
-                ps === "graduated"             ? "bg-muted text-muted-foreground" :
-                ps === "not_continuing"        ? "bg-rose-100 text-rose-700" :
-                ps === "withdrawn"             ? "bg-red-100 text-red-700" :
-                                                 "bg-muted text-muted-foreground";
-              const label =
-                ps === "eligible"              ? "Eligible" :
-                ps === "not_eligible_retained" ? "Retained" :
-                ps === "not_eligible_other"    ? "Needs Review" :
-                ps === "graduated"             ? "Graduated" :
-                ps === "not_continuing"        ? "Not Continuing" :
-                ps === "withdrawn"             ? "Withdrawn" :
-                  ps.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-              return (
-                <SectionToggle title="Year-End Classification" defaultOpen>
-                  <div className="text-sm space-y-1">
-                    <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${color}`}>{label}</span>
-                    {selectedStudent.progressionNotes && (
-                      <p className="text-muted-foreground">{selectedStudent.progressionNotes}</p>
-                    )}
-                  </div>
-                </SectionToggle>
-              );
-            })()}
-
-            <SectionToggle title="Enrollments" defaultOpen>
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-end -mt-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEnrollmentModal(selectedStudent);
-                      setEnrollmentForm({ periodId: "", classId: "", status: "enrolled", startDate: "", endDate: "" });
-                      setEnrollmentFormError(null);
-                      setSelectedStudent(null);
-                    }}
-                    className="flex items-center gap-1 text-xs text-primary hover:underline"
-                  >
-                    <Plus className="w-3 h-3" /> Add
-                  </button>
-                </div>
-                {selectedStudent.allEnrollments.length === 0 ? (
-                  <p className="text-muted-foreground text-xs">No enrollments yet.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {selectedStudent.allEnrollments.map((e) => (
-                      <div key={e.id} className="flex items-center justify-between gap-2">
-                        <div>
-                          <span className="font-medium">{e.className}</span>
-                          {e.schoolYearName && <span className="text-muted-foreground ml-1.5 text-xs">· {e.schoolYearName}</span>}
-                          {e.periodName && <span className="text-muted-foreground ml-1.5 text-xs">· {e.periodName}</span>}
-                          {(e.startDate || e.endDate) && (
-                            <span className="text-muted-foreground ml-1.5 text-xs">· {e.startDate ?? "?"} – {e.endDate ?? "?"}</span>
-                          )}
-                        </div>
-                        <Badge variant={e.status as "enrolled" | "completed" | "withdrawn" | "waitlisted" | "inquiry"}>{e.status}</Badge>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </SectionToggle>
-
-            <SectionToggle title="Parent Portal Access" defaultOpen>
-              <div className="text-sm">
-                {inviteStudent?.id === selectedStudent.id && inviteLink ? (
-                  <div className="space-y-2">
-                    <p className="text-xs text-muted-foreground">Share this link with the guardian to give them access:</p>
-                    <div className="flex items-center gap-2">
-                      <input readOnly value={inviteLink} className="flex-1 text-xs border border-border rounded px-2 py-1.5 bg-muted font-mono truncate" />
-                      <button onClick={copyInviteLink} className="flex items-center gap-1 px-2 py-1.5 text-xs border border-border rounded hover:bg-accent transition-colors">
-                        {inviteCopied ? <Check className="w-3.5 h-3.5 text-green-600" /> : <Copy className="w-3.5 h-3.5" />}
-                        {inviteCopied ? "Copied!" : "Copy"}
-                      </button>
-                    </div>
-                    <p className="text-xs text-muted-foreground">Link expires in 30 days.</p>
-                  </div>
-                ) : (
-                  <Button size="sm" variant="outline" onClick={() => { setInviteStudent(selectedStudent); setInviteLink(null); handleGenerateInvite(selectedStudent); }} disabled={inviteGenerating}>
-                    <LinkIcon className="w-3.5 h-3.5" />
-                    {inviteGenerating ? "Generating…" : "Generate Invite Link"}
-                  </Button>
-                )}
-              </div>
-            </SectionToggle>
-
-            <div className="flex justify-end gap-2 pt-2 border-t border-border">
+            {/* Footer */}
+            <div className="flex justify-end gap-2 px-6 py-4">
               <Button variant="outline" onClick={() => setSelectedStudent(null)}>Close</Button>
               <Button onClick={() => openEdit(selectedStudent)}>
                 <Pencil className="w-4 h-4" /> Edit Student
@@ -2758,253 +3083,550 @@ export default function StudentsPage() {
         })()}
       </Modal>
 
-      {/* Add / Edit Student Modals */}
-      {[
-        { open: editModalOpen, onClose: () => { setEditModalOpen(false); setEditingStudent(null); setPendingEditLoading(false); if (returnToPath) { const p = returnToPath; setReturnToPath(null); openEditCalledRef.current = false; router.push(p); } }, title: "Edit Student", fErr: editFormError, setFErr: setEditFormError, f: editForm, setF: setEditForm, onSave: handleEdit, isEdit: true, photoFile: editPhotoFile, setPhotoFile: setEditPhotoFile },
-        { open: addModalOpen, onClose: () => { setAddModalOpen(false); setForm(EMPTY_FORM); }, title: "Add Student", fErr: formError, setFErr: setFormError, f: form, setF: setForm, onSave: handleAdd, isEdit: false, photoFile: addPhotoFile, setPhotoFile: setAddPhotoFile },
-      ].map(({ open, onClose, title, fErr, setFErr, f, setF, onSave, isEdit, photoFile, setPhotoFile }) => (
-        <Modal key={title} open={open} onClose={onClose} title={title} className="max-w-2xl">
-          {isEdit && pendingEditLoading ? (
-            <div className="py-16 flex justify-center items-center">
-              <RefreshCw className="w-6 h-6 animate-spin text-muted-foreground" />
-            </div>
-          ) : (
-          <div className="space-y-4">
-            {fErr && <ErrorAlert message={fErr} />}
-            {!isEdit && (
-              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800">
-                <strong>Returning students should go through the Enrollment process.</strong>{" "}
-                Add Student only creates a student record without a school year, class, or billing.
-                To enroll a student, {" "}
-                <button
-                  type="button"
-                  className="underline font-medium cursor-pointer hover:text-amber-600 transition-colors"
-                  onClick={() => { onClose(); window.location.href = "/enrollment?startEnrollment=1"; }}
-                >
-                  start an enrollment instead
-                </button>.
-              </div>
-            )}
+      {/* ── Edit Student Modal (two-column, matches Profile view layout) ── */}
+      <Modal
+        open={editModalOpen}
+        onClose={() => { setEditModalOpen(false); setEditingStudent(null); setPendingEditLoading(false); if (returnToPath) { const p = returnToPath; setReturnToPath(null); openEditCalledRef.current = false; router.push(p); } }}
+        title="Edit Student"
+        className="max-w-3xl"
+      >
+        {pendingEditLoading ? (
+          <div className="py-16 flex justify-center items-center">
+            <RefreshCw className="w-6 h-6 animate-spin text-muted-foreground" />
+          </div>
+        ) : (
+          <div className="flex flex-col -mx-6 -mb-6">
+            <div className="flex min-h-0 border-b border-border">
 
-            <div className="flex items-center gap-4">
-              <AvatarUpload
-                currentUrl={photoFile ? URL.createObjectURL(photoFile) : (f.photoUrl || null)}
-                name={`${f.firstName} ${f.lastName}`}
-                size="lg"
-                onFileSelect={(file) => setPhotoFile(file)}
-                onValidationError={(msg) => setFErr(msg)}
-              />
-              <div className="text-sm text-muted-foreground">
-                <p className="font-medium text-foreground">Student Photo</p>
-                <p>Click the photo to upload an image.</p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium mb-1">First Name *</label>
-                <Input value={f.firstName} onChange={(e) => setF({ ...f, firstName: e.target.value })} placeholder="First name" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Last Name *</label>
-                <Input value={f.lastName} onChange={(e) => setF({ ...f, lastName: e.target.value })} placeholder="Last name" />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium mb-1">Preferred Name / Nickname</label>
-                <Input value={f.preferredName} onChange={(e) => setF({ ...f, preferredName: e.target.value })} placeholder="What the child goes by" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Gender</label>
-                <Select value={f.gender} onChange={(e) => setF({ ...f, gender: e.target.value })}>
-                  <option value="">Select...</option>
-                  <option>Male</option>
-                  <option>Female</option>
-                </Select>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium mb-1">Date of Birth</label>
-                <Input type="date" value={f.dateOfBirth} onChange={(e) => setF({ ...f, dateOfBirth: e.target.value })} min="1990-01-01" max="2099-12-31" />
-                {f.dateOfBirth && <p className="text-xs text-muted-foreground mt-1">Age: {calcAge(f.dateOfBirth)}</p>}
-              </div>
-              {!isEdit && (
-                <div>
-                  <label className="block text-sm font-medium mb-1">Class (Initial Enrollment)</label>
-                  <Select value={f.classId} onChange={(e) => setF({ ...f, classId: e.target.value })}>
-                    <option value="">— No class —</option>
-                    {classOptions.map((c) => (
-                      <option key={c.id} value={c.id}>{c.name} ({c.enrolled}/{c.capacity})</option>
-                    ))}
-                  </Select>
+              {/* ── Left sidebar (context rail — mostly read-only) ── */}
+              <div className="w-[220px] shrink-0 border-r border-border px-5 pt-5 pb-5 overflow-y-auto flex flex-col gap-4 max-h-[65vh] [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full">
+                {/* Photo upload + live name preview */}
+                <div className="flex flex-col items-center gap-2 text-center">
+                  <AvatarUpload
+                    currentUrl={editPhotoFile ? URL.createObjectURL(editPhotoFile) : (editForm.photoUrl || null)}
+                    name={`${editForm.firstName} ${editForm.lastName}`}
+                    size="lg"
+                    onFileSelect={(file) => setEditPhotoFile(file)}
+                    onValidationError={(msg) => setEditFormError(msg)}
+                  />
+                  <div>
+                    <p className="text-sm font-semibold leading-snug">
+                      {(editForm.firstName || editingStudent?.firstName || "").trim()}{" "}
+                      {(editForm.lastName || editingStudent?.lastName || "").trim()}
+                    </p>
+                    {editForm.preferredName && (
+                      <p className="text-xs text-muted-foreground mt-0.5">"{editForm.preferredName}"</p>
+                    )}
+                  </div>
+                  {/* Current enrollment context — read-only */}
+                  {editingStudent && (() => {
+                    const disp = getDisplayEnrollment(editingStudent);
+                    return disp.classId ? (
+                      <span className="inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full bg-primary/10 text-primary">
+                        {disp.className}
+                        {disp.classLevel && <span className="text-primary/60">· {disp.classLevel}</span>}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">Not Enrolled</span>
+                    );
+                  })()}
+                  {editingStudent?.enrollmentStatus && (
+                    <Badge variant={editingStudent.enrollmentStatus}>{editingStudent.enrollmentStatus}</Badge>
+                  )}
                 </div>
-              )}
+
+                {/* Student ID — read-only identifier */}
+                {editingStudent?.studentCode && (
+                  <div className="space-y-1.5">
+                    <div className="rounded-lg bg-muted px-3 py-2">
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Student ID</p>
+                      <p className="text-xs font-mono font-medium mt-0.5">{editingStudent.studentCode}</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Live stats preview (updates as user edits) */}
+                <div className="border-t border-border pt-3 space-y-2 text-xs">
+                  <div className="flex justify-between gap-2">
+                    <span className="text-muted-foreground">Age</span>
+                    <span className="font-medium">{calcAge(editForm.dateOfBirth)}</span>
+                  </div>
+                  {editForm.gender && (
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">Gender</span>
+                      <span className="font-medium">{editForm.gender}</span>
+                    </div>
+                  )}
+                  {editForm.dateOfBirth && (
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">Born</span>
+                      <span className="font-medium tabular-nums">{editForm.dateOfBirth}</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Enrollment history — read-only context */}
+                {editingStudent && editingStudent.allEnrollments.length > 0 && (
+                  <div className="border-t border-border pt-3 space-y-2">
+                    <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Enrollments</p>
+                    <div className="space-y-1.5">
+                      {editingStudent.allEnrollments.map((e) => (
+                        <div key={e.id} className="rounded-lg border border-border bg-background px-2.5 py-2">
+                          <div className="flex items-start justify-between gap-1.5">
+                            <span className="text-xs font-medium leading-snug">{e.className}</span>
+                            <Badge variant={e.status as "enrolled" | "completed" | "withdrawn" | "waitlisted" | "inquiry"} className="text-[10px] leading-none px-1.5 py-0.5 shrink-0">{e.status}</Badge>
+                          </div>
+                          {e.schoolYearName && (
+                            <p className="text-[10px] text-muted-foreground mt-0.5">
+                              {e.schoolYearName}{e.periodName ? ` · ${e.periodName}` : ""}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* ── Right content (editable cards) ── */}
+              <div className="flex-1 px-5 pt-5 pb-5 overflow-y-auto space-y-3 max-h-[65vh] [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full">
+                {editFormError && <ErrorAlert message={editFormError} />}
+
+                {/* Personal Information */}
+                <div className="rounded-xl border border-border bg-card shadow-sm">
+                  <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border">
+                    <div className="w-7 h-7 rounded-lg bg-blue-100 flex items-center justify-center shrink-0">
+                      <Users className="w-3.5 h-3.5 text-blue-600" />
+                    </div>
+                    <span className="text-sm font-semibold">Personal Information</span>
+                  </div>
+                  <div className="px-4 py-3 space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-medium text-muted-foreground mb-1">First Name *</label>
+                        <Input value={editForm.firstName} onChange={(e) => setEditForm({ ...editForm, firstName: e.target.value })} placeholder="First name" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-muted-foreground mb-1">Last Name *</label>
+                        <Input value={editForm.lastName} onChange={(e) => setEditForm({ ...editForm, lastName: e.target.value })} placeholder="Last name" />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-medium text-muted-foreground mb-1">Nickname / Preferred Name</label>
+                        <Input value={editForm.preferredName} onChange={(e) => setEditForm({ ...editForm, preferredName: e.target.value })} placeholder="Goes by…" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-muted-foreground mb-1">Gender</label>
+                        <Select value={editForm.gender} onChange={(e) => setEditForm({ ...editForm, gender: e.target.value })}>
+                          <option value="">Select…</option>
+                          <option>Male</option>
+                          <option>Female</option>
+                        </Select>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-medium text-muted-foreground mb-1">Date of Birth</label>
+                        <Input type="date" value={editForm.dateOfBirth} onChange={(e) => setEditForm({ ...editForm, dateOfBirth: e.target.value })} min="1990-01-01" max="2099-12-31" />
+                        {editForm.dateOfBirth && <p className="text-xs text-muted-foreground mt-1">Age: {calcAge(editForm.dateOfBirth)}</p>}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Parent / Guardian */}
+                <div className="rounded-xl border border-border bg-card shadow-sm">
+                  <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border">
+                    <div className="w-7 h-7 rounded-lg bg-emerald-100 flex items-center justify-center shrink-0">
+                      <UserCheck className="w-3.5 h-3.5 text-emerald-600" />
+                    </div>
+                    <span className="text-sm font-semibold">Parent / Guardian</span>
+                  </div>
+                  <div className="px-4 py-3 space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-medium text-muted-foreground mb-1">Full Name *</label>
+                        <Input value={editForm.parentName} onChange={(e) => setEditForm({ ...editForm, parentName: e.target.value })} placeholder="Parent name" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-muted-foreground mb-1">Relationship</label>
+                        <Select value={editForm.relationship} onChange={(e) => setEditForm({ ...editForm, relationship: e.target.value })}>
+                          <option>Mother</option><option>Father</option><option>Guardian</option>
+                          <option>Grandparent</option><option>Other</option>
+                        </Select>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-medium text-muted-foreground mb-1">Phone</label>
+                        <Input value={editForm.contact} onChange={(e) => setEditForm({ ...editForm, contact: e.target.value })} placeholder="09XXXXXXXXX" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-muted-foreground mb-1">Email</label>
+                        <Input type="email" value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} placeholder="parent@email.com" />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-muted-foreground mb-1">Communication Preference</label>
+                      <Select value={editForm.commPref} onChange={(e) => setEditForm({ ...editForm, commPref: e.target.value as CommPref })}>
+                        {(Object.entries(COMM_PREF_LABELS) as [CommPref, string][]).map(([v, l]) => (
+                          <option key={v} value={v}>{l}</option>
+                        ))}
+                      </Select>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Government Identifiers */}
+                <div className="rounded-xl border border-border bg-card shadow-sm">
+                  <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border">
+                    <div className="w-7 h-7 rounded-lg bg-orange-100 flex items-center justify-center shrink-0">
+                      <Hash className="w-3.5 h-3.5 text-orange-600" />
+                    </div>
+                    <span className="text-sm font-semibold">Government Identifiers</span>
+                  </div>
+                  <div className="px-4 py-3">
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">Learner Reference Number (LRN)</label>
+                    <Input value={editForm.lrn} onChange={(e) => setEditForm({ ...editForm, lrn: e.target.value })} placeholder="e.g. 123456789012" inputMode="numeric" />
+                    <p className="text-xs text-muted-foreground mt-1">Optional. 12-digit DepEd learner ID. Leave blank if not applicable.</p>
+                  </div>
+                </div>
+
+                {/* Health & Medical */}
+                <div className="rounded-xl border border-border bg-card shadow-sm">
+                  <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border">
+                    <div className="w-7 h-7 rounded-lg bg-rose-100 flex items-center justify-center shrink-0">
+                      <Heart className="w-3.5 h-3.5 text-rose-500" />
+                    </div>
+                    <span className="text-sm font-semibold">Health & Medical</span>
+                  </div>
+                  <div className="px-4 py-3 space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-medium text-muted-foreground mb-1">Allergies</label>
+                        <Input value={editForm.allergies} onChange={(e) => setEditForm({ ...editForm, allergies: e.target.value })} placeholder="e.g. Peanuts, Dairy" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-muted-foreground mb-1">Primary Language at Home</label>
+                        <Input value={editForm.primaryLanguage} onChange={(e) => setEditForm({ ...editForm, primaryLanguage: e.target.value })} placeholder="e.g. Filipino, English" />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-muted-foreground mb-1">Medical Conditions</label>
+                      <Textarea value={editForm.medicalConditions} onChange={(e) => setEditForm({ ...editForm, medicalConditions: e.target.value })} rows={2} placeholder="e.g. Asthma, Epilepsy (leave blank if none)" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-muted-foreground mb-1">Special Needs / Accommodations</label>
+                      <Textarea value={editForm.specialNeeds} onChange={(e) => setEditForm({ ...editForm, specialNeeds: e.target.value })} rows={2} placeholder="IEP, therapy schedule, learning accommodations…" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Emergency Contact & Pickups */}
+                <div className="rounded-xl border border-border bg-card shadow-sm">
+                  <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border">
+                    <div className="w-7 h-7 rounded-lg bg-amber-100 flex items-center justify-center shrink-0">
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                    </div>
+                    <span className="text-sm font-semibold">Emergency Contact & Pickups</span>
+                  </div>
+                  <div className="px-4 py-3 space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-medium text-muted-foreground mb-1">Emergency Contact Name</label>
+                        <Input value={editForm.emergencyContactName} onChange={(e) => setEditForm({ ...editForm, emergencyContactName: e.target.value })} placeholder="If different from guardian" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-muted-foreground mb-1">Emergency Contact Phone</label>
+                        <Input value={editForm.emergencyContactPhone} onChange={(e) => setEditForm({ ...editForm, emergencyContactPhone: e.target.value })} placeholder="09XXXXXXXXX" />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-muted-foreground mb-1">Authorized Pickup Persons</label>
+                      <Textarea value={editForm.authorizedPickups} onChange={(e) => setEditForm({ ...editForm, authorizedPickups: e.target.value })} rows={2} placeholder="Names allowed to pick up the child (besides guardian)" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Notes */}
+                <div className="rounded-xl border border-border bg-card shadow-sm">
+                  <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border">
+                    <div className="w-7 h-7 rounded-lg bg-violet-100 flex items-center justify-center shrink-0">
+                      <FileText className="w-3.5 h-3.5 text-violet-600" />
+                    </div>
+                    <span className="text-sm font-semibold">Notes</span>
+                  </div>
+                  <div className="px-4 py-3 space-y-3">
+                    <div>
+                      <label className="block text-xs font-medium text-muted-foreground mb-1">Teacher Notes</label>
+                      <Textarea value={editForm.teacherNotes} onChange={(e) => setEditForm({ ...editForm, teacherNotes: e.target.value })} rows={2} placeholder="Visible to class teachers" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-muted-foreground mb-1">Admin Notes (Internal)</label>
+                      <Textarea value={editForm.adminNotes} onChange={(e) => setEditForm({ ...editForm, adminNotes: e.target.value })} rows={2} placeholder="Internal notes — not shared with parents" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Year-End Classification — admin-toned, visually distinct */}
+                <div className="rounded-xl border border-border bg-muted/40 shadow-sm">
+                  <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border">
+                    <div className="w-7 h-7 rounded-lg bg-sky-100 flex items-center justify-center shrink-0">
+                      <GraduationCap className="w-3.5 h-3.5 text-sky-600" />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold">Year-End Classification</span>
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium px-1.5 py-0.5 bg-muted rounded">Admin</span>
+                    </div>
+                  </div>
+                  <div className="px-4 py-3 space-y-3">
+                    <p className="text-xs text-muted-foreground">Override an individual student's outcome — typically when bulk classification flagged them as <strong>Needs Review</strong>.</p>
+                    <div className="grid grid-cols-1 gap-3">
+                      <div>
+                        <label className="block text-xs font-medium text-muted-foreground mb-1">Classification</label>
+                        <Select value={editForm.progressionStatus} onChange={(e) => setEditForm({ ...editForm, progressionStatus: e.target.value })}>
+                          <option value="">— Not set —</option>
+                          <option value="eligible">Eligible for Next Level</option>
+                          <option value="graduated">Graduate</option>
+                          <option value="not_eligible_retained">Retain</option>
+                          <option value="not_continuing">Not Continuing</option>
+                          <option value="withdrawn">Withdrawn</option>
+                        </Select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-muted-foreground mb-1">Notes</label>
+                        <Textarea value={editForm.progressionNotes} onChange={(e) => setEditForm({ ...editForm, progressionNotes: e.target.value })} rows={2} placeholder="Reason for this classification…" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
             </div>
 
-            {!isEdit && (
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium mb-1">Academic Period</label>
-                  <Select value={f.periodId} onChange={(e) => setF({ ...f, periodId: e.target.value })}>
-                    <option value="">— No period —</option>
-                    {academicPeriods.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                  </Select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1">Enrollment Status</label>
-                  <Select value={f.enrollmentStatus} onChange={(e) => setF({ ...f, enrollmentStatus: e.target.value })}>
-                    <option value="enrolled">Enrolled</option>
-                    <option value="inquiry">Inquiry</option>
-                    <option value="waitlisted">Waitlisted</option>
-                  </Select>
-                </div>
-              </div>
-            )}
-
-            <hr className="border-border" />
-            <p className="text-sm font-semibold">Parent / Guardian</p>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium mb-1">Full Name *</label>
-                <Input value={f.parentName} onChange={(e) => setF({ ...f, parentName: e.target.value })} placeholder="Parent name" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Relationship</label>
-                <Select value={f.relationship} onChange={(e) => setF({ ...f, relationship: e.target.value })}>
-                  <option>Mother</option><option>Father</option><option>Guardian</option>
-                  <option>Grandparent</option><option>Other</option>
-                </Select>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium mb-1">Phone</label>
-                <Input value={f.contact} onChange={(e) => setF({ ...f, contact: e.target.value })} placeholder="09XXXXXXXXX" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Email</label>
-                <Input type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} placeholder="parent@email.com" />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-1">Communication Preference</label>
-              <Select value={f.commPref} onChange={(e) => setF({ ...f, commPref: e.target.value as CommPref })}>
-                {(Object.entries(COMM_PREF_LABELS) as [CommPref, string][]).map(([v, l]) => (
-                  <option key={v} value={v}>{l}</option>
-                ))}
-              </Select>
-            </div>
-
-            <SectionToggle title="Government Identifiers">
-              <div>
-                <label className="block text-sm font-medium mb-1">Learner Reference Number (LRN)</label>
-                <Input
-                  value={f.lrn}
-                  onChange={(e) => setF({ ...f, lrn: e.target.value })}
-                  placeholder="e.g. 123456789012"
-                  inputMode="numeric"
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  Optional. The 12-digit Department of Education learner ID (Philippines). Leave blank if not applicable.
-                </p>
-              </div>
-            </SectionToggle>
-
-            <SectionToggle title="Health & Medical Info">
-              <div>
-                <label className="block text-sm font-medium mb-1">Allergies</label>
-                <Input value={f.allergies} onChange={(e) => setF({ ...f, allergies: e.target.value })} placeholder="e.g. Peanuts, Dairy (leave blank if none)" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Medical Conditions</label>
-                <Textarea value={f.medicalConditions} onChange={(e) => setF({ ...f, medicalConditions: e.target.value })} rows={2} placeholder="e.g. Asthma, Epilepsy (leave blank if none)" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Special Needs / Accommodations</label>
-                <Textarea value={f.specialNeeds} onChange={(e) => setF({ ...f, specialNeeds: e.target.value })} rows={2} placeholder="IEP, therapy schedule, learning accommodations..." />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Primary Language Spoken at Home</label>
-                <Input value={f.primaryLanguage} onChange={(e) => setF({ ...f, primaryLanguage: e.target.value })} placeholder="e.g. Filipino, English" />
-              </div>
-            </SectionToggle>
-
-            <SectionToggle title="Emergency Contact & Authorized Pickups">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium mb-1">Emergency Contact Name</label>
-                  <Input value={f.emergencyContactName} onChange={(e) => setF({ ...f, emergencyContactName: e.target.value })} placeholder="If different from guardian" />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1">Emergency Contact Phone</label>
-                  <Input value={f.emergencyContactPhone} onChange={(e) => setF({ ...f, emergencyContactPhone: e.target.value })} placeholder="09XXXXXXXXX" />
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Authorized Pickup Persons</label>
-                <Textarea value={f.authorizedPickups} onChange={(e) => setF({ ...f, authorizedPickups: e.target.value })} rows={2} placeholder="Names of people allowed to pick up the child (besides guardian)" />
-              </div>
-            </SectionToggle>
-
-            <SectionToggle title="Notes">
-              <div>
-                <label className="block text-sm font-medium mb-1">Notes for Teachers</label>
-                <Textarea value={f.teacherNotes} onChange={(e) => setF({ ...f, teacherNotes: e.target.value })} rows={2} placeholder="Visible to class teachers" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Admin Notes (Internal)</label>
-                <Textarea value={f.adminNotes} onChange={(e) => setF({ ...f, adminNotes: e.target.value })} rows={2} placeholder="Internal notes — not shared with parents" />
-              </div>
-            </SectionToggle>
-
-            {isEdit && (
-              <SectionToggle title="Year-End Classification">
-                <p className="text-xs text-muted-foreground -mt-1">
-                  Use this to override an individual student&apos;s outcome — typically when bulk Year-End Classification flagged them as <strong>Needs Review</strong>.
-                </p>
-                <div>
-                  <label className="block text-sm font-medium mb-1">Classification</label>
-                  <Select value={f.progressionStatus} onChange={(e) => setF({ ...f, progressionStatus: e.target.value })}>
-                    <option value="">— Not set —</option>
-                    <option value="eligible">Eligible for Next Level</option>
-                    <option value="graduated">Graduate</option>
-                    <option value="not_eligible_retained">Retain</option>
-                    <option value="not_continuing">Not Continuing</option>
-                    <option value="withdrawn">Withdrawn</option>
-                  </Select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1">Notes</label>
-                  <Textarea value={f.progressionNotes} onChange={(e) => setF({ ...f, progressionNotes: e.target.value })} rows={2} placeholder="Reason for this classification…" />
-                </div>
-              </SectionToggle>
-            )}
-
-            <div className="flex justify-end gap-2 pt-2">
+            {/* Footer */}
+            <div className="flex justify-end gap-2 px-6 py-4">
               <ModalCancelButton />
-              <Button onClick={onSave} disabled={saving || !f.firstName || !f.lastName || !f.parentName}>
-                {saving ? "Saving…" : isEdit ? "Save Changes" : "Save Student"}
+              <Button onClick={handleEdit} disabled={saving || !editForm.firstName || !editForm.lastName || !editForm.parentName}>
+                {saving ? "Saving…" : "Save Changes"}
               </Button>
             </div>
           </div>
-          )}
-        </Modal>
-      ))}
+        )}
+      </Modal>
 
-      {/* Add Enrollment Modal */}
-      <Modal open={!!enrollmentModal} onClose={() => setEnrollmentModal(null)} title="Add Enrollment" className="max-w-md">
+      {/* ── Add Student Modal (single-column, new-record form) ── */}
+      <Modal open={addModalOpen} onClose={() => { setAddModalOpen(false); setForm(EMPTY_FORM); }} title="Add Student" className="max-w-2xl">
+        <div className="space-y-4">
+          {formError && <ErrorAlert message={formError} />}
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800">
+            <strong>Returning students should go through the Enrollment process.</strong>{" "}
+            Add Student only creates a student record without a school year, class, or billing.
+            To enroll a student, {" "}
+            <button
+              type="button"
+              className="underline font-medium cursor-pointer hover:text-amber-600 transition-colors"
+              onClick={() => { setAddModalOpen(false); setForm(EMPTY_FORM); window.location.href = "/enrollment?startEnrollment=1"; }}
+            >
+              start an enrollment instead
+            </button>.
+          </div>
+
+          <div className="flex items-center gap-4">
+            <AvatarUpload
+              currentUrl={addPhotoFile ? URL.createObjectURL(addPhotoFile) : (form.photoUrl || null)}
+              name={`${form.firstName} ${form.lastName}`}
+              size="lg"
+              onFileSelect={(file) => setAddPhotoFile(file)}
+              onValidationError={(msg) => setFormError(msg)}
+            />
+            <div className="text-sm text-muted-foreground">
+              <p className="font-medium text-foreground">Student Photo</p>
+              <p>Click the photo to upload an image.</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">First Name *</label>
+              <Input value={form.firstName} onChange={(e) => setForm({ ...form, firstName: e.target.value })} placeholder="First name" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Last Name *</label>
+              <Input value={form.lastName} onChange={(e) => setForm({ ...form, lastName: e.target.value })} placeholder="Last name" />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">Preferred Name / Nickname</label>
+              <Input value={form.preferredName} onChange={(e) => setForm({ ...form, preferredName: e.target.value })} placeholder="What the child goes by" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Gender</label>
+              <Select value={form.gender} onChange={(e) => setForm({ ...form, gender: e.target.value })}>
+                <option value="">Select...</option>
+                <option>Male</option>
+                <option>Female</option>
+              </Select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">Date of Birth</label>
+              <Input type="date" value={form.dateOfBirth} onChange={(e) => setForm({ ...form, dateOfBirth: e.target.value })} min="1990-01-01" max="2099-12-31" />
+              {form.dateOfBirth && <p className="text-xs text-muted-foreground mt-1">Age: {calcAge(form.dateOfBirth)}</p>}
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Class (Initial Enrollment)</label>
+              <Select value={form.classId} onChange={(e) => setForm({ ...form, classId: e.target.value })}>
+                <option value="">— No class —</option>
+                {classOptions.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name} ({c.enrolled}/{c.capacity})</option>
+                ))}
+              </Select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">Academic Period</label>
+              <Select value={form.periodId} onChange={(e) => setForm({ ...form, periodId: e.target.value })}>
+                <option value="">— No period —</option>
+                {academicPeriods.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </Select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Enrollment Status</label>
+              <Select value={form.enrollmentStatus} onChange={(e) => setForm({ ...form, enrollmentStatus: e.target.value })}>
+                <option value="enrolled">Enrolled</option>
+                <option value="inquiry">Inquiry</option>
+                <option value="waitlisted">Waitlisted</option>
+              </Select>
+            </div>
+          </div>
+
+          <hr className="border-border" />
+          <p className="text-sm font-semibold">Parent / Guardian</p>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">Full Name *</label>
+              <Input value={form.parentName} onChange={(e) => setForm({ ...form, parentName: e.target.value })} placeholder="Parent name" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Relationship</label>
+              <Select value={form.relationship} onChange={(e) => setForm({ ...form, relationship: e.target.value })}>
+                <option>Mother</option><option>Father</option><option>Guardian</option>
+                <option>Grandparent</option><option>Other</option>
+              </Select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">Phone</label>
+              <Input value={form.contact} onChange={(e) => setForm({ ...form, contact: e.target.value })} placeholder="09XXXXXXXXX" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Email</label>
+              <Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="parent@email.com" />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Communication Preference</label>
+            <Select value={form.commPref} onChange={(e) => setForm({ ...form, commPref: e.target.value as CommPref })}>
+              {(Object.entries(COMM_PREF_LABELS) as [CommPref, string][]).map(([v, l]) => (
+                <option key={v} value={v}>{l}</option>
+              ))}
+            </Select>
+          </div>
+
+          <SectionToggle title="Government Identifiers">
+            <div>
+              <label className="block text-sm font-medium mb-1">Learner Reference Number (LRN)</label>
+              <Input value={form.lrn} onChange={(e) => setForm({ ...form, lrn: e.target.value })} placeholder="e.g. 123456789012" inputMode="numeric" />
+              <p className="text-xs text-muted-foreground mt-1">Optional. The 12-digit Department of Education learner ID (Philippines). Leave blank if not applicable.</p>
+            </div>
+          </SectionToggle>
+
+          <SectionToggle title="Health & Medical Info">
+            <div>
+              <label className="block text-sm font-medium mb-1">Allergies</label>
+              <Input value={form.allergies} onChange={(e) => setForm({ ...form, allergies: e.target.value })} placeholder="e.g. Peanuts, Dairy (leave blank if none)" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Medical Conditions</label>
+              <Textarea value={form.medicalConditions} onChange={(e) => setForm({ ...form, medicalConditions: e.target.value })} rows={2} placeholder="e.g. Asthma, Epilepsy (leave blank if none)" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Special Needs / Accommodations</label>
+              <Textarea value={form.specialNeeds} onChange={(e) => setForm({ ...form, specialNeeds: e.target.value })} rows={2} placeholder="IEP, therapy schedule, learning accommodations..." />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Primary Language Spoken at Home</label>
+              <Input value={form.primaryLanguage} onChange={(e) => setForm({ ...form, primaryLanguage: e.target.value })} placeholder="e.g. Filipino, English" />
+            </div>
+          </SectionToggle>
+
+          <SectionToggle title="Emergency Contact & Authorized Pickups">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">Emergency Contact Name</label>
+                <Input value={form.emergencyContactName} onChange={(e) => setForm({ ...form, emergencyContactName: e.target.value })} placeholder="If different from guardian" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Emergency Contact Phone</label>
+                <Input value={form.emergencyContactPhone} onChange={(e) => setForm({ ...form, emergencyContactPhone: e.target.value })} placeholder="09XXXXXXXXX" />
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Authorized Pickup Persons</label>
+              <Textarea value={form.authorizedPickups} onChange={(e) => setForm({ ...form, authorizedPickups: e.target.value })} rows={2} placeholder="Names of people allowed to pick up the child (besides guardian)" />
+            </div>
+          </SectionToggle>
+
+          <SectionToggle title="Notes">
+            <div>
+              <label className="block text-sm font-medium mb-1">Notes for Teachers</label>
+              <Textarea value={form.teacherNotes} onChange={(e) => setForm({ ...form, teacherNotes: e.target.value })} rows={2} placeholder="Visible to class teachers" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Admin Notes (Internal)</label>
+              <Textarea value={form.adminNotes} onChange={(e) => setForm({ ...form, adminNotes: e.target.value })} rows={2} placeholder="Internal notes — not shared with parents" />
+            </div>
+          </SectionToggle>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <ModalCancelButton />
+            <Button onClick={handleAdd} disabled={saving || !form.firstName || !form.lastName || !form.parentName}>
+              {saving ? "Saving…" : "Save Student"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* New Enrollment Modal */}
+      <Modal open={!!enrollmentModal} onClose={() => setEnrollmentModal(null)} title="New Enrollment" className="max-w-md">
         {enrollmentModal && (
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              Adding enrollment for <strong>{enrollmentModal.firstName} {enrollmentModal.lastName}</strong>
+              Creating a new enrollment for <strong>{enrollmentModal.firstName} {enrollmentModal.lastName}</strong>
             </p>
+
+            {/* Contextual guidance */}
+            <div className="rounded-lg bg-muted/50 border border-border px-3.5 py-3 text-xs text-muted-foreground space-y-1.5">
+              <p className="font-medium text-foreground">When to use this</p>
+              <ul className="space-y-1 list-none">
+                <li className="flex items-start gap-1.5"><span className="text-green-600 mt-px">✓</span> Enrolling in a new school year or program</li>
+                <li className="flex items-start gap-1.5"><span className="text-green-600 mt-px">✓</span> Re-enrolling after withdrawal</li>
+                <li className="flex items-start gap-1.5"><span className="text-amber-600 mt-px">✕</span> Moving between classes — use <span className="font-medium">Edit Student → Enroll / Edit Enrollment</span> instead</li>
+              </ul>
+            </div>
+
             {enrollmentModal.progressionStatus === "eligible" && (
               <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
                 <Check className="w-4 h-4 flex-shrink-0" />
@@ -3032,8 +3654,6 @@ export default function StudentsPage() {
                 <option value="enrolled">Enrolled</option>
                 <option value="waitlisted">Waitlisted</option>
                 <option value="inquiry">Inquiry</option>
-                <option value="withdrawn">Withdrawn</option>
-                <option value="completed">Completed</option>
               </Select>
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -3049,7 +3669,7 @@ export default function StudentsPage() {
             <div className="flex justify-end gap-2 pt-2">
               <ModalCancelButton />
               <Button onClick={handleAddEnrollment} disabled={enrollmentSaving || !enrollmentForm.classId}>
-                {enrollmentSaving ? "Saving…" : "Add Enrollment"}
+                {enrollmentSaving ? "Saving…" : "Create Enrollment"}
               </Button>
             </div>
           </div>
@@ -3165,7 +3785,7 @@ export default function StudentsPage() {
                           <Step n={3} text={<span>Update the fields you need. The form is divided into collapsible sections — expand the ones relevant to your change.</span>} />
                           <Step n={4} text={<span>Click <strong>Save Changes</strong>.</span>} />
                         </div>
-                        <Tip>Changing the class here changes the student's <em>enrollment</em> assignment. Use the <strong>Add Enrollment</strong> button in the profile instead if the student is enrolling in an additional class, or if you want to keep the history of prior enrollments.</Tip>
+                        <Tip>Changing the class here changes the student's <em>enrollment</em> assignment. Use the <strong>+ New Enrollment</strong> button in the profile instead if the student is enrolling in a new school year or re-enrolling after withdrawal.</Tip>
                       </div>
                     ),
                   },
@@ -3209,17 +3829,28 @@ export default function StudentsPage() {
                     id: "enrollment",
                     icon: FileText,
                     title: "Manage a student's enrollments",
-                    searchText: "enrollment class enroll add change status period history multiple",
+                    searchText: "enrollment class enroll add change status period history multiple new enrollment create current card two tier compact",
                     body: (
                       <div className="space-y-2">
-                        <p>A student can be enrolled in multiple classes or have enrollment history across school years. All of this is tracked under their profile.</p>
+                        <p>A student can have enrollment history across school years. All of it is tracked under their profile's <strong>Enrollments</strong> section in the left sidebar.</p>
                         <div className="space-y-2 mt-2">
-                          <Step n={1} text={<span>Open the student's <strong>profile panel</strong> and find the <strong>Enrollments</strong> section.</span>} />
-                          <Step n={2} text={<span>Existing enrollments are listed with class name, period, and status. Click <strong>+ Add Enrollment</strong> to add another.</span>} />
-                          <Step n={3} text={<span>In the Add Enrollment modal, select the <strong>class</strong> and set the <strong>status</strong> (Enrolled, Waitlisted, etc.). Adding an academic period is optional.</span>} />
-                          <Step n={4} text={<span>To change a student's status (e.g. from Enrolled to Withdrawn), edit the enrollment from this section.</span>} />
+                          <Step n={1} text={<span>Open the student's profile panel and click <strong>+ New Enrollment</strong> in the Enrollments section header.</span>} />
+                          <Step n={2} text={<span>In the modal, select the <strong>class</strong> and set the <strong>status</strong>: Enrolled, Waitlisted, or Inquiry. An academic period and start/end dates are optional.</span>} />
+                          <Step n={3} text={<span>Click <strong>Create Enrollment</strong>.</span>} />
                         </div>
-                        <Note>The class filter and enrollment count on the student list are based on the student's <em>active</em> enrollment for the current school year. If a student has multiple enrollments, only the most recent enrolled one is shown in the list view.</Note>
+                        <div className="mt-3 space-y-1.5 rounded-lg border border-border p-3">
+                          <p className="text-xs font-semibold">When to use New Enrollment</p>
+                          <p className="text-xs text-muted-foreground flex items-start gap-1.5"><span className="text-green-600 mt-px">✓</span> Enrolling in a new school year or program</p>
+                          <p className="text-xs text-muted-foreground flex items-start gap-1.5"><span className="text-green-600 mt-px">✓</span> Re-enrolling after a withdrawal</p>
+                          <p className="text-xs text-muted-foreground flex items-start gap-1.5"><span className="text-amber-600 mt-px">✕</span> Moving between classes in the same year — use <strong>Edit Student → Enroll / Edit Enrollment</strong> instead (this keeps the class transfer history intact)</p>
+                          <p className="text-xs text-muted-foreground flex items-start gap-1.5"><span className="text-amber-600 mt-px">✕</span> Setting status to Withdrawn or Completed — those are set by editing an existing enrollment, not creating a new one</p>
+                        </div>
+                        <div className="mt-3 space-y-1.5 rounded-lg border border-border p-3">
+                          <p className="text-xs font-semibold">Reading the enrollment history cards</p>
+                          <p className="text-xs text-muted-foreground">The current school year's enrollment appears as a highlighted card. All prior enrollments are compact single-line rows below it.</p>
+                          <p className="text-xs text-muted-foreground">The <strong>Current</strong> label always reflects the <em>active</em> school year — it does not change when you browse a historical year in the list view.</p>
+                        </div>
+                        <Note>The class filter and enrollment count on the student list are based on the student's active enrollment for the selected school year. If a student has no enrollment for that year, they appear with no class assigned.</Note>
                       </div>
                     ),
                   },
@@ -3237,6 +3868,30 @@ export default function StudentsPage() {
                           <Step n={3} text={<span>Supported: JPG, PNG. Photos are auto-compressed and cropped to a square before upload.</span>} />
                           <Step n={4} text={<span>Click <strong>Save Changes</strong> — the new photo takes effect immediately.</span>} />
                         </div>
+                      </div>
+                    ),
+                  },
+                  {
+                    id: "quick-facts",
+                    icon: Heart,
+                    title: "Student profile — quick facts, age, and tenure",
+                    searchText: "quick facts age years months tenure gap school time enrolled since profile sidebar",
+                    body: (
+                      <div className="space-y-2">
+                        <p>The left sidebar of the student profile panel shows key facts about the student at a glance.</p>
+                        <div className="space-y-2 mt-2">
+                          <div className="rounded-lg border border-border p-3 space-y-1">
+                            <p className="text-xs font-semibold">Age</p>
+                            <p className="text-xs text-muted-foreground">Always shown in <strong>years and months</strong> (e.g. "5 yrs 3 mos" or "8 mos"). Calculated from the student's date of birth to today.</p>
+                          </div>
+                          <div className="rounded-lg border border-border p-3 space-y-1">
+                            <p className="text-xs font-semibold">Tenure</p>
+                            <p className="text-xs text-muted-foreground">The student's <strong>total time at the school</strong> from their earliest enrollment to today — shown in years and months (e.g. "2 yrs 4 mos").</p>
+                            <p className="text-xs text-muted-foreground mt-1">If the student skipped a school year, an amber note shows the gap (e.g. "8 mos gap"). Only gaps longer than 3 months are counted as gaps — normal summer breaks are excluded.</p>
+                            <p className="text-xs text-muted-foreground mt-1">Tenure is a lifetime metric — it does not change when you switch the year selector to browse historical data.</p>
+                          </div>
+                        </div>
+                        <Note>These facts reflect the student's <em>current</em> state, not the historical year being browsed in the list. The profile sidebar is always current.</Note>
                       </div>
                     ),
                   },
@@ -3263,18 +3918,23 @@ export default function StudentsPage() {
                     id: "historical-view",
                     icon: Search,
                     title: "Viewing a past school year",
-                    searchText: "historical view past year previous school year archive enrolled status current lifecycle banner blue",
+                    searchText: "historical view past year previous school year archive enrolled status current lifecycle banner blue profile sidebar current enrollment",
                     body: (
                       <div className="space-y-2">
                         <p>Switch the <strong>School Year</strong> selector to any past year to browse records from that time — class assignments, enrollment status, and year-end outcomes exactly as they were.</p>
                         <div className="space-y-2 mt-2">
                           <Step n={1} text={<span>Open the <strong>School Year</strong> dropdown at the top of the Students page and pick a past year.</span>} />
-                          <Step n={2} text={<span>A <strong>blue Historical View banner</strong> appears to remind you that the data reflects that year, not the current one.</span>} />
-                          <Step n={3} text={<span>Each student row shows their class and status <em>in that year</em>. A sub-line below the status shows their <strong>current lifecycle status</strong> (e.g. "Enrolled now", "Graduated / Alumni") so you can see where they are today.</span>} />
-                          <Step n={4} text={<span>Graduated or withdrawn students from that year are included — the default filter is set to <strong>All Students</strong> automatically.</span>} />
+                          <Step n={2} text={<span>A <strong>blue Historical View banner</strong> appears below the search and filter controls as a reminder that list results reflect that year.</span>} />
+                          <Step n={3} text={<span>Each student row shows their class and status <em>for that year</em>. A sub-line below the status shows their <strong>current lifecycle status</strong> (e.g. "Enrolled now", "Graduated / Alumni") so you can see where they are today.</span>} />
+                          <Step n={4} text={<span>Graduated or withdrawn students from that year are included — the filter automatically switches to <strong>All Students</strong> when you select a historical year.</span>} />
                         </div>
-                        <Tip>Historical view is read-only — enrollments and classifications from past years can be reviewed here but edits should be made carefully in the relevant year's context.</Tip>
-                        <Note>Switch back to the Active year to return to the current view and resume normal operations.</Note>
+                        <div className="mt-3 rounded-lg border border-border p-3 space-y-1.5">
+                          <p className="text-xs font-semibold">What changes vs. what stays the same</p>
+                          <p className="text-xs text-muted-foreground"><strong>Changes:</strong> The student list rows — class name, status, enrollment badge — all reflect the selected historical year.</p>
+                          <p className="text-xs text-muted-foreground"><strong>Stays the same:</strong> The student profile panel (opened by clicking a row) always shows the student's <em>current</em> enrollment, class, and status — regardless of which year you're browsing. This is intentional so you always see their present state when you open the profile.</p>
+                        </div>
+                        <Tip>Adding new enrollments and year-end classifications are disabled in historical view. Switch back to the Active year to make changes.</Tip>
+                        <Note>Switch back to the Active year using the School Year selector to return to normal operations.</Note>
                       </div>
                     ),
                   },

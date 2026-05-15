@@ -1,6 +1,6 @@
 ﻿"use client";
 import { useEffect, useState, useCallback } from "react";
-import { Plus, Pencil, Trash2, Upload, RotateCcw, Library, BookOpen, HelpCircle, X, Search, ChevronDown, ChevronRight, AlertTriangle, Check } from "lucide-react";
+import { Plus, Pencil, Trash2, Upload, RotateCcw, Library, BookOpen, HelpCircle, X, Search, ChevronDown, ChevronRight, AlertTriangle, Check, RefreshCw } from "lucide-react";
 import { GradingTemplate, GRADING_TEMPLATES } from "@/lib/grading-templates";
 import { AvatarUpload } from "@/components/ui/avatar-upload";
 import { compressImage, PROFILE_PHOTO_MAX_W, PROFILE_PHOTO_MAX_BYTES } from "@/lib/image-compress";
@@ -272,9 +272,14 @@ export default function SettingsPage() {
   const [closeYearUnclassified, setCloseYearUnclassified] = useState<{ id: string; name: string }[]>([]);
   const [closeYearForce, setCloseYearForce] = useState(false);
 
+  // Regenerate snapshots for a closed year (recovery path for partial close failures)
+  const [regenConfirm, setRegenConfirm] = useState<{ yearId: string; yearName: string } | null>(null);
+  const [regenSaving, setRegenSaving] = useState(false);
+  const [regenResult, setRegenResult] = useState<{ deleted: number; regenerated: number } | null>(null);
+
   // Activate year confirmation modal (replaces browser confirm() so we can include an action link)
   const [activateConfirm, setActivateConfirm] = useState<{
-    yearId: string; currentYearName: string; unclassifiedCount: number;
+    yearId: string; currentActiveYearId: string; currentYearName: string; unclassifiedCount: number;
   } | null>(null);
   const [activateChecking, setActivateChecking] = useState(false);
 
@@ -598,14 +603,11 @@ export default function SettingsPage() {
     setSaving(true);
     setError(null);
 
-    // If setting to active via modal, demote the current active year first
-    if (syForm.status === "active") {
-      await supabase.from("school_years").update({ status: "closed" }).eq("school_id", schoolId).eq("status", "active");
-    }
-
     if (editingSy) {
+      // Edit: name and dates only. Status transitions go through the lifecycle buttons
+      // (Activate / Close Year) so that completion snapshots are always generated.
       const { error: e } = await supabase.from("school_years").update({
-        name: syForm.name, start_date: syForm.startDate, end_date: syForm.endDate, status: syForm.status,
+        name: syForm.name, start_date: syForm.startDate, end_date: syForm.endDate,
       }).eq("id", editingSy.id);
       if (e) { setError(e.message); setSaving(false); return; }
     } else {
@@ -618,7 +620,6 @@ export default function SettingsPage() {
     setSyModal(false);
     setSaving(false);
     await load();
-    if (syForm.status === "active") refreshCtx();
   }
 
   // Activate a planned year: check for unclassified students, then either proceed directly
@@ -638,17 +639,33 @@ export default function SettingsPage() {
       setActivateChecking(false);
       const unclassifiedCount = count ?? 0;
       // Always go through the modal so the admin sees a clear transition confirmation.
-      setActivateConfirm({ yearId: id, currentYearName: currentActive.name, unclassifiedCount });
+      setActivateConfirm({ yearId: id, currentActiveYearId: currentActive.id, currentYearName: currentActive.name, unclassifiedCount });
       return;
     }
     // No current active year — activate immediately.
     await performActivateSy(id);
   }
 
-  async function performActivateSy(id: string) {
+  async function performActivateSy(id: string, yearToCloseId?: string) {
     if (!schoolId) return;
-    await supabase.from("school_years").update({ status: "closed" }).eq("school_id", schoolId).eq("status", "active");
+    setSaving(true);
+    // If an active year is being demoted, close it via the API route so
+    // completion snapshots are generated at the same time.
+    if (yearToCloseId) {
+      const resp = await fetch("/api/school-years/close", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ yearId: yearToCloseId }),
+      });
+      if (!resp.ok) {
+        const result = await resp.json().catch(() => ({}));
+        setError(result.error ?? "Failed to close the current school year.");
+        setSaving(false);
+        return;
+      }
+    }
     await supabase.from("school_years").update({ status: "active" }).eq("id", id);
+    setSaving(false);
     setActivateConfirm(null);
     await load();
     refreshCtx();
@@ -679,18 +696,47 @@ export default function SettingsPage() {
     setCloseYearModal(true);
   }
 
-  // Execute the close: set active year → closed.
+  // Execute the close: set active year → closed + generate completion snapshots.
   async function confirmCloseYear() {
     if (!schoolId) return;
     const activeSy = schoolYears.find((sy) => sy.status === "active");
     if (!activeSy) return;
     setSaving(true);
-    await supabase.from("school_years").update({ status: "closed" }).eq("id", activeSy.id);
+    const resp = await fetch("/api/school-years/close", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ yearId: activeSy.id }),
+    });
+    if (!resp.ok) {
+      const result = await resp.json().catch(() => ({}));
+      setError(result.error ?? "Failed to close the school year.");
+      setSaving(false);
+      return;
+    }
     setSaving(false);
     setCloseYearModal(false);
     setCloseYearForce(false);
     await load();
     refreshCtx();
+  }
+
+  async function confirmRegenerate() {
+    if (!regenConfirm) return;
+    setRegenSaving(true);
+    setRegenResult(null);
+    const resp = await fetch("/api/school-years/regenerate-snapshots", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ yearId: regenConfirm.yearId, confirm: true }),
+    });
+    const result = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      setError(result.error ?? "Snapshot regeneration failed.");
+      setRegenSaving(false);
+      return;
+    }
+    setRegenResult({ deleted: result.deleted ?? 0, regenerated: result.regenerated ?? 0 });
+    setRegenSaving(false);
   }
 
   async function deleteSy(id: string) {
@@ -1547,6 +1593,16 @@ export default function SettingsPage() {
                                 className="text-xs text-orange-600 hover:underline font-medium disabled:opacity-50"
                               >
                                 {closeYearChecking ? "Checking…" : "Close School Year"}
+                              </button>
+                            )}
+                            {sy.status === "closed" && (
+                              <button
+                                onClick={() => { setRegenResult(null); setRegenConfirm({ yearId: sy.id, yearName: sy.name }); }}
+                                className="text-xs text-muted-foreground hover:text-foreground hover:underline font-medium flex items-center gap-1"
+                                title="Recovery: delete and rebuild year-end snapshots from current enrollment data"
+                              >
+                                <RefreshCw className="w-3 h-3" />
+                                Regenerate Snapshots
                               </button>
                             )}
                             <button onClick={() => openEditSy(sy)} className="p-1.5 hover:bg-accent rounded-lg transition-colors">
@@ -2759,20 +2815,26 @@ export default function SettingsPage() {
               <Input type="date" value={syForm.endDate} onChange={(e) => setSyForm({ ...syForm, endDate: e.target.value })} />
             </div>
           </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">Status</label>
-            <Select value={syForm.status} onChange={(e) => setSyForm({ ...syForm, status: e.target.value as SchoolYearStatus })}>
-              <option value="planned">Planned</option>
-              <option value="active">Active</option>
-              <option value="closed">Closed</option>
-            </Select>
-            {syForm.status === "active" && (
-              <p className="text-xs text-orange-600 mt-1">
-                Prefer using the <strong>Activate</strong> button on a Planned year — it validates and transitions the current year safely.
-                Setting Active here will immediately close the current active year.
+          {/* Status is read-only when editing — lifecycle transitions (activate, close)
+              must go through the dedicated buttons so snapshots are always generated. */}
+          {editingSy ? (
+            <div>
+              <label className="block text-sm font-medium mb-1">Status</label>
+              <p className="text-sm text-muted-foreground capitalize">
+                {syForm.status === "planned" || syForm.status === "draft" ? "Planned"
+                  : syForm.status === "active" ? "Active"
+                  : "Closed"}
+                <span className="ml-2 text-xs">(use Activate / Close Year buttons to change)</span>
               </p>
-            )}
-          </div>
+            </div>
+          ) : (
+            <div>
+              <label className="block text-sm font-medium mb-1">Status</label>
+              <Select value={syForm.status} onChange={(e) => setSyForm({ ...syForm, status: e.target.value as SchoolYearStatus })}>
+                <option value="planned">Planned</option>
+              </Select>
+            </div>
+          )}
           <div className="flex justify-end gap-2 pt-2">
             <ModalCancelButton />
             <Button onClick={saveSy} disabled={!syForm.name || !syForm.startDate || !syForm.endDate || saving}>
@@ -2818,7 +2880,7 @@ export default function SettingsPage() {
               <ModalCancelButton />
               <Button
                 variant="destructive"
-                onClick={() => performActivateSy(activateConfirm.yearId)}
+                onClick={() => performActivateSy(activateConfirm.yearId, activateConfirm.currentActiveYearId)}
                 disabled={saving}
               >
                 {activateConfirm.unclassifiedCount > 0 ? "Proceed Anyway" : "Activate"}
@@ -2881,6 +2943,63 @@ export default function SettingsPage() {
             </Button>
           </div>
         </div>
+      </Modal>
+
+      {/* Regenerate Snapshots Modal */}
+      <Modal
+        open={!!regenConfirm}
+        onClose={() => { if (!regenSaving) { setRegenConfirm(null); setRegenResult(null); } }}
+        title="Regenerate Year-End Snapshots"
+      >
+        {regenConfirm && (
+          <div className="space-y-4">
+            {regenResult ? (
+              <div className="flex gap-3 p-3 bg-green-50 border border-green-200 rounded-lg">
+                <Check className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-medium text-green-800">Snapshots regenerated successfully.</p>
+                  <p className="text-xs text-green-700 mt-0.5">
+                    {regenResult.deleted} previous snapshot{regenResult.deleted !== 1 ? "s" : ""} removed · {regenResult.regenerated} new snapshot{regenResult.regenerated !== 1 ? "s" : ""} created
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="flex gap-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                  <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-medium text-amber-800">This will replace all existing snapshots for {regenConfirm.yearName}.</p>
+                    <p className="text-xs text-amber-700 mt-0.5">
+                      Use this only if year-end snapshots are missing or incomplete. Enrollment records are not changed.
+                    </p>
+                  </div>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Snapshots will be rebuilt from current enrollment data for this closed year.
+                  The school year will remain closed.
+                </p>
+              </>
+            )}
+            <div className="flex justify-end gap-2 pt-1">
+              {regenResult ? (
+                <Button onClick={() => { setRegenConfirm(null); setRegenResult(null); }}>Done</Button>
+              ) : (
+                <>
+                  <Button type="button" variant="outline" onClick={() => setRegenConfirm(null)} disabled={regenSaving}>
+                    Cancel
+                  </Button>
+                  <Button onClick={confirmRegenerate} disabled={regenSaving}>
+                    {regenSaving ? (
+                      <><RefreshCw className="w-4 h-4 animate-spin mr-1" /> Regenerating…</>
+                    ) : (
+                      "Regenerate Snapshots"
+                    )}
+                  </Button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
       </Modal>
 
       {/* Holiday Modal */}

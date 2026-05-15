@@ -59,7 +59,7 @@ function getTodayStr() {
 }
 
 export default function AttendancePage() {
-  const { schoolId, activeYear } = useSchoolContext();
+  const { schoolId, activeYear, isHistoricalView, viewingYear } = useSchoolContext();
   const supabase = createClient();
   const searchParams = useSearchParams();
 
@@ -84,23 +84,24 @@ export default function AttendancePage() {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Load classes on mount
+  // Load classes on mount or when the viewed year changes
   useEffect(() => {
     if (!schoolId) { setLoading(false); return; }
     loadClasses();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [schoolId, activeYear?.id]);
+  }, [schoolId, activeYear?.id, viewingYear?.id]);
 
   async function loadClasses() {
     setLoading(true);
-    if (!activeYear?.id) { setClassOptions([]); setLoading(false); return; }
+    const effectiveYear = viewingYear ?? activeYear;
+    if (!effectiveYear?.id) { setClassOptions([]); setLoading(false); return; }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error: err } = await (supabase as any)
       .from("classes")
       .select("id, name, start_time")
       .eq("school_id", schoolId!)
-      .eq("school_year_id", activeYear.id)
+      .eq("school_year_id", effectiveYear.id)
       .eq("is_active", true)
       .not("name", "ilike", "[Unassigned]%")
       .order("start_time");
@@ -132,11 +133,17 @@ export default function AttendancePage() {
     const holidayRow = hResult.data as { name: string; is_no_class: boolean } | null;
     setHoliday(holidayRow?.is_no_class ? holidayRow.name : null);
 
-    // Enrolled students in this class
+    // Students assigned to this class on the selected date, via student_class_assignments.
+    // This is the effective-dated source of truth for "who is in this class today?"
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const eResult = await supabase.from("enrollments").select("id, student_id, students(first_name, last_name)").eq("class_id", selectedClass).eq("status", "enrolled") as any;
+    const eResult = await supabase
+      .from("student_class_assignments")
+      .select("enrollment_id, student_id, students(first_name, last_name)")
+      .eq("class_id", selectedClass)
+      .lte("start_date", selectedDate)
+      .or(`end_date.is.null,end_date.gte.${selectedDate}`) as any;
     if (eResult.error) { setError(eResult.error.message); setLoadingStudents(false); return; }
-    const enrollRows = ((eResult.data ?? []) as any[]) as Array<{ id: string; student_id: string; students: { first_name: string; last_name: string } | null }>;
+    const enrollRows = ((eResult.data ?? []) as any[]) as Array<{ enrollment_id: string; student_id: string; students: { first_name: string; last_name: string } | null }>;
 
     const studentIds: string[] = enrollRows.map((e) => e.student_id);
 
@@ -174,7 +181,7 @@ export default function AttendancePage() {
         const existing = attByStudent[e.student_id];
         return {
           studentId: e.student_id,
-          enrollmentId: e.id,
+          enrollmentId: e.enrollment_id,
           name: s ? `${s.first_name} ${s.last_name}` : e.student_id,
           status: existing?.status ?? null,
           note: existing?.note ?? "",
@@ -197,7 +204,15 @@ export default function AttendancePage() {
     const classIds = classOptions.map((c) => c.id);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const [enrollRes, attRes] = await Promise.all([
-      (supabase as any).from("enrollments").select("class_id").in("class_id", classIds).eq("status", "enrolled"),
+      // Use student_class_assignments (effective-dated) instead of enrollments so
+      // the summary correctly reflects who was in each class on the selected date,
+      // including historical views where the active enrollment set may differ.
+      (supabase as any)
+        .from("student_class_assignments")
+        .select("class_id")
+        .in("class_id", classIds)
+        .lte("start_date", selectedDate)
+        .or(`end_date.is.null,end_date.gte.${selectedDate}`),
       (supabase as any).from("attendance_records").select("class_id, status").in("class_id", classIds).eq("date", selectedDate),
     ]);
     const enrolledByClass: Record<string, number> = {};
@@ -245,6 +260,10 @@ export default function AttendancePage() {
 
   async function handleSave() {
     if (!selectedClass || !selectedDate) return;
+    if (isHistoricalView) {
+      setError("Attendance records cannot be saved while viewing a historical school year.");
+      return;
+    }
     setSaving(true);
     setError(null);
 
@@ -550,7 +569,11 @@ export default function AttendancePage() {
             </div>
           )}
 
-          {students.length === 0 ? (
+          {error ? (
+            <div className="mx-5 my-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              <strong>Could not load students:</strong> {error}
+            </div>
+          ) : students.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-10">
               No enrolled students in this class.
             </p>
@@ -894,7 +917,8 @@ export default function AttendancePage() {
             onClick={handleSave}
             size="lg"
             className={`shadow-lg ${saved ? "bg-green-500" : ""}`}
-            disabled={saving || students.length === 0}
+            disabled={saving || students.length === 0 || isHistoricalView}
+            title={isHistoricalView ? "Switch to the active school year to save attendance." : undefined}
           >
             {saved ? (
               <><Check className="w-5 h-5" /> Saved!</>

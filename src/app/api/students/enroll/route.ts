@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient as createServerClient } from "@/lib/supabase/server";
-import { createAdminClient, insertAuditLog } from "@/lib/supabase/admin";
+import { createAdminClient, insertAuditLog, insertEnrollmentTransition, assignStudentToClass } from "@/lib/supabase/admin";
 
 const VALID_STATUSES = ["enrolled", "waitlisted", "inquiry", "withdrawn", "completed"] as const;
 type EnrollStatus = (typeof VALID_STATUSES)[number];
@@ -219,19 +219,27 @@ export async function POST(req: NextRequest) {
   // which would violate the UNIQUE (student_id, school_year_id) constraint.
   const { data: existing } = await admin
     .from("enrollments")
-    .select("id")
+    .select("id, status, progression_status, class_id")
     .eq("student_id", studentId)
     .eq("school_year_id", schoolYearId)
-    .maybeSingle();
+    .maybeSingle() as { data: { id: string; status: string; progression_status: string | null; class_id: string } | null };
 
   let enrollmentId: string;
 
+  // Assignment date: prefer explicit startDate, else today (ISO YYYY-MM-DD)
+  const assignmentDate = startDate ?? new Date().toISOString().slice(0, 10);
+
   if (existing?.id) {
-    // Update existing enrollment to the new class
+    const classChanged = existing.class_id !== resolvedClassId;
+
+    // Update enrollment fields. When the class is changing, omit class_id here —
+    // assignStudentToClass (syncEnrollment=true) updates it after the assignment
+    // row is safely written, preserving the invariant that class_id never
+    // advances ahead of the assignment record.
     const { error: updateErr } = await admin
       .from("enrollments")
       .update({
-        class_id:           resolvedClassId,
+        ...(classChanged ? {} : { class_id: resolvedClassId }),
         academic_period_id: academicPeriodId ?? undefined,
         status,
         ...(startDate ? { start_date: startDate } : {}),
@@ -245,6 +253,57 @@ export async function POST(req: NextRequest) {
     }
     enrollmentId = existing.id;
 
+    if (classChanged) {
+      // Transfer: close prior open assignment, open a new one, sync enrollments.class_id
+      const { error: assignErr } = await assignStudentToClass(admin, {
+        enrollmentId,
+        classId:        resolvedClassId,
+        studentId,
+        schoolYearId,
+        startDate:      assignmentDate,
+        kind:           "transfer",
+        changedBy:      user.id,
+        syncEnrollment: true,
+      });
+      if (assignErr) {
+        console.error("[students/enroll] Transfer assignment failed:", assignErr);
+        return NextResponse.json({ error: assignErr }, { status: 500 });
+      }
+    } else {
+      // Same class — check whether an open assignment already exists.
+      // If not (e.g. student was withdrawn and is being re-enrolled), create one.
+      const { data: openAssign, error: openCheckErr } = await admin
+        .from("student_class_assignments")
+        .select("id")
+        .eq("enrollment_id", enrollmentId)
+        .is("end_date", null)
+        .maybeSingle();
+
+      if (openCheckErr) {
+        console.error("[students/enroll] Open assignment check failed:", openCheckErr);
+        return NextResponse.json({ error: openCheckErr.message }, { status: 500 });
+      }
+
+      if (!openAssign) {
+        // Re-enrollment: no open assignment exists — create a fresh initial one
+        const { error: reAssignErr } = await assignStudentToClass(admin, {
+          enrollmentId,
+          classId:        resolvedClassId,
+          studentId,
+          schoolYearId,
+          startDate:      assignmentDate,
+          kind:           "initial",
+          changedBy:      user.id,
+          changeReason:   "re-enrollment",
+          syncEnrollment: false,
+        });
+        if (reAssignErr) {
+          console.error("[students/enroll] Re-enrollment assignment failed:", reAssignErr);
+          return NextResponse.json({ error: reAssignErr }, { status: 500 });
+        }
+      }
+    }
+
     await insertAuditLog(admin, {
       schoolId,
       actorUserId: user.id,
@@ -254,8 +313,18 @@ export async function POST(req: NextRequest) {
       action:      "UPDATE",
       newValues:   { class_id: resolvedClassId, status, school_year_id: schoolYearId },
     });
+    await insertEnrollmentTransition(admin, {
+      enrollmentId,
+      transitionKind:          "status_change",
+      fromStatus:              existing.status,
+      toStatus:                status,
+      fromProgressionStatus:   existing.progression_status,
+      toProgressionStatus:     existing.progression_status,
+      changedBy:               user.id,
+    });
   } else {
-    // Insert new enrollment
+    // Insert new enrollment — class_id must be in the INSERT (NOT NULL constraint).
+    // The assignment record is created immediately after; failure here returns 500.
     const { data: inserted, error: insertErr } = await admin.from("enrollments").insert({
       student_id:         studentId,
       class_id:           resolvedClassId,
@@ -272,6 +341,22 @@ export async function POST(req: NextRequest) {
     }
     enrollmentId = inserted!.id;
 
+    // Create initial assignment (syncEnrollment=false — class_id already in INSERT above)
+    const { error: assignErr } = await assignStudentToClass(admin, {
+      enrollmentId,
+      classId:        resolvedClassId,
+      studentId,
+      schoolYearId,
+      startDate:      assignmentDate,
+      kind:           "initial",
+      changedBy:      user.id,
+      syncEnrollment: false,
+    });
+    if (assignErr) {
+      console.error("[students/enroll] Initial assignment failed:", assignErr);
+      return NextResponse.json({ error: assignErr }, { status: 500 });
+    }
+
     await insertAuditLog(admin, {
       schoolId,
       actorUserId: user.id,
@@ -280,6 +365,12 @@ export async function POST(req: NextRequest) {
       recordId:    enrollmentId,
       action:      "INSERT",
       newValues:   { student_id: studentId, class_id: resolvedClassId, level, school_year_id: schoolYearId, status },
+    });
+    await insertEnrollmentTransition(admin, {
+      enrollmentId,
+      transitionKind: "enrolled",
+      toStatus:       status,
+      changedBy:      user.id,
     });
   }
 
@@ -298,6 +389,15 @@ export async function POST(req: NextRequest) {
       recordId:    sourceEnrollmentId,
       action:      "UPDATE",
       newValues:   { progression_status: "placed", source: "pending_placement" },
+    });
+    await insertEnrollmentTransition(admin, {
+      enrollmentId:           sourceEnrollmentId,
+      transitionKind:         "progression_classified",
+      fromStatus:             "enrolled",
+      toStatus:               "enrolled",
+      fromProgressionStatus:  "promoted_pending_placement",
+      toProgressionStatus:    "placed",
+      changedBy:              user.id,
     });
   }
 

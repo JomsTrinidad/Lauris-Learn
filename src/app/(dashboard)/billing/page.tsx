@@ -427,9 +427,13 @@ export default function BillingPage() {
   }
 
   async function handlePayment() {
-    if (!paymentModal || !payment.amount) return;
+    if (!paymentModal) return;
+    if (!payment.amount || !parseFloat(payment.amount) || parseFloat(payment.amount) <= 0) {
+      setFormError("Enter a valid payment amount greater than zero.");
+      return;
+    }
     const amount = parseFloat(payment.amount);
-    if (!amount || amount <= 0) { setFormError("Enter a valid payment amount greater than zero."); return; }
+    if (amount <= 0) { setFormError("Enter a valid payment amount greater than zero."); return; }
     const balance = paymentModal.amountDue - paymentModal.amountPaid;
     if (amount > balance + 0.01) { setFormError(`Payment of ${formatCurrency(amount)} exceeds the remaining balance of ${formatCurrency(balance)}.`); return; }
     if (paymentSequenceWarning && !paymentOverrideReason.trim()) { setFormError("Please provide a reason to proceed despite earlier unpaid months."); return; }

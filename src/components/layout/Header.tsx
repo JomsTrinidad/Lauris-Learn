@@ -59,6 +59,18 @@ export function Header({
 
   const displayYear = viewingYear?.name ?? schoolYear;
 
+  // Historical view: viewing year is not the active year
+  const activeYearEntry = allSchoolYears.find((y) => y.status === "active");
+  const isHistoricalView = activeYearEntry != null && viewingYear != null && viewingYear.id !== activeYearEntry.id;
+
+  const STATUS_LABELS: Record<string, string> = {
+    active:   "Active",
+    archived: "Archived",
+    closed:   "Closed",
+    draft:    "Draft",
+    planned:  "Planned",
+  };
+
   return (
     <header className="bg-card border-b border-border px-4 py-3 flex items-center justify-between flex-shrink-0">
       {/* Left: hamburger toggle + back link or school name */}
@@ -91,10 +103,16 @@ export function Header({
         <div ref={yearMenuRef} className="relative hidden sm:block">
           <button
             onClick={() => setYearMenuOpen((v) => !v)}
-            className="flex items-center gap-2 px-3 py-1.5 bg-muted rounded-lg text-sm hover:bg-accent transition-colors"
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors ${
+              isHistoricalView
+                ? "bg-amber-100 border border-amber-300 hover:bg-amber-200"
+                : "bg-muted hover:bg-accent"
+            }`}
           >
-            <span className="text-muted-foreground">{displayYear}</span>
-            <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
+            <span className={isHistoricalView ? "text-amber-700 font-medium" : "text-muted-foreground"}>
+              {displayYear}
+            </span>
+            <ChevronDown className={`w-3.5 h-3.5 ${isHistoricalView ? "text-amber-600" : "text-muted-foreground"}`} />
           </button>
 
           {yearMenuOpen && allSchoolYears.length > 0 && (
@@ -106,26 +124,17 @@ export function Header({
                   return (
                     <button
                       key={year.id}
-                      disabled={!isActive}
                       onClick={() => {
-                        if (!isActive) return;
                         onSelectYear?.(year);
                         setYearMenuOpen(false);
                       }}
-                      className={`w-full flex items-center justify-between px-3 py-2 text-sm rounded-md text-left transition-colors ${
-                        isActive
-                          ? "hover:bg-accent cursor-pointer"
-                          : "opacity-50 cursor-not-allowed"
-                      }`}
+                      className="w-full flex items-center justify-between px-3 py-2 text-sm rounded-md text-left hover:bg-accent transition-colors cursor-pointer"
                     >
                       <span>{year.name}</span>
                       <div className="flex items-center gap-1.5">
-                        {isActive && (
-                          <span className="text-xs text-emerald-600 font-medium">Active</span>
-                        )}
-                        {!isActive && (
-                          <span className="text-xs text-muted-foreground">Coming soon</span>
-                        )}
+                        <span className={`text-xs font-medium ${isActive ? "text-emerald-600" : "text-muted-foreground"}`}>
+                          {STATUS_LABELS[year.status] ?? year.status}
+                        </span>
                         {isSelected && (
                           <Check className="w-3.5 h-3.5 text-primary" />
                         )}

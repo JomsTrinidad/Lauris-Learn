@@ -135,8 +135,29 @@ function SubscriptionBanner() {
 }
 
 function HistoricalViewBanner() {
-  // Suppressed until historical filtering is fully wired to page queries.
-  return null;
+  const { isHistoricalView, viewingYear, activeYear, setViewingYear } = useSchoolContext();
+
+  if (!isHistoricalView || !viewingYear) return null;
+
+  return (
+    <div className="bg-amber-500 text-white px-4 py-2.5 flex items-center justify-between text-sm">
+      <div className="flex items-center gap-2">
+        <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+        <span>
+          Viewing <span className="font-semibold">{viewingYear.name}</span>
+          <span className="hidden sm:inline"> — historical data is read-only.</span>
+        </span>
+      </div>
+      {activeYear && (
+        <button
+          onClick={() => setViewingYear(activeYear)}
+          className="px-3 py-1 bg-white text-amber-600 rounded-md text-xs font-semibold hover:bg-amber-50 transition-colors"
+        >
+          Return to {activeYear.name}
+        </button>
+      )}
+    </div>
+  );
 }
 
 function ImpersonationBanner() {

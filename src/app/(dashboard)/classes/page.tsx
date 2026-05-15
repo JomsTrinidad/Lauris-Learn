@@ -204,7 +204,7 @@ export default function ClassesPage() {
 
     if (classIds.length > 0) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const eResult = await supabase.from("enrollments").select("class_id").in("class_id", classIds).eq("status", "enrolled") as any;
+      const eResult = await supabase.from("enrollments").select("class_id").in("class_id", classIds).eq("status", "enrolled").eq("school_year_id", yearId) as any;
       const enrollRows = ((eResult.data ?? []) as any[]) as Array<{ class_id: string }>;
       enrollRows.forEach((e) => {
         enrolledByClass[e.class_id] = (enrolledByClass[e.class_id] ?? 0) + 1;
@@ -278,7 +278,8 @@ export default function ClassesPage() {
       .from("enrollments")
       .select(`id, students(id, first_name, last_name, preferred_name, gender, date_of_birth, guardians(full_name, phone, relationship, is_emergency_contact))`)
       .eq("class_id", cls.id)
-      .eq("status", "enrolled");
+      .eq("status", "enrolled")
+      .eq("school_year_id", activeYear?.id ?? "");
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rows: RosterStudent[] = ((data ?? []) as any[]).map((enr: any) => {

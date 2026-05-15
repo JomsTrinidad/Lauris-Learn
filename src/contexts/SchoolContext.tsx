@@ -289,6 +289,10 @@ export function SchoolProvider({ children }: { children: ReactNode }) {
     setValue((v) => ({ ...v, viewingYear: year }));
   }
 
+  // isHistoricalView is PRESENTATION CONTEXT ONLY.
+  // It does not grant write permission on historical data and must not be used
+  // as the target year for enrollment, attendance, or billing writes.
+  // Pages that write must validate school_years.status independently.
   const isHistoricalView = value.activeYear !== null && value.viewingYear?.id !== value.activeYear?.id;
 
   return (

@@ -316,18 +316,23 @@ export default function DocumentsPage() {
         )}
       </div>
 
-      {/* Active student-filter chip (when navigated from a student row) */}
+      {/* Active student-filter context banner (when navigated from a student row) */}
       {studentFilter && (
-        <div className="flex items-center gap-2 px-3 py-2 bg-primary/5 border border-primary/20 rounded-lg">
-          <span className="text-sm text-foreground">
-            Showing documents for <strong>{studentFilter.name}</strong>
-          </span>
+        <div className="rounded-xl border border-primary/40 bg-primary/5 p-4 flex items-center gap-4">
+          <div className="w-10 h-10 rounded-full bg-primary/15 flex items-center justify-center shrink-0">
+            <UserCircle2 className="w-6 h-6 text-primary" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-[11px] font-semibold text-primary/70 uppercase tracking-wider leading-none mb-0.5">Filtered to student</p>
+            <p className="text-base font-bold text-foreground leading-tight">{studentFilter.name}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Showing only this student's documents. Upload and Request actions will also be pre-filled for this student.</p>
+          </div>
           <button
             onClick={clearStudentFilter}
-            className="ml-auto inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            className="shrink-0 flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg border border-border bg-background hover:bg-muted transition-colors"
           >
-            <X className="w-3 h-3" />
-            Clear
+            <X className="w-3.5 h-3.5" />
+            View all documents
           </button>
         </div>
       )}

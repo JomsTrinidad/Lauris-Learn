@@ -561,6 +561,78 @@ All implemented in `supabase/migrations/002_super_admin_trial_periods_tuition.sq
 
 ---
 
+## Historical Foundation Architecture (Phases 2–5)
+
+Rules that must be followed when touching any enrollment, class assignment, school-year, or historical-view code. Violating these silently breaks historical correctness.
+
+### Source-of-truth map
+
+| Question | Authoritative source |
+|---|---|
+| Who is this child? (cross-app) | `child_profiles` |
+| Who is this student? (school operational) | `students` |
+| What is their current class this year? | `enrollments.class_id` (backward-compat cache) |
+| What class were they in on a specific date? | `student_class_assignments` (effective-dated) |
+| What happened to their enrollment over time? | `enrollment_transitions` (supplementary history) |
+| What was their outcome when the year closed? | `school_year_completions` (write-once snapshot) |
+| What is the admin currently viewing? | `SchoolContext.viewingYear` (UI context only) |
+
+### `child_profiles` vs `students`
+
+- `child_profiles` = canonical cross-org child identity. School-agnostic. Shared with sister apps (Lauris Care). Lives in Phases 1–6 RLS path.
+- `students` = school operational projection of a child. Scoped to `school_id`. One `student` row per school per child. All school data (enrollments, attendance, billing) attaches here.
+- `students.child_profile_id` is a nullable FK — existing students without a linked profile behave identically in all school-side code.
+
+### `enrollments` — current participation state
+
+- `enrollments.status` and `enrollments.progression_status` are **operational mutable state** — they reflect the student's current state for the active year.
+- **Do NOT read these as historical truth** once a year is closed. Use `school_year_completions` instead.
+- `enrollments.class_id` is a **backward-compatible cache** of the student's current class. It is kept in sync by `assignStudentToClass()`. Do not write it directly on transfers.
+
+### `enrollment_transitions` — supplementary lifecycle log
+
+- Records status/progression changes as a queryable timeline.
+- **Non-blocking**: insert failures are logged but never propagate to callers. Do not use as a business-logic source.
+- **Not event sourcing**: it is a read-only audit supplement, not the source of current state.
+- All paths that write `enrollments.status` or `enrollments.progression_status` MUST call `insertEnrollmentTransition()` (server routes) or `insertEnrollmentTransitionClient()` (browser).
+
+### `student_class_assignments` — authoritative historical placement
+
+- Every class assignment has an effective date range (`start_date` / `end_date`). Open assignment has `end_date = NULL`.
+- `enrollments.class_id` must always match the open `student_class_assignments` row for that enrollment.
+- **Always use `assignStudentToClass()` for all class changes** (initial placement, transfers, corrections). Never write `student_class_assignments` rows directly from API routes. Never write `enrollments.class_id` directly on a transfer.
+- Attendance and roster queries that need "who was in class on date X" MUST query `student_class_assignments` with `lte(start_date, X).or("end_date.is.null,end_date.gte.X")`. Using `enrollments.class_id` for historical date queries returns the current class, which diverges after a transfer.
+
+### `SchoolContext.viewingYear` — UI presentation context only
+
+- `viewingYear` is set by the Header year-switcher. It is a **presentation hint** for which year the admin wants to browse.
+- **Not authorization**: write operations must always check `school_years.status` independently. A page showing historical data does not grant write permission on that year's records.
+- **Not mutation authority**: pages that write data must use `activeYear.id` or explicitly validate the target year's status. Never use `viewingYear.id` as the target for enrollment, attendance, or billing writes.
+- Implemented in `SchoolContext.tsx` via `isHistoricalView = viewingYear?.id !== activeYear?.id`. Pages that respect it: Students (Add button, Classify button), Attendance (Save button).
+
+### `school_year_completions` — durable year-end truth
+
+- Written when a school year is closed via `POST /api/school-years/close`. One row per student per year.
+- **Write-once**: no UPDATE policy exists at the DB level. The correction workflow is: admin clicks "Regenerate Snapshots" → `POST /api/school-years/regenerate-snapshots` → deletes old rows, re-inserts from current enrollment data.
+- After a year is closed, use `school_year_completions` for year-end outcome queries (`completion_status`, `progression_status`, `final_class_name`, `final_level_name`). The enrolled record's `progression_status` may have been updated after close.
+- Snapshot generation is triggered synchronously by the close route. If it fails (partial failure), the year is already closed but snapshots may be empty. Use the regeneration route from Settings → School Years → Closed year → "Regenerate Snapshots".
+
+### `audit_logs` — forensic/debugging only
+
+- Written by `insertAuditLog()` in server routes and by DB triggers.
+- **Non-blocking**: insert failures never block the main operation.
+- Do not use for business-logic queries or reporting. Use the operational tables for current state, `enrollment_transitions` for lifecycle history, `school_year_completions` for year-end outcomes.
+
+### Year-close lifecycle — MUST go through API routes
+
+The Settings page school year edit modal (`saveSy()`) only edits **name and dates**. Status changes (active/closed) are **only allowed through dedicated lifecycle buttons**:
+- `Activate` button → `activateSy()` → `performActivateSy()` → `POST /api/school-years/close` (for old year) + direct activate (for new year)
+- `Close School Year` button → `initiateCloseYear()` → `confirmCloseYear()` → `POST /api/school-years/close`
+
+Bypassing these routes to write `school_years.status = 'closed'` directly (e.g., via Supabase SQL editor or the edit modal) will produce a closed year with zero completion snapshots.
+
+---
+
 ## Coding Conventions
 
 - All pages are `"use client"` with `useEffect` + Supabase client for data fetching

@@ -356,6 +356,149 @@ export type Database = {
           { foreignKeyName: "enrollments_academic_period_id_fkey"; columns: ["academic_period_id"]; isOneToOne: false; referencedRelation: "academic_periods"; referencedColumns: ["id"] }
         ];
       };
+      student_class_assignments: {
+        Row: {
+          id: string;
+          enrollment_id: string;
+          class_id: string;
+          student_id: string;
+          school_year_id: string;
+          assignment_kind: "initial" | "transfer" | "correction";
+          start_date: string;
+          end_date: string | null;
+          changed_by: string | null;
+          change_reason: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          enrollment_id: string;
+          class_id: string;
+          student_id: string;
+          school_year_id: string;
+          assignment_kind: "initial" | "transfer" | "correction";
+          start_date: string;
+          end_date?: string | null;
+          changed_by?: string | null;
+          change_reason?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          enrollment_id?: string;
+          class_id?: string;
+          student_id?: string;
+          school_year_id?: string;
+          assignment_kind?: "initial" | "transfer" | "correction";
+          start_date?: string;
+          end_date?: string | null;
+          changed_by?: string | null;
+          change_reason?: string | null;
+        };
+        Relationships: [
+          { foreignKeyName: "sca_enrollment_id_fkey"; columns: ["enrollment_id"]; isOneToOne: false; referencedRelation: "enrollments"; referencedColumns: ["id"] },
+          { foreignKeyName: "sca_class_id_fkey"; columns: ["class_id"]; isOneToOne: false; referencedRelation: "classes"; referencedColumns: ["id"] },
+          { foreignKeyName: "sca_student_id_fkey"; columns: ["student_id"]; isOneToOne: false; referencedRelation: "students"; referencedColumns: ["id"] },
+          { foreignKeyName: "sca_school_year_id_fkey"; columns: ["school_year_id"]; isOneToOne: false; referencedRelation: "school_years"; referencedColumns: ["id"] },
+          { foreignKeyName: "sca_changed_by_fkey"; columns: ["changed_by"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] }
+        ];
+      };
+      enrollment_transitions: {
+        Row: {
+          id: string;
+          enrollment_id: string;
+          transition_kind: "enrolled" | "status_change" | "progression_classified" | "correction";
+          from_status: string | null;
+          to_status: string;
+          from_progression_status: string | null;
+          to_progression_status: string | null;
+          changed_by: string | null;
+          change_reason: string | null;
+          changed_at: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          enrollment_id: string;
+          transition_kind: "enrolled" | "status_change" | "progression_classified" | "correction";
+          from_status?: string | null;
+          to_status: string;
+          from_progression_status?: string | null;
+          to_progression_status?: string | null;
+          changed_by?: string | null;
+          change_reason?: string | null;
+          changed_at?: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          enrollment_id?: string;
+          transition_kind?: "enrolled" | "status_change" | "progression_classified" | "correction";
+          from_status?: string | null;
+          to_status?: string;
+          from_progression_status?: string | null;
+          to_progression_status?: string | null;
+          changed_by?: string | null;
+          change_reason?: string | null;
+          changed_at?: string;
+        };
+        Relationships: [
+          { foreignKeyName: "enrollment_transitions_enrollment_id_fkey"; columns: ["enrollment_id"]; isOneToOne: false; referencedRelation: "enrollments"; referencedColumns: ["id"] },
+          { foreignKeyName: "enrollment_transitions_changed_by_fkey"; columns: ["changed_by"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] }
+        ];
+      };
+      school_year_completions: {
+        Row: {
+          id: string;
+          school_id: string;
+          school_year_id: string;
+          student_id: string;
+          enrollment_id: string | null;
+          final_class_id: string | null;
+          final_class_name: string | null;
+          final_level_name: string | null;
+          completion_status: "completed" | "withdrawn" | "enrolled_at_close";
+          progression_status: string | null;
+          generated_at: string;
+          generated_by: string | null;
+        };
+        Insert: {
+          id?: string;
+          school_id: string;
+          school_year_id: string;
+          student_id: string;
+          enrollment_id?: string | null;
+          final_class_id?: string | null;
+          final_class_name?: string | null;
+          final_level_name?: string | null;
+          completion_status: "completed" | "withdrawn" | "enrolled_at_close";
+          progression_status?: string | null;
+          generated_at?: string;
+          generated_by?: string | null;
+        };
+        Update: {
+          id?: string;
+          school_id?: string;
+          school_year_id?: string;
+          student_id?: string;
+          enrollment_id?: string | null;
+          final_class_id?: string | null;
+          final_class_name?: string | null;
+          final_level_name?: string | null;
+          completion_status?: "completed" | "withdrawn" | "enrolled_at_close";
+          progression_status?: string | null;
+          generated_at?: string;
+          generated_by?: string | null;
+        };
+        Relationships: [
+          { foreignKeyName: "school_year_completions_school_id_fkey"; columns: ["school_id"]; isOneToOne: false; referencedRelation: "schools"; referencedColumns: ["id"] },
+          { foreignKeyName: "school_year_completions_school_year_id_fkey"; columns: ["school_year_id"]; isOneToOne: false; referencedRelation: "school_years"; referencedColumns: ["id"] },
+          { foreignKeyName: "school_year_completions_student_id_fkey"; columns: ["student_id"]; isOneToOne: false; referencedRelation: "students"; referencedColumns: ["id"] },
+          { foreignKeyName: "school_year_completions_enrollment_id_fkey"; columns: ["enrollment_id"]; isOneToOne: false; referencedRelation: "enrollments"; referencedColumns: ["id"] },
+          { foreignKeyName: "school_year_completions_final_class_id_fkey"; columns: ["final_class_id"]; isOneToOne: false; referencedRelation: "classes"; referencedColumns: ["id"] },
+          { foreignKeyName: "school_year_completions_generated_by_fkey"; columns: ["generated_by"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] }
+        ];
+      };
       attendance_records: {
         Row: {
           id: string;
