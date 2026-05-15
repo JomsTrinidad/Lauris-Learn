@@ -23,10 +23,15 @@ export const EMPTY_ADD: AddForm = {
 };
 
 export const STATUS_OPTS = [
-  { value: "", label: "All Statuses" }, { value: "unpaid", label: "Unpaid" },
-  { value: "partial", label: "Partial" }, { value: "paid", label: "Paid" },
-  { value: "overdue", label: "Overdue" }, { value: "waived", label: "Waived" },
-  { value: "cancelled", label: "Cancelled" }, { value: "refunded", label: "Refunded" },
+  { value: "", label: "All Statuses" },
+  { value: "due_soon", label: "Due Soon (7 days)" },
+  { value: "overdue", label: "Overdue" },
+  { value: "unpaid", label: "Unpaid" },
+  { value: "partial", label: "Partial" },
+  { value: "paid", label: "Paid" },
+  { value: "waived", label: "Waived" },
+  { value: "cancelled", label: "Cancelled" },
+  { value: "refunded", label: "Refunded" },
 ];
 export const EDITABLE_STATUSES: { value: BillingStatus; label: string }[] = [
   { value: "unpaid", label: "Unpaid" }, { value: "partial", label: "Partial" },

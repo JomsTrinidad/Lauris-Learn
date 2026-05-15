@@ -15,6 +15,7 @@ export { useParentDocuments } from "./useParentDocuments";
 
 // Billing Setup & Summary (Batch B1.6.1)
 export { useBillingSummary } from "./useBillingSummary";
+export { useFinancialWatchlist } from "./useFinancialWatchlist";
 export { useFeeTypes } from "./useFeeTypes";
 export { useTuitionConfigs } from "./useTuitionConfigs";
 export { useDiscounts } from "./useDiscounts";
@@ -28,3 +29,11 @@ export { useStudentCredits } from "./useStudentCredits";
 
 // Network & Resilience (Batch B1.9)
 export { useNetworkStatus } from "./useNetworkStatus";
+
+// Attendance signals — dashboard completion state
+export { useAttendanceSignals } from "./useAttendanceSignals";
+export type { AttendanceSignal, AttendanceSignalSeverity } from "./useAttendanceSignals";
+
+// Plan signals — IEP draft + awaiting-review counts for Student Support card
+export { usePlanSignals } from "./usePlanSignals";
+export type { PlanSignals } from "./usePlanSignals";

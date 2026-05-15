@@ -988,6 +988,84 @@ export async function generateDemoData(
     }
   }
 
+  // ── 11.8. IEP workflow demo scenarios ───────────────────────────────────────
+  // Two realistic in-progress IEP plans so the dashboard Student Support card
+  // surfaces coordination signals. Both belong to students that are past the
+  // special-case indices (0–3) and guaranteed to exist in every scenario.
+  //
+  // Scenario A — Teacher draft in preparation (status='draft')
+  //   A teacher has started an IEP for a student in the first class.
+  //   Planning is underway but the plan has not been submitted yet.
+  //
+  // Scenario B — Submitted, awaiting coordination (status='submitted')
+  //   A different student's IEP has been completed and submitted.
+  //   It is sitting in the review queue, waiting for school-admin coordination.
+  //   submitted_at is set to 3 days ago to give it realistic age.
+  {
+    const iepStudentA = studentIds[4];  // first non-special-case student
+    const iepStudentB = studentIds[5];  // second non-special-case student
+    const planAuthor  = teacherIds[0];  // first teacher profile (profiles.id = auth uid)
+
+    if (iepStudentA && iepStudentB && planAuthor) {
+      const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+
+      // Plan A — draft
+      const { data: planAData, error: planAErr } = await (admin as any)
+        .from("student_plans")
+        .insert({
+          school_id:    schoolId,
+          student_id:   iepStudentA,
+          school_year_id: schoolYearId,
+          plan_type:    "iep",
+          title:        "IEP — Communication and Social Skills",
+          status:       "draft",
+          strengths:    "Enthusiastic and curious learner. Strong visual memory.",
+          areas_of_need: "Expressive language, initiating peer interactions, turn-taking in group activities.",
+          created_by:   planAuthor,
+        })
+        .select("id")
+        .single();
+      if (planAErr) throw new Error(`IEP plan A insert: ${planAErr.message}`);
+      const planAId: string | null = (planAData as any)?.id ?? null;
+
+      // Plan B — submitted, awaiting review
+      const { data: planBData, error: planBErr } = await (admin as any)
+        .from("student_plans")
+        .insert({
+          school_id:    schoolId,
+          student_id:   iepStudentB,
+          school_year_id: schoolYearId,
+          plan_type:    "iep",
+          title:        "IEP — Fine Motor and Self-Care",
+          status:       "submitted",
+          strengths:    "Highly motivated and responds well to visual schedules.",
+          areas_of_need: "Fine motor precision, scissors use, fastening buttons and zippers.",
+          submitted_at: threeDaysAgo,
+          submitted_by: planAuthor,
+          created_by:   planAuthor,
+        })
+        .select("id")
+        .single();
+      if (planBErr) throw new Error(`IEP plan B insert: ${planBErr.message}`);
+      const planBId: string | null = (planBData as any)?.id ?? null;
+
+      // Add one goal to plan B so it looks substantive when opened in Plans & Forms
+      if (planBId) {
+        await (admin as any).from("student_plan_goals").insert({
+          plan_id:            planBId,
+          domain:             "Fine Motor",
+          description:        "Student will use scissors to cut along a straight line with no more than 2 corrections in 3 out of 4 trials.",
+          measurement_method: "Teacher observation + work sample",
+          responsible_person: "Classroom teacher and OT consultant",
+          sort_order:         1,
+        });
+      }
+
+      // suppress unused-variable lint for planAId (no sub-rows needed for the draft)
+      void planAId;
+    }
+  }
+
   // ── 12. Attendance records ──────────────────────────────────────────────────
   const days = schoolDays(shiftDate(cfg.attendStart, mo), shiftDate(cfg.attendEnd, mo));
   const attendRows: Record<string, unknown>[] = [];
@@ -1006,6 +1084,129 @@ export async function generateDemoData(
     studentClassOffset += count;
   });
   await batchInsert(admin, "attendance_records", attendRows, 200);
+
+  // ── 12.5. Today-relative attendance for dashboard attendance signals ─────────
+  // Seeds records for today + recent school days in the ACTIVE year's classes so
+  // the dashboard's attendance signals (consecutive absence, returned, full week)
+  // fire when the demo dashboard is viewed with all classes marked.
+  // Only runs on weekdays and only for small_preschool / compliance_heavy.
+  {
+    const todayDate = new Date().toISOString().slice(0, 10);
+    const todayDow = new Date(todayDate + "T00:00:00Z").getUTCDay();
+    const isTodayWeekday = todayDow >= 1 && todayDow <= 5;
+
+    if (!cfg.trialNewMode && isTodayWeekday && activeEnrollRows.length > 0) {
+      // Get last N school days (weekdays only), most recent first
+      function getRecentSchoolDaysLocal(n: number): string[] {
+        const days: string[] = [];
+        const cur = new Date(todayDate + "T00:00:00Z");
+        let guard = 0;
+        while (days.length < n && guard++ < 30) {
+          const dow = cur.getUTCDay();
+          if (dow >= 1 && dow <= 5) days.push(cur.toISOString().slice(0, 10));
+          cur.setUTCDate(cur.getUTCDate() - 1);
+        }
+        return days; // [today, yesterday, ...]
+      }
+
+      // School days Mon → today (oldest first)
+      function getThisWeekSchoolDaysLocal(): string[] {
+        const todayD = new Date(todayDate + "T00:00:00Z");
+        const dow = todayD.getUTCDay();
+        const daysSinceMon = dow === 0 ? 6 : dow - 1;
+        const days: string[] = [];
+        for (let i = daysSinceMon; i >= 0; i--) {
+          const d = new Date(todayD);
+          d.setUTCDate(d.getUTCDate() - i);
+          const ds = d.toISOString().slice(0, 10);
+          const dsw = new Date(ds + "T00:00:00Z").getUTCDay();
+          if (dsw >= 1 && dsw <= 5) days.push(ds);
+        }
+        return days;
+      }
+
+      const last5 = getRecentSchoolDaysLocal(5); // [today, D-1, D-2, D-3, D-4]
+      const thisWeekDays = getThisWeekSchoolDaysLocal();
+
+      // Map nextClassId → students enrolled this year
+      const activeStudentsByClass: Record<string, string[]> = {};
+      activeEnrollRows.forEach((enr) => {
+        const cId = enr.class_id as string;
+        (activeStudentsByClass[cId] ??= []).push(enr.student_id as string);
+      });
+
+      // Find the first active class with 3+ students (for consecutive/returned signals)
+      const signalClass = nextClassIds
+        .map((id) => ({ id, students: activeStudentsByClass[id] ?? [] }))
+        .find(({ students }) => students.length >= 3);
+
+      // Find the second active class with any students (for full-week signal)
+      const fullWeekClass = nextClassIds
+        .map((id) => ({ id, students: activeStudentsByClass[id] ?? [] }))
+        .filter(({ id }) => id !== signalClass?.id)
+        .find(({ students }) => students.length >= 1);
+
+      const signalAttRows: Record<string, unknown>[] = [];
+
+      if (signalClass) {
+        const { id: scId, students: scStudents } = signalClass;
+        const teacherRef = teacherIds[0] ?? null;
+
+        // Student 0: absent today + 2 prior school days → 3 consecutive absences
+        const absentSid = scStudents[0];
+        [last5[0], last5[1], last5[2]].filter(Boolean).forEach((d) => {
+          signalAttRows.push({ class_id: scId, student_id: absentSid, date: d, status: "absent", recorded_by: teacherRef });
+        });
+        // Day 3–4 ago: present (streak starts 3 days ago)
+        [last5[3], last5[4]].filter(Boolean).forEach((d) => {
+          signalAttRows.push({ class_id: scId, student_id: absentSid, date: d, status: "present", recorded_by: teacherRef });
+        });
+
+        // Student 1: present today, absent 3 prior days → returned signal
+        if (scStudents.length >= 2) {
+          const returnedSid = scStudents[1];
+          signalAttRows.push({ class_id: scId, student_id: returnedSid, date: last5[0], status: "present", recorded_by: teacherRef });
+          [last5[1], last5[2], last5[3]].filter(Boolean).forEach((d) => {
+            signalAttRows.push({ class_id: scId, student_id: returnedSid, date: d, status: "absent", recorded_by: teacherRef });
+          });
+          if (last5[4]) signalAttRows.push({ class_id: scId, student_id: returnedSid, date: last5[4], status: "present", recorded_by: teacherRef });
+        }
+
+        // Remaining students: present today (enough to mark the class as done)
+        scStudents.slice(2).forEach((sid) => {
+          signalAttRows.push({ class_id: scId, student_id: sid, date: last5[0], status: "present", recorded_by: teacherRef });
+        });
+      }
+
+      if (fullWeekClass && thisWeekDays.length >= 2) {
+        // All students present all week → class full-week streak signal
+        const { id: fwId, students: fwStudents } = fullWeekClass;
+        const teacherRef = teacherIds[1 % teacherIds.length] ?? null;
+        fwStudents.forEach((sid) => {
+          thisWeekDays.forEach((d) => {
+            // Avoid duplicate if today was already added via signalClass logic
+            if (fwId !== signalClass?.id) {
+              signalAttRows.push({ class_id: fwId, student_id: sid, date: d, status: "present", recorded_by: teacherRef });
+            }
+          });
+        });
+      }
+
+      // All other active classes: mark every student present today so allClassesMarked is true
+      nextClassIds.forEach((classId, idx) => {
+        if (classId === signalClass?.id || classId === fullWeekClass?.id) return;
+        const students = activeStudentsByClass[classId] ?? [];
+        const teacherRef = teacherIds[idx % teacherIds.length] ?? null;
+        students.forEach((sid) => {
+          signalAttRows.push({ class_id: classId, student_id: sid, date: last5[0], status: "present", recorded_by: teacherRef });
+        });
+      });
+
+      if (signalAttRows.length > 0) {
+        await batchInsert(admin, "attendance_records", signalAttRows, 200);
+      }
+    }
+  }
 
   // ── 13. Billing records + payments ─────────────────────────────────────────
   const shiftedBillingMonths = cfg.billingMonths.map((m) => shiftDate(m, mo));
@@ -1531,6 +1732,17 @@ export async function clearDemoData(
   }
   await mustDelete(admin, "document_access_events", q => q.eq("school_id", schoolId));
   await mustDelete(admin, "external_contacts",      q => q.eq("school_id", schoolId));
+
+  // student_plans — FK to students is RESTRICT; delete sub-rows first
+  const { data: planData } = await (admin as any).from("student_plans").select("id").eq("school_id", schoolId);
+  const planIds: string[] = (planData ?? []).map((p: any) => p.id);
+  if (planIds.length) {
+    await mustDelete(admin, "student_plan_attachments",      q => q.in("plan_id", planIds));
+    await mustDelete(admin, "student_plan_progress_entries", q => q.in("plan_id", planIds));
+    await mustDelete(admin, "student_plan_interventions",    q => q.in("plan_id", planIds));
+    await mustDelete(admin, "student_plan_goals",            q => q.in("plan_id", planIds));
+    await mustDelete(admin, "student_plans",                 q => q.in("id", planIds));
+  }
 
   if (studentIds.length) await (admin as any).from("guardians").delete().in("student_id", studentIds);
   await mustDelete(admin, "students", q => q.eq("school_id", schoolId));

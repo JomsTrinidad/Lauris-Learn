@@ -4,27 +4,22 @@ import { queryKeys } from "@/lib/query-client";
 
 export interface DashboardStats {
   totalEnrolled: number;
-  unpaidCount: number;
+  unpaidOnlyCount: number;
+  partialCount: number;
   overdueCount: number;
+  dueSoonCount: number;
   upcomingEvents: number;
   inquiryCount: number;
   waitlistedCount: number;
   enrolledCount: number;
 }
 
-/**
- * useDashboardStats — fetch summary stats for the dashboard.
- *
- * High-traffic read: Dashboard page loads multiple stats.
- * Breaking these out as separate queries allows them to be:
- * - Cached independently
- * - Fetched in parallel
- * - Retried individually if one fails
- *
- * Note: This is currently a composite hook. In the future, it can be split
- * into individual hooks (useEnrolledCount, useUnpaidCount, etc.) for finer control.
- */
-export function useDashboardStats(schoolId: string | null, schoolYearId: string | null) {
+export function useDashboardStats(
+  schoolId: string | null,
+  schoolYearId: string | null,
+  yearStart: string | null = null,
+  yearEnd: string | null = null,
+) {
   const supabase = createClient();
 
   return useQuery({
@@ -32,59 +27,81 @@ export function useDashboardStats(schoolId: string | null, schoolYearId: string 
     queryFn: async () => {
       if (!schoolId || !schoolYearId) throw new Error("schoolId and schoolYearId required");
 
-      // Fetch all stats in parallel
-      const [enrolled, unpaid, overdue, upcoming, inquiry, waitlisted] = await Promise.all([
-        // Enrolled students
-        supabase
-          .from("enrollments")
-          .select("id", { count: "exact", head: true })
-          .eq("school_year_id", schoolYearId)
-          .eq("status", "enrolled"),
+      const today = new Date().toISOString().split("T")[0];
+      const sevenDaysLater = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+        .toISOString()
+        .split("T")[0];
 
-        // Unpaid billing records
-        supabase
+      const billingBase = () => {
+        let q = supabase
           .from("billing_records")
           .select("id", { count: "exact", head: true })
-          .eq("school_id", schoolId)
-          .in("status", ["unpaid", "partial"]),
+          .eq("school_id", schoolId);
+        if (yearStart) q = q.gte("billing_month", yearStart);
+        if (yearEnd) q = q.lte("billing_month", yearEnd);
+        return q;
+      };
 
-        // Overdue billing records — matches computeStatus() in billing page:
-        // "overdue" = DB status 'overdue' OR (status 'unpaid' AND due_date < today).
-        // 'partial' records past due date still show as "partial" (not overdue) because
-        // computeStatus returns "partial" whenever amountPaid > 0, so exclude them here.
-        supabase
-          .from("billing_records")
-          .select("id", { count: "exact", head: true })
-          .eq("school_id", schoolId)
-          .or(`status.eq.overdue,and(status.eq.unpaid,due_date.lt.${new Date().toISOString().split("T")[0]})`),
+      const [enrolled, unpaidOnly, partial, overdue, dueSoon, upcoming, inquiry, waitlisted] =
+        await Promise.all([
+          // Enrolled students
+          supabase
+            .from("enrollments")
+            .select("id", { count: "exact", head: true })
+            .eq("school_year_id", schoolYearId)
+            .eq("status", "enrolled"),
 
-        // Upcoming events (next 30 days)
-        supabase
-          .from("events")
-          .select("id", { count: "exact", head: true })
-          .eq("school_id", schoolId)
-          .gte("event_date", new Date().toISOString().split("T")[0])
-          .lte("event_date", new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]),
+          // Unpaid but NOT yet overdue
+          billingBase()
+            .eq("status", "unpaid")
+            .or(`due_date.is.null,due_date.gte.${today}`),
 
-        // Inquiry enrollments
-        supabase
-          .from("enrollments")
-          .select("id", { count: "exact", head: true })
-          .eq("school_year_id", schoolYearId)
-          .eq("status", "inquiry"),
+          // Partial payments
+          billingBase().eq("status", "partial"),
 
-        // Waitlisted enrollments
-        supabase
-          .from("enrollments")
-          .select("id", { count: "exact", head: true })
-          .eq("school_year_id", schoolYearId)
-          .eq("status", "waitlisted"),
-      ]);
+          // Overdue: DB status 'overdue' OR (status 'unpaid' AND due_date < today)
+          billingBase().or(
+            `status.eq.overdue,and(status.eq.unpaid,due_date.lt.${today})`,
+          ),
+
+          // Due soon: unpaid or partial with due_date in the next 7 days
+          billingBase()
+            .in("status", ["unpaid", "partial"])
+            .gte("due_date", today)
+            .lte("due_date", sevenDaysLater),
+
+          // Upcoming events (next 30 days)
+          supabase
+            .from("events")
+            .select("id", { count: "exact", head: true })
+            .eq("school_id", schoolId)
+            .gte("event_date", today)
+            .lte(
+              "event_date",
+              new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
+            ),
+
+          // Inquiry enrollments
+          supabase
+            .from("enrollments")
+            .select("id", { count: "exact", head: true })
+            .eq("school_year_id", schoolYearId)
+            .eq("status", "inquiry"),
+
+          // Waitlisted enrollments
+          supabase
+            .from("enrollments")
+            .select("id", { count: "exact", head: true })
+            .eq("school_year_id", schoolYearId)
+            .eq("status", "waitlisted"),
+        ]);
 
       const stats: DashboardStats = {
         totalEnrolled: enrolled.count || 0,
-        unpaidCount: unpaid.count || 0,
+        unpaidOnlyCount: unpaidOnly.count || 0,
+        partialCount: partial.count || 0,
         overdueCount: overdue.count || 0,
+        dueSoonCount: dueSoon.count || 0,
         upcomingEvents: upcoming.count || 0,
         inquiryCount: inquiry.count || 0,
         waitlistedCount: waitlisted.count || 0,
@@ -94,8 +111,6 @@ export function useDashboardStats(schoolId: string | null, schoolYearId: string 
       return stats;
     },
     enabled: !!(schoolId && schoolYearId),
-    // Refresh stats every 60 seconds on the dashboard
-    // (slower than default staleTime but prevents excessive polling)
     staleTime: 60 * 1000,
   });
 }

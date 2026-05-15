@@ -5,6 +5,7 @@ import {
   Search, Plus, Banknote, Pencil, CheckSquare, History,
   Printer, AlertTriangle, Wand2, Check, ImageIcon, HelpCircle,
   ChevronDown, ChevronRight, BookOpen, Tag, FileText, Settings2, X,
+  Bell, Phone, Mail, Copy, Users,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -149,11 +150,30 @@ export default function BillingPage() {
   const [statementData, setStatementData] = useState<StatementRow[]>([]);
   const [statementLoading, setStatementLoading] = useState(false);
 
+  // Contact list modal (for overdue / due_soon notify action)
+  const [contactListOpen, setContactListOpen] = useState(false);
+  const [contactListLoading, setContactListLoading] = useState(false);
+  const [contactListData, setContactListData] = useState<
+    Array<{ studentName: string; guardianName: string; relationship: string; phone: string | null; email: string | null }>
+  >([]);
+  const [contactListCopied, setContactListCopied] = useState(false);
+
   useEffect(() => {
     if (!schoolId) { setLoading(false); return; }
     loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [schoolId, activeYear?.id]);
+
+  // Pre-select filter from URL param (e.g. dashboard links)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const filter = params.get("filter");
+    if (filter) {
+      setStatusFilter(filter);
+      if (filter === "due_soon" || filter === "overdue") setShowSettled(false);
+    }
+  }, []);
 
   async function loadRecords(): Promise<{ list: BillingRecord[]; ids: string[] } | null> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -513,6 +533,7 @@ export default function BillingPage() {
     void queryClient.invalidateQueries({ queryKey: queryKeys.billingRecords.list(schoolId || "", activeYear?.id || "") });
     void queryClient.invalidateQueries({ queryKey: queryKeys.billingSummary.for(schoolId || "", activeYear?.id || "") });
     void queryClient.invalidateQueries({ queryKey: queryKeys.studentBillingRecords.for(paymentModal.studentId) });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.financialWatchlist.all });
     await refreshData();
   }
 
@@ -572,6 +593,7 @@ export default function BillingPage() {
       void queryClient.invalidateQueries({ queryKey: queryKeys.payments.list(schoolId || "", activeYear?.id || "") });
     }
     void queryClient.invalidateQueries({ queryKey: queryKeys.studentBillingRecords.for(addForm.studentId) });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.financialWatchlist.all });
     await refreshData();
   }
 
@@ -603,6 +625,7 @@ export default function BillingPage() {
     void queryClient.invalidateQueries({ queryKey: queryKeys.billingRecords.list(schoolId || "", activeYear?.id || "") });
     void queryClient.invalidateQueries({ queryKey: queryKeys.billingSummary.for(schoolId || "", activeYear?.id || "") });
     void queryClient.invalidateQueries({ queryKey: queryKeys.studentBillingRecords.for(editModal.studentId) });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.financialWatchlist.all });
     await refreshData();
   }
 
@@ -628,6 +651,7 @@ export default function BillingPage() {
     void queryClient.invalidateQueries({ queryKey: queryKeys.payments.list(schoolId || "", activeYear?.id || "") });
     void queryClient.invalidateQueries({ queryKey: queryKeys.billingRecords.list(schoolId || "", activeYear?.id || "") });
     void queryClient.invalidateQueries({ queryKey: queryKeys.billingSummary.for(schoolId || "", activeYear?.id || "") });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.financialWatchlist.all });
     // Invalidate for all affected students
     for (const record of bulkConfirmModal.records) {
       void queryClient.invalidateQueries({ queryKey: queryKeys.studentBillingRecords.for(record.studentId) });
@@ -694,6 +718,7 @@ export default function BillingPage() {
     // Invalidate cache after successful update
     void queryClient.invalidateQueries({ queryKey: queryKeys.payments.list(schoolId || "", activeYear?.id || "") });
     void queryClient.invalidateQueries({ queryKey: queryKeys.studentBillingRecords.for(editPaymentModal?.id || "") });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.financialWatchlist.all });
     // Reopen history modal so the updated row is visible
     if (editPaymentRecord) await openHistoryModal(editPaymentRecord);
     await refreshData();
@@ -738,14 +763,64 @@ export default function BillingPage() {
   // Derived
   const classNames = Array.from(new Set(records.map((r) => r.className).filter((n) => n !== "—")));
   const SETTLED_STATUSES = new Set<BillingStatus>(["paid", "cancelled", "waived", "refunded"]);
+  const todayStr = new Date().toISOString().split("T")[0];
+  const sevenDaysStr = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
   const filtered = records.filter((r) => {
     if (!showSettled && SETTLED_STATUSES.has(r.status)) return false;
     const matchSearch = !search || r.studentName.toLowerCase().includes(search.toLowerCase());
     const matchClass = !classFilter || r.className === classFilter;
-    const matchStatus = !statusFilter || r.status === statusFilter;
     const matchMonth = !monthFilter || r.billingMonth === monthFilter;
+    let matchStatus: boolean;
+    if (!statusFilter) {
+      matchStatus = true;
+    } else if (statusFilter === "due_soon") {
+      matchStatus = (r.status === "unpaid" || r.status === "partial")
+        && !!r.dueDate && r.dueDate >= todayStr && r.dueDate <= sevenDaysStr;
+    } else {
+      matchStatus = r.status === statusFilter;
+    }
     return matchSearch && matchClass && matchStatus && matchMonth;
   });
+
+  async function loadContactList() {
+    if (!schoolId) return;
+    setContactListLoading(true);
+    setContactListOpen(true);
+    setContactListData([]);
+    const studentIds = [...new Set(filtered.map((r) => r.studentId))];
+    const { data } = await supabase
+      .from("guardians")
+      .select("student_id, full_name, relationship, phone, email, is_primary")
+      .in("student_id", studentIds)
+      .order("is_primary", { ascending: false });
+    const seen = new Set<string>();
+    const rows: typeof contactListData = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ((data ?? []) as any[]).forEach((g: any) => {
+      if (seen.has(g.student_id)) return;
+      seen.add(g.student_id);
+      const student = filtered.find((r) => r.studentId === g.student_id);
+      rows.push({
+        studentName: student?.studentName ?? "",
+        guardianName: g.full_name ?? "",
+        relationship: g.relationship ?? "",
+        phone: g.phone ?? null,
+        email: g.email ?? null,
+      });
+    });
+    rows.sort((a, b) => a.studentName.localeCompare(b.studentName));
+    setContactListData(rows);
+    setContactListLoading(false);
+  }
+
+  function copyContactList() {
+    const lines = contactListData.map((r) =>
+      `${r.studentName} — ${r.guardianName}${r.relationship ? ` (${r.relationship})` : ""}${r.phone ? ` · ${r.phone}` : ""}${r.email ? ` · ${r.email}` : ""}`
+    );
+    navigator.clipboard.writeText(lines.join("\n"));
+    setContactListCopied(true);
+    setTimeout(() => setContactListCopied(false), 2000);
+  }
   const selectableFiltered = filtered.filter((r) => r.status !== "paid" && r.status !== "cancelled" && r.status !== "refunded" && r.status !== "waived");
   const allFilteredSelected = selectableFiltered.length > 0 && selectableFiltered.every((r) => selectedIds.has(r.id));
   const stmtTotalDue = statementData.reduce((a, r) => a + r.billingRecord.amountDue, 0);
@@ -838,6 +913,22 @@ export default function BillingPage() {
             </label>
           </div>
 
+          {/* Notify families banner */}
+          {(statusFilter === "overdue" || statusFilter === "due_soon") && filtered.length > 0 && (
+            <div className="flex items-center justify-between px-4 py-2.5 bg-blue-50 border border-blue-200 rounded-lg">
+              <div className="flex items-center gap-2">
+                <Bell className="w-4 h-4 text-blue-600 shrink-0" />
+                <span className="text-sm text-blue-800 font-medium">
+                  {filtered.length} {statusFilter === "overdue" ? "overdue" : "upcoming"} account{filtered.length !== 1 ? "s" : ""} —
+                  <span className="text-blue-600 font-normal"> families may need a reminder</span>
+                </span>
+              </div>
+              <Button size="sm" variant="outline" onClick={loadContactList} className="border-blue-300 text-blue-700 hover:bg-blue-100 shrink-0">
+                <Users className="w-3.5 h-3.5" /> View Contact List
+              </Button>
+            </div>
+          )}
+
           {/* Bulk actions */}
           {selectedIds.size > 0 && (
             <div className="flex items-center gap-3 px-4 py-2.5 bg-primary/5 border border-primary/20 rounded-lg">
@@ -876,6 +967,10 @@ export default function BillingPage() {
                     const balance = r.amountDue - r.amountPaid;
                     const aging = r.status === "overdue" ? getAgingDays(r.dueDate) : null;
                     const selectable = r.status !== "paid" && r.status !== "cancelled" && r.status !== "refunded" && r.status !== "waived";
+                    const daysUntilDue = r.dueDate && (r.status === "unpaid" || r.status === "partial")
+                      ? Math.ceil((new Date(r.dueDate).getTime() - new Date(todayStr).getTime()) / (1000 * 60 * 60 * 24))
+                      : null;
+                    const isDueSoon = daysUntilDue !== null && daysUntilDue >= 0 && daysUntilDue <= 7;
                     return (
                       <tr key={r.id} className={`hover:bg-muted/40 transition-colors ${selectedIds.has(r.id) ? "bg-primary/5" : ""}`}>
                         <td className="px-4 py-3">
@@ -888,14 +983,29 @@ export default function BillingPage() {
                         <td className="px-4 py-3 text-muted-foreground max-w-[180px] truncate">{r.description || "—"}</td>
                         <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">{r.billingMonth ? formatMonth(r.billingMonth + "-01") : "—"}</td>
                         <td className="px-4 py-3 text-right font-medium">{formatCurrency(r.amountDue)}</td>
-                        <td className="px-4 py-3 text-right font-medium text-red-600">{balance > 0 && r.status !== "cancelled" && r.status !== "waived" ? formatCurrency(balance) : "—"}</td>
+                        <td className="px-4 py-3 text-right font-medium text-red-600">
+                          {balance > 0 && r.status !== "paid" && r.status !== "cancelled" && r.status !== "waived" && r.status !== "refunded"
+                            ? formatCurrency(balance)
+                            : ""}
+                        </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-1.5">
                             <Badge variant={r.status as Parameters<typeof Badge>[0]["variant"]}>{r.status}</Badge>
                             {aging && <span className={agingClass(aging)}>{agingLabel(aging)}</span>}
                           </div>
                         </td>
-                        <td className="px-4 py-3 text-muted-foreground text-xs whitespace-nowrap">{r.dueDate ?? "—"}</td>
+                        <td className="px-4 py-3 text-xs whitespace-nowrap">
+                          {r.dueDate ? (
+                            <span className={isDueSoon ? "font-semibold text-orange-600" : "text-muted-foreground"}>
+                              {r.dueDate}
+                              {isDueSoon && (
+                                <span className="ml-1.5 inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold bg-orange-100 text-orange-700">
+                                  {daysUntilDue === 0 ? "today" : `${daysUntilDue}d`}
+                                </span>
+                              )}
+                            </span>
+                          ) : "—"}
+                        </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-1 justify-end">
                             {r.status !== "paid" && r.status !== "cancelled" && r.status !== "refunded" && r.status !== "waived" && (
@@ -2088,6 +2198,72 @@ export default function BillingPage() {
           </div>
         </div>
       )}
+
+      {/* ── Contact List Modal ── */}
+      <Modal
+        open={contactListOpen}
+        onClose={() => { setContactListOpen(false); setContactListData([]); setContactListCopied(false); }}
+        title={`Families to Notify (${contactListData.length})`}
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            {statusFilter === "overdue"
+              ? "Families with overdue balances that need follow-up."
+              : "Families with balances due within the next 7 days."}
+          </p>
+          {contactListLoading ? (
+            <p className="text-sm text-muted-foreground text-center py-6">Loading contacts…</p>
+          ) : contactListData.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-6">No guardian contacts found for these students.</p>
+          ) : (
+            <>
+              <div className="border border-border rounded-lg overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-muted border-b border-border">
+                      <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Student</th>
+                      <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Guardian</th>
+                      <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Phone</th>
+                      <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Email</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {contactListData.map((c, i) => (
+                      <tr key={i} className="hover:bg-muted/40">
+                        <td className="px-3 py-2.5 font-medium">{c.studentName}</td>
+                        <td className="px-3 py-2.5 text-muted-foreground">
+                          {c.guardianName}
+                          {c.relationship && <span className="text-xs ml-1 text-muted-foreground/70">({c.relationship})</span>}
+                        </td>
+                        <td className="px-3 py-2.5">
+                          {c.phone ? (
+                            <a href={`tel:${c.phone}`} className="flex items-center gap-1 text-primary hover:underline text-xs">
+                              <Phone className="w-3 h-3" />{c.phone}
+                            </a>
+                          ) : <span className="text-muted-foreground text-xs">—</span>}
+                        </td>
+                        <td className="px-3 py-2.5">
+                          {c.email ? (
+                            <a href={`mailto:${c.email}`} className="flex items-center gap-1 text-primary hover:underline text-xs">
+                              <Mail className="w-3 h-3" />{c.email}
+                            </a>
+                          ) : <span className="text-muted-foreground text-xs">—</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="flex justify-between items-center pt-1">
+                <p className="text-xs text-muted-foreground">{contactListData.length} famil{contactListData.length === 1 ? "y" : "ies"} listed</p>
+                <Button variant="outline" size="sm" onClick={copyContactList}>
+                  {contactListCopied ? <><Check className="w-3.5 h-3.5 text-green-600" /> Copied!</> : <><Copy className="w-3.5 h-3.5" /> Copy list</>}
+                </Button>
+              </div>
+            </>
+          )}
+        </div>
+      </Modal>
 
       {/* ── Toast ── */}
       {toast && (

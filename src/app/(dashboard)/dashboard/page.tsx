@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import {
   Users, UserCheck, AlertCircle, Calendar, CheckSquare, ArrowRight,
-  CheckCircle2, Clock, AlertTriangle, TrendingUp, Bell, HelpCircle, Search, X,
+  CheckCircle2, Clock, AlertTriangle, Bell, HelpCircle, Search, X,
   Settings, BookOpen, FileText,
 } from "lucide-react";
 import Link from "next/link";
@@ -13,7 +13,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { createClient } from "@/lib/supabase/client";
 import { useSchoolContext } from "@/contexts/SchoolContext";
 import { formatCurrency } from "@/lib/utils";
-import { useDashboardStats, useBillingSummary } from "@/lib/hooks";
+import { useDashboardStats, useFinancialWatchlist, useAttendanceSignals, usePlanSignals } from "@/lib/hooks";
 import { GetStartedGuide } from "@/components/GetStartedGuide";
 import { useGetStartedDisplay } from "@/lib/hooks/useGetStartedDisplay";
 import { useIepAttentionItems } from "@/features/attention/useAttentionItems";
@@ -92,10 +92,20 @@ export default function DashboardPage() {
   const { day, date } = useTodayLabel();
 
   // Use the cached dashboard stats hook
-  const statsQuery = useDashboardStats(schoolId, activeYear?.id || null);
+  const statsQuery = useDashboardStats(
+    schoolId,
+    activeYear?.id || null,
+    activeYear?.startDate || null,
+    activeYear?.endDate || null,
+  );
 
-  // Use the cached billing summary hook (Batch B1.6.1)
-  const billingSummaryQuery = useBillingSummary(schoolId, activeYear?.id || null);
+  // Financial watchlist — operational attention system (replaces flat billingSummary).
+  // No year filter — matches the billing page's all-time school scope so prior-year
+  // overdue records surface here exactly as they do on the billing page.
+  const watchlist = useFinancialWatchlist(schoolId);
+
+  // Plan signals — aggregate draft + awaiting-review counts for Student Support card
+  const planSignals = usePlanSignals(schoolId, userRole);
 
   // IEP attention items — role-gated, fetched once on mount
   const { items: iepItems } = useIepAttentionItems({
@@ -116,6 +126,7 @@ export default function DashboardPage() {
   const [studentsAbsent2Plus, setStudentsAbsent2Plus] = useState(0);
   const [lastUpdateAt, setLastUpdateAt] = useState<string | null>(null);
   const [complexDataError, setComplexDataError] = useState<string | null>(null);
+  const [updatesLoaded, setUpdatesLoaded] = useState(false);
 
   // Profile created at for Getting Started 2-month window
   const [profileCreatedAt, setProfileCreatedAt] = useState<string | null>(null);
@@ -173,7 +184,7 @@ export default function DashboardPage() {
       const sevenDaysAgo = new Date();
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-      // Fetch attendance data (billing data now comes from useBillingSummary hook)
+      // Fetch attendance data (billing data comes from useFinancialWatchlist hook)
       const [
         { count: presentToday },
         { count: absentToday },
@@ -189,11 +200,10 @@ export default function DashboardPage() {
 
       setYesterdayPresent(yesterdayPresentCount ?? 0);
 
-      // Attendance stats (outstanding balance comes from billingSummaryQuery below)
       setStats({
         presentToday: presentToday ?? 0,
         absentToday: absentToday ?? 0,
-        outstandingBalance: 0, // Will use billingSummaryQuery.data instead
+        outstandingBalance: 0,
       });
 
       if (yearId) {
@@ -369,21 +379,32 @@ export default function DashboardPage() {
       }));
       setRecentUpdates(updates);
       setLastUpdateAt(updates[0]?.createdAt ?? null);
+      setUpdatesLoaded(true);
     } catch (err) {
       console.error("[Dashboard] Failed to fetch complex data:", err);
       setComplexDataError("Failed to load dashboard data. Check your connection and try again.");
     }
   }
 
+  // Pre-compute before early return so hook call order is stable (React rule)
+  const isClassMarked = (cls: TodayClass) =>
+    cls.totalEnrolled === 0 || (totalAttByClass[cls.id] ?? 0) > 0;
+  const allClassesMarked = todayClasses.length > 0 && todayClasses.every(isClassMarked);
+  const todayClassIds = todayClasses.map((c) => c.id);
+  const todayEnrolledByClass = Object.fromEntries(todayClasses.map((c) => [c.id, c.totalEnrolled]));
+  const classNamesById = Object.fromEntries(todayClasses.map((c) => [c.id, c.name]));
+
+  const attendanceSignals = useAttendanceSignals({
+    schoolId,
+    todayClassIds,
+    todayEnrolledByClass,
+    classNamesById,
+    enabled: allClassesMarked,
+  });
+
   if (statsQuery.isLoading) return <PageSpinner />;
 
   // ── Derived ────────────────────────────────────────────────────────────────
-
-  const isClassMarked = (cls: TodayClass) =>
-    cls.totalEnrolled === 0 || (totalAttByClass[cls.id] ?? 0) > 0;
-
-  const allClassesMarked =
-    todayClasses.length > 0 && todayClasses.every(isClassMarked);
 
   const totalPresentAll = todayClasses.reduce((sum, c) => sum + c.presentCount, 0);
   const totalAbsentAll = todayClasses.reduce(
@@ -425,11 +446,12 @@ export default function DashboardPage() {
     });
   }
 
-  if ((statsQuery.data?.overdueCount ?? 0) > 0) {
+  if (!watchlist.isLoading && (watchlist.data?.overdueCount ?? 0) > 0) {
+    const n = watchlist.data!.overdueCount;
     computedItems.push({
       id: "overdue_billing",
       category: "needs_review",
-      title: `${statsQuery.data!.overdueCount} overdue billing record${statsQuery.data!.overdueCount > 1 ? "s" : ""} need follow-up`,
+      title: `${n} overdue billing record${n > 1 ? "s" : ""} need follow-up`,
       action_href: "/billing",
       action_label: "View Billing",
       priority: "high",
@@ -447,7 +469,7 @@ export default function DashboardPage() {
     });
   }
 
-  if (noUpdatesRecently && todayClasses.length > 0) {
+  if (updatesLoaded && noUpdatesRecently && todayClasses.length > 0) {
     computedItems.push({
       id: "no_updates",
       category: "needs_input",
@@ -605,7 +627,7 @@ export default function DashboardPage() {
             </div>
           </CardContent>
         </Card>
-      ) : activeYear ? (
+      ) : activeYear && !watchlist.isLoading ? (
         <Card className="border-green-200 bg-green-50/30">
           <CardContent className="p-4 flex items-center gap-3">
             <CheckCircle2 className="w-4 h-4 text-green-600 shrink-0" />
@@ -625,6 +647,7 @@ export default function DashboardPage() {
                 <div className="flex-1 min-w-0">
                   <p className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Total Students</p>
                   <p className="text-2xl font-bold mt-1">{totalEnrolled}</p>
+                  <p className="text-xs text-muted-foreground mt-1">Enrolled this year</p>
                 </div>
                 <div className="bg-primary p-2 rounded-lg text-primary-foreground shrink-0">
                   <Users className="w-4 h-4" />
@@ -640,22 +663,26 @@ export default function DashboardPage() {
               <div className="flex items-start justify-between gap-3 h-full">
                 <div className="flex-1 min-w-0">
                   <p className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Attendance Today</p>
-                  <div className="flex items-baseline gap-1 mt-1">
-                    <p className="text-2xl font-bold">{stats?.presentToday ?? 0}</p>
-                    <p className="text-sm text-muted-foreground">/ {totalEnrolled}</p>
-                  </div>
-                  <p
-                    className={`text-xs mt-1 font-medium ${
-                      attendanceTrend === "up"
-                        ? "text-green-600"
-                        : attendanceTrend === "down"
-                        ? "text-red-600"
-                        : "text-muted-foreground"
-                    }`}
-                  >
-                    {presentPercent}%{" "}
-                    {attendanceTrend === "up" ? "↑" : attendanceTrend === "down" ? "↓" : ""}
-                  </p>
+                  {todayClasses.length === 0 ? (
+                    <>
+                      <p className="text-2xl font-bold mt-1">—</p>
+                      <p className="text-xs text-muted-foreground mt-1">No classes today</p>
+                    </>
+                  ) : unmarkedClasses.length > 0 ? (
+                    <>
+                      <p className="text-2xl font-bold mt-1">{unmarkedClasses.length}</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {unmarkedClasses.length === 1 ? "class" : "classes"} not yet marked
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-2xl font-bold mt-1">{presentPercent}%</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {stats?.presentToday ?? 0}/{totalEnrolled} present
+                      </p>
+                    </>
+                  )}
                 </div>
                 <div className="bg-primary p-2 rounded-lg text-primary-foreground shrink-0">
                   <UserCheck className="w-4 h-4" />
@@ -671,12 +698,12 @@ export default function DashboardPage() {
               <div className="flex items-start justify-between gap-3 h-full">
                 <div className="flex-1 min-w-0">
                   <p className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Outstanding Balance</p>
-                  <p className="text-2xl font-bold mt-1">{formatCurrency(billingSummaryQuery.data?.outstandingBalance ?? 0)}</p>
-                  {(statsQuery.data?.overdueCount ?? 0) > 0 && (
-                    <p className="text-xs mt-1 font-medium text-red-600">
-                      {statsQuery.data!.overdueCount} overdue
-                    </p>
-                  )}
+                  <p className="text-2xl font-bold mt-1">{formatCurrency(watchlist.data?.totalOutstanding ?? 0)}</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {watchlist.isLoading
+                      ? "Loading…"
+                      : `${(watchlist.data?.collectionRate ?? 0).toFixed(0)}% collected`}
+                  </p>
                 </div>
                 <div className="bg-primary p-2 rounded-lg text-primary-foreground shrink-0">
                   <AlertCircle className="w-4 h-4" />
@@ -693,7 +720,9 @@ export default function DashboardPage() {
                 <div className="flex-1 min-w-0">
                   <p className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Upcoming Events</p>
                   <p className="text-2xl font-bold mt-1">{statsQuery.data?.upcomingEvents ?? 0}</p>
-                  <p className="text-xs text-muted-foreground mt-1">Next 30 days</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {(statsQuery.data?.upcomingEvents ?? 0) === 0 ? "None scheduled" : "Next 30 days"}
+                  </p>
                 </div>
                 <div className="bg-primary p-2 rounded-lg text-primary-foreground shrink-0">
                   <Calendar className="w-4 h-4" />
@@ -741,6 +770,28 @@ export default function DashboardPage() {
                     {totalPresentAll} present &middot; {totalAbsentAll} absent
                   </p>
                 </div>
+                {!attendanceSignals.isLoading && (attendanceSignals.data ?? []).length > 0 && (
+                  <div className="border-t border-border pt-4 text-left space-y-2">
+                    {(attendanceSignals.data ?? []).map((signal) => (
+                      <div key={signal.id} className="flex items-start gap-2.5">
+                        <span className={`mt-1 w-1.5 h-1.5 rounded-full shrink-0 ${
+                          signal.severity === "risk"
+                            ? "bg-amber-500"
+                            : signal.severity === "positive"
+                            ? "bg-green-500"
+                            : "bg-muted-foreground/30"
+                        }`} />
+                        <p className={`text-xs leading-relaxed ${
+                          signal.severity === "risk"
+                            ? "text-amber-700"
+                            : signal.severity === "positive"
+                            ? "text-green-700"
+                            : "text-muted-foreground"
+                        }`}>{signal.text}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <Link
                   href="/attendance?view=summary"
                   className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline"
@@ -892,99 +943,254 @@ export default function DashboardPage() {
               Send Update <ArrowRight className="w-3 h-3" />
             </Link>
           </CardHeader>
-          <CardContent className="p-4 space-y-2">
+          <CardContent className="p-0">
             {noUpdatesRecently && !recentUpdates.length && (
-              <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs border bg-amber-50 border-amber-200 text-amber-700">
+              <div className="flex items-center gap-2 px-4 py-3 text-xs border-b border-amber-200 bg-amber-50/60 text-amber-700">
                 <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                {noUpdatesToday ? "No updates sent today" : "No updates in 2 days"}
+                {noUpdatesToday ? "No updates sent today" : "No updates in the last 2 days"}
               </div>
             )}
             {recentUpdates.length === 0 ? (
-              <div className="text-center py-6">
-                <p className="text-xs text-muted-foreground">No updates yet</p>
+              <div className="text-center py-8">
+                <p className="text-sm text-muted-foreground">No updates yet</p>
+                <p className="text-xs text-muted-foreground mt-1">Keep parents in the loop by sending class updates</p>
               </div>
             ) : (
-              recentUpdates.map((u) => (
-                <div key={u.id} className="px-4 py-3 bg-muted/40 rounded-lg border-l-2 border-primary hover:bg-muted/60 transition-colors">
-                  <div className="flex items-start justify-between gap-2 mb-1">
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium text-xs">{u.authorName}</p>
-                      <p className="text-xs text-muted-foreground">{u.className ?? "School-wide"}</p>
+              <div className="divide-y divide-border">
+                {recentUpdates.map((u) => (
+                  <div key={u.id} className="px-4 py-3.5">
+                    <div className="flex items-start justify-between gap-2 mb-1.5">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-foreground leading-none">{u.authorName}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">{u.className ?? "School-wide"}</p>
+                      </div>
+                      <span className="text-xs text-muted-foreground shrink-0">{timeAgo(u.createdAt)}</span>
                     </div>
-                    <span className="text-xs text-muted-foreground shrink-0">{timeAgo(u.createdAt)}</span>
+                    <p className="text-xs line-clamp-2 text-foreground/80">{u.content}</p>
                   </div>
-                  <p className="text-xs line-clamp-2 text-foreground/80">{u.content}</p>
-                </div>
-              ))
+                ))}
+              </div>
             )}
           </CardContent>
         </Card>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Financial Watchlist */}
+        {/* Financial Watchlist — operational attention system */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between py-4 border-b border-border">
             <div>
               <h2 className="text-base font-semibold text-[var(--theme-accent)]">Financial Watchlist</h2>
-              <p className="text-xs text-muted-foreground mt-0.5">Accounts requiring follow-up</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Accounts requiring attention</p>
             </div>
             <Link
               href="/billing"
               className="text-xs text-primary hover:underline flex items-center gap-1 shrink-0"
             >
-              Manage <ArrowRight className="w-3 h-3" />
+              Billing <ArrowRight className="w-3 h-3" />
             </Link>
           </CardHeader>
-          <CardContent className="p-4 space-y-2">
-            {(statsQuery.data?.unpaidCount ?? 0) === 0 ? (
-              <div className="flex items-center gap-3 p-3 bg-green-50 border border-green-200 rounded-lg">
-                <CheckCircle2 className="w-4 h-4 text-green-600 shrink-0" />
-                <p className="text-xs text-green-700 font-medium">All accounts settled</p>
-              </div>
-            ) : (
+
+          {/* Loading skeleton */}
+          {watchlist.isLoading && (
+            <CardContent className="p-4 space-y-3">
+              <div className="h-20 bg-muted/40 rounded-lg animate-pulse" />
+              <div className="h-14 bg-muted/30 rounded-lg animate-pulse" />
+              <div className="h-10 bg-muted/20 rounded-lg animate-pulse" />
+            </CardContent>
+          )}
+
+          {/* True all-clear: no urgent items AND no outstanding balance */}
+          {!watchlist.isLoading &&
+            (watchlist.data?.overdueCount ?? 0) === 0 &&
+            (watchlist.data?.dueSoonCount ?? 0) === 0 &&
+            (watchlist.data?.repeatedLateCount ?? 0) === 0 &&
+            (watchlist.data?.totalOutstanding ?? 0) === 0 && (
               <>
-                {(statsQuery.data?.overdueCount ?? 0) > 0 && (
-                  <Link href="/billing" className="block">
-                    <div className="flex items-center justify-between p-3 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition-colors cursor-pointer">
-                      <div className="flex items-center gap-2 flex-1 min-w-0">
-                        <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-semibold text-red-800">Overdue Accounts</p>
-                          <p className="text-xs text-red-600">Past due — immediate follow-up</p>
-                        </div>
-                      </div>
-                      <span className="text-sm font-bold text-red-700 ml-2 shrink-0">
-                        {statsQuery.data!.overdueCount}
-                      </span>
+                <CardContent className="px-4 py-4">
+                  <div className="flex items-center gap-2.5 p-3 bg-green-50 border border-green-200 rounded-lg">
+                    <CheckCircle2 className="w-4 h-4 text-green-600 shrink-0" />
+                    <p className="text-xs text-green-700 font-medium">All accounts are in good standing</p>
+                  </div>
+                </CardContent>
+                <div className="px-4 py-3.5 border-t border-border bg-muted/20">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Outstanding balance</p>
+                      <p className="text-sm font-semibold mt-0.5">
+                        {formatCurrency(watchlist.data?.totalOutstanding ?? 0)}
+                      </p>
                     </div>
-                  </Link>
-                )}
-                {((statsQuery.data?.unpaidCount ?? 0) - (statsQuery.data?.overdueCount ?? 0)) > 0 && (
-                  <Link href="/billing" className="block">
-                    <div className="flex items-center justify-between p-3 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors cursor-pointer">
-                      <div className="flex items-center gap-2 flex-1 min-w-0">
-                        <Clock className="w-4 h-4 text-amber-600 shrink-0" />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-semibold text-amber-800">Outstanding Accounts</p>
-                          <p className="text-xs text-amber-600">Not yet overdue</p>
-                        </div>
-                      </div>
-                      <span className="text-sm font-bold text-amber-700 ml-2 shrink-0">
-                        {(statsQuery.data?.unpaidCount ?? 0) - (statsQuery.data?.overdueCount ?? 0)}
-                      </span>
+                    <div className="text-right">
+                      <p className="text-xs text-muted-foreground">Collection rate</p>
+                      <p className="text-sm font-semibold mt-0.5">
+                        {(watchlist.data?.collectionRate ?? 0).toFixed(0)}%
+                      </p>
                     </div>
-                  </Link>
-                )}
-                <div className="p-3 bg-muted/50 rounded-lg border border-border">
-                  <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Total Outstanding</p>
-                  <p className="text-xl font-bold mt-1">
-                    {formatCurrency(billingSummaryQuery.data?.outstandingBalance ?? 0)}
-                  </p>
+                  </div>
                 </div>
               </>
             )}
-          </CardContent>
+
+          {/* Neutral state: no urgent items but balances remain */}
+          {!watchlist.isLoading &&
+            (watchlist.data?.overdueCount ?? 0) === 0 &&
+            (watchlist.data?.dueSoonCount ?? 0) === 0 &&
+            (watchlist.data?.repeatedLateCount ?? 0) === 0 &&
+            (watchlist.data?.totalOutstanding ?? 0) > 0 && (
+              <>
+                <CardContent className="px-4 py-4">
+                  <div className="flex items-center gap-2.5 p-3 bg-muted/40 border border-border rounded-lg">
+                    <CheckCircle2 className="w-4 h-4 text-muted-foreground shrink-0" />
+                    <p className="text-xs text-muted-foreground font-medium">Balances remain, but no accounts need urgent follow-up</p>
+                  </div>
+                </CardContent>
+                <div className="px-4 py-3.5 border-t border-border bg-muted/20">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Outstanding balance</p>
+                      <p className="text-sm font-semibold mt-0.5">
+                        {formatCurrency(watchlist.data?.totalOutstanding ?? 0)}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs text-muted-foreground">Collection rate</p>
+                      <p className="text-sm font-semibold mt-0.5">
+                        {(watchlist.data?.collectionRate ?? 0).toFixed(0)}%
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+
+          {/* Operational watchlist — shown when there are items requiring attention */}
+          {!watchlist.isLoading &&
+            ((watchlist.data?.overdueCount ?? 0) > 0 ||
+              (watchlist.data?.dueSoonCount ?? 0) > 0 ||
+              (watchlist.data?.repeatedLateCount ?? 0) > 0) && (
+              <>
+                <div className="divide-y divide-border">
+
+                  {/* ── OVERDUE ───────────────────────────────────────────── */}
+                  {(watchlist.data?.overdueCount ?? 0) > 0 && (
+                    <div className="px-4 py-4">
+                      <div className="flex items-center gap-1.5 mb-3">
+                        <span className="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" />
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-red-600">
+                          Overdue
+                        </span>
+                      </div>
+
+                      {/* Amount is the primary operational signal */}
+                      <p className="text-xl font-bold text-foreground leading-none">
+                        {formatCurrency(watchlist.data!.overdueAmount)}
+                      </p>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        {watchlist.data!.overdueStudentCount}{" "}
+                        {watchlist.data!.overdueStudentCount === 1 ? "account" : "accounts"} overdue
+                        {watchlist.data!.overdueCount > watchlist.data!.overdueStudentCount && (
+                          <> · {watchlist.data!.overdueCount} bills</>
+                        )}
+                      </p>
+
+                      {watchlist.data!.overdueOver30Count > 0 && (
+                        <p className="text-xs text-red-600 mt-1.5">
+                          {watchlist.data!.overdueOver30Count}{" "}
+                          {watchlist.data!.overdueOver30Count === 1 ? "account" : "accounts"} past 30 days
+                        </p>
+                      )}
+
+                      <Link
+                        href="/billing?filter=overdue"
+                        className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-md border border-red-200 text-red-700 hover:bg-red-50 transition-colors"
+                      >
+                        Review overdue accounts <ArrowRight className="w-3 h-3" />
+                      </Link>
+                    </div>
+                  )}
+
+                  {/* ── DUE THIS WEEK ─────────────────────────────────────── */}
+                  {(watchlist.data?.dueSoonCount ?? 0) > 0 && (
+                    <div className="px-4 py-4">
+                      <div className="flex items-center gap-1.5 mb-3">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-amber-600">
+                          Due This Week
+                        </span>
+                      </div>
+
+                      <p className="text-xl font-bold text-foreground leading-none">
+                        {formatCurrency(watchlist.data!.dueSoonAmount)}
+                      </p>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        {watchlist.data!.dueSoonStudentCount}{" "}
+                        {watchlist.data!.dueSoonStudentCount === 1 ? "family" : "families"} due in the next 7 days
+                        {watchlist.data!.dueSoonCount > watchlist.data!.dueSoonStudentCount && (
+                          <> · {watchlist.data!.dueSoonCount} bills</>
+                        )}
+                      </p>
+
+                      <Link
+                        href="/billing?filter=due_soon"
+                        className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-md border border-amber-200 text-amber-700 hover:bg-amber-50 transition-colors"
+                      >
+                        Review upcoming bills <ArrowRight className="w-3 h-3" />
+                      </Link>
+                    </div>
+                  )}
+
+                  {/* ── AT RISK: Repeated late payers ─────────────────────── */}
+                  {(watchlist.data?.repeatedLateCount ?? 0) > 0 && (
+                    <div className="px-4 py-3">
+                      <Link
+                        href="/billing?filter=overdue"
+                        className="flex items-center justify-between gap-3 group"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="w-1.5 h-1.5 rounded-full bg-yellow-500 shrink-0" />
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-foreground">
+                              {watchlist.data!.repeatedLateCount} repeated late{" "}
+                              {watchlist.data!.repeatedLateCount === 1 ? "payer" : "payers"}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              2+ overdue bills — worth a check-in
+                            </p>
+                          </div>
+                        </div>
+                        <ArrowRight className="w-3.5 h-3.5 text-muted-foreground shrink-0 group-hover:text-foreground transition-colors" />
+                      </Link>
+                    </div>
+                  )}
+                </div>
+
+                {/* ── SNAPSHOT: Accounting summary footer ─────────────────── */}
+                {/* Sits outside divide-y so it reads as a distinct footer tier */}
+                <div className="px-4 py-3.5 border-t border-border bg-muted/20">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Outstanding balance</p>
+                      <p className="text-sm font-semibold mt-0.5">
+                        {formatCurrency(watchlist.data?.totalOutstanding ?? 0)}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs text-muted-foreground">Collection rate</p>
+                      <p className="text-sm font-semibold mt-0.5">
+                        {(watchlist.data?.collectionRate ?? 0).toFixed(0)}%
+                      </p>
+                    </div>
+                  </div>
+                  {(watchlist.data?.familiesWithBalances ?? 0) > 0 && (
+                    <p className="text-xs text-muted-foreground mt-1.5">
+                      {watchlist.data!.familiesWithBalances}{" "}
+                      {watchlist.data!.familiesWithBalances === 1 ? "family" : "families"} with outstanding balances
+                    </p>
+                  )}
+                </div>
+              </>
+            )}
         </Card>
 
         {/* Student & Enrollment Section */}
@@ -992,7 +1198,7 @@ export default function DashboardPage() {
           <Card>
             <CardHeader className="flex flex-row items-center justify-between py-4 border-b border-border">
               <div>
-                <h2 className="text-base font-semibold">Enrollment Status</h2>
+                <h2 className="text-base font-semibold text-[var(--theme-accent)]">Enrollment Status</h2>
                 <p className="text-xs text-muted-foreground mt-0.5">Pipeline overview</p>
               </div>
               <Link
@@ -1028,7 +1234,7 @@ export default function DashboardPage() {
             <CardHeader className="flex flex-row items-center justify-between py-4 border-b border-border">
               <div>
                 <h2 className="text-base font-semibold text-[var(--theme-accent)]">Student Support</h2>
-                <p className="text-xs text-muted-foreground mt-0.5">Risk & growth</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Attendance, enrollment & support signals</p>
               </div>
               <Link
                 href="/students"
@@ -1037,60 +1243,105 @@ export default function DashboardPage() {
                 View All <ArrowRight className="w-3 h-3" />
               </Link>
             </CardHeader>
-            <CardContent className="p-4 space-y-2">
-              {newEnrollmentsThisWeek > 0 && (
-                <div className="flex items-center justify-between p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                  <div className="flex items-center gap-2 flex-1 min-w-0">
-                    <TrendingUp className="w-4 h-4 text-blue-600 shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-semibold text-blue-800">New This Week</p>
-                      <p className="text-xs text-blue-600">Newly enrolled students</p>
-                    </div>
-                  </div>
-                  <span className="text-sm font-bold text-blue-700 ml-2 shrink-0">
-                    {newEnrollmentsThisWeek}
-                  </span>
-                </div>
-              )}
-              {studentsAbsent2Plus > 0 && (
-                <Link href="/attendance" className="block">
-                  <div className="flex items-center justify-between p-3 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors cursor-pointer">
-                    <div className="flex items-center gap-2 flex-1 min-w-0">
-                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-semibold text-amber-800">High Absences</p>
-                        <p className="text-xs text-amber-600">2+ days this week</p>
-                      </div>
-                    </div>
-                    <span className="text-sm font-bold text-amber-700 ml-2 shrink-0">
-                      {studentsAbsent2Plus}
-                    </span>
-                  </div>
-                </Link>
-              )}
+            <CardContent className="p-0">
               {studentAlerts.length === 0 &&
               newEnrollmentsThisWeek === 0 &&
-              studentsAbsent2Plus === 0 ? (
-                <div className="flex items-center gap-3 p-3 bg-green-50 border border-green-200 rounded-lg">
-                  <CheckCircle2 className="w-4 h-4 text-green-600 shrink-0" />
-                  <p className="text-xs text-green-700 font-medium">No concerns</p>
+              studentsAbsent2Plus === 0 &&
+              (planSignals.data?.draftCount ?? 0) === 0 &&
+              (planSignals.data?.awaitingReviewCount ?? 0) === 0 ? (
+                <div className="px-4 py-6 text-center">
+                  <CheckCircle2 className="w-6 h-6 text-green-500 mx-auto mb-2" />
+                  <p className="text-sm font-medium text-foreground">All students accounted for</p>
+                  <p className="text-xs text-muted-foreground mt-1">No attendance, enrollment, or support flags this week</p>
                 </div>
               ) : (
-                studentAlerts.map((alert) => (
-                  <Link key={alert.type} href={alert.href} className="block">
-                    <div className="flex items-center justify-between p-3 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors cursor-pointer">
-                      <div className="flex items-center gap-2 flex-1 min-w-0">
-                        <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-semibold text-amber-800">{alert.label}</p>
+                <div className="divide-y divide-border">
+                  {/* New enrollments — positive operational signal, neutral treatment */}
+                  {newEnrollmentsThisWeek > 0 && (
+                    <div className="flex items-center justify-between px-4 py-3.5">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span className="w-1.5 h-1.5 rounded-full bg-primary shrink-0" />
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-foreground">New enrollments this week</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">Newly enrolled students</p>
                         </div>
                       </div>
-                      <span className="text-sm font-bold text-amber-700 ml-2 shrink-0">
-                        {alert.count}
-                      </span>
+                      <span className="text-base font-semibold ml-3 shrink-0">{newEnrollmentsThisWeek}</span>
                     </div>
-                  </Link>
-                ))
+                  )}
+
+                  {/* High absences — concern signal with amber count, hover to navigate */}
+                  {studentsAbsent2Plus > 0 && (
+                    <Link href="/attendance" className="block">
+                      <div className="flex items-center justify-between px-4 py-3.5 hover:bg-muted/30 transition-colors">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-foreground">High absences</p>
+                            <p className="text-xs text-muted-foreground mt-0.5">2+ days this week</p>
+                          </div>
+                        </div>
+                        <span className="text-base font-semibold text-amber-600 ml-3 shrink-0">{studentsAbsent2Plus}</span>
+                      </div>
+                    </Link>
+                  )}
+
+                  {/* Other student alerts */}
+                  {studentAlerts.map((alert) => (
+                    <Link key={alert.type} href={alert.href} className="block">
+                      <div className="flex items-center justify-between px-4 py-3.5 hover:bg-muted/30 transition-colors">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-foreground">{alert.label}</p>
+                            {alert.description && (
+                              <p className="text-xs text-muted-foreground mt-0.5">{alert.description}</p>
+                            )}
+                          </div>
+                        </div>
+                        <span className="text-base font-semibold text-amber-600 ml-3 shrink-0">{alert.count}</span>
+                      </div>
+                    </Link>
+                  ))}
+
+                  {/* IEP drafts in preparation — calm planning signal */}
+                  {(planSignals.data?.draftCount ?? 0) > 0 && (
+                    <Link href="/documents?view=plans-forms" className="block">
+                      <div className="flex items-center justify-between px-4 py-3.5 hover:bg-muted/30 transition-colors">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span className="w-1.5 h-1.5 rounded-full bg-primary/60 shrink-0" />
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-foreground">
+                              {planSignals.data!.draftCount === 1
+                                ? "IEP draft in preparation"
+                                : `${planSignals.data!.draftCount} IEP drafts in preparation`}
+                            </p>
+                            <p className="text-xs text-muted-foreground mt-0.5">Teacher planning in progress</p>
+                          </div>
+                        </div>
+                      </div>
+                    </Link>
+                  )}
+
+                  {/* Support plans awaiting review — coordination signal */}
+                  {(planSignals.data?.awaitingReviewCount ?? 0) > 0 && (
+                    <Link href="/documents?view=plans-forms" className="block">
+                      <div className="flex items-center justify-between px-4 py-3.5 hover:bg-muted/30 transition-colors">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-foreground">
+                              {planSignals.data!.awaitingReviewCount === 1
+                                ? "Support plan awaiting review"
+                                : `${planSignals.data!.awaitingReviewCount} support plans awaiting review`}
+                            </p>
+                            <p className="text-xs text-muted-foreground mt-0.5">Coordination or review needed</p>
+                          </div>
+                        </div>
+                      </div>
+                    </Link>
+                  )}
+                </div>
               )}
             </CardContent>
           </Card>

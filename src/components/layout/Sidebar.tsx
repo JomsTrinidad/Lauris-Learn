@@ -126,29 +126,29 @@ export function Sidebar({
       <div className="h-full flex flex-col min-w-64">
         {/* Brand */}
         <Link href="/dashboard" className="block p-5 border-b border-sidebar-border hover:bg-sidebar-accent transition-colors">
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-3">
             {logoUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={logoUrl}
                 alt={schoolName}
-                width={36}
-                height={36}
+                width={32}
+                height={32}
                 className="object-contain flex-shrink-0 rounded"
               />
             ) : (
               <Image
                 src="/assets/logo/lauris-learn-logo.png"
                 alt="Lauris Learn"
-                width={36}
-                height={36}
+                width={32}
+                height={32}
                 className="object-contain flex-shrink-0"
-                style={{ width: 36, height: 36 }}
+                style={{ width: 32, height: 32 }}
               />
             )}
-            <div>
-              <h2 className="text-[15px] font-extrabold text-[var(--theme-accent)] leading-tight">{schoolName}</h2>
-              <p className="text-xs text-muted-foreground">{schoolYear}</p>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-[var(--theme-accent)] leading-snug truncate">{schoolName}</p>
+              <p className="text-xs text-muted-foreground mt-0.5 truncate">{schoolYear}</p>
             </div>
           </div>
         </Link>

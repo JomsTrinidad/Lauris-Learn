@@ -155,6 +155,7 @@ export const queryKeys = {
     all: ["attendance"] as const,
     forClass: (classId: string, date: string) => [...queryKeys.attendance.all, "forClass", classId, date] as const,
     forStudent: (studentId: string) => [...queryKeys.attendance.all, "forStudent", studentId] as const,
+    signals: (schoolId: string, classKey: string) => [...queryKeys.attendance.all, "signals", schoolId, classKey] as const,
   },
 
   // Care (Lauris Care clinic portal)
@@ -179,6 +180,18 @@ export const queryKeys = {
   billingSummary: {
     all: ["billingSummary"] as const,
     for: (schoolId: string, schoolYearId: string) => [...queryKeys.billingSummary.all, schoolId, schoolYearId] as const,
+  },
+
+  // Financial Watchlist — operational attention system for the dashboard
+  financialWatchlist: {
+    all: ["financialWatchlist"] as const,
+    for: (schoolId: string) => [...queryKeys.financialWatchlist.all, schoolId] as const,
+  },
+
+  // Plan signals — draft + awaiting-review counts for Student Support card
+  planSignals: {
+    all: ["planSignals"] as const,
+    for: (schoolId: string) => [...queryKeys.planSignals.all, schoolId] as const,
   },
 
   feeTypes: {
