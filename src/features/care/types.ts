@@ -255,6 +255,21 @@ export type ChildClinicMembershipState =
   | "shared_pending"
   | "shared_no_grant";
 
+/** Care Performance Phase 1 — bundled child detail bundle returned by
+ *  the get_care_child_with_details RPC. Composes the identity + the
+ *  Care-portal-specific access/ownership state into one shape so the
+ *  child detail page can render with a single round-trip. */
+export interface CareChildDetailBundle {
+  identity: ChildIdentity;
+  identifiers: ChildIdentifier[];
+  origin: CareChildRow;
+  membershipState: ChildClinicMembershipState;
+  /** Mirrors origin.scope semantics: TRUE for owned children, TRUE for
+   *  shared children with scope='identity_with_identifiers', FALSE for
+   *  identity_only shared children. Pre-computed server-side. */
+  showIdentifiers: boolean;
+}
+
 // RPC return shape (from log_document_access_for_organizations)
 export type LogDocumentAccessForOrgsResult =
   | {

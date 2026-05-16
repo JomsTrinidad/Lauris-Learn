@@ -10,7 +10,67 @@ admin@goldensteps.test
 GoldenDemo2026!
 
 
+Email	Role	Clinic
+care.admin.north@lauris.demo	clinic_admin	Lauris Care Demo Clinic North
+care.admin.south@lauris.demo	clinic_admin	Lauris Care Demo Clinic South
+care.speech.north@lauris.demo	therapist	Lauris Care Demo Clinic North
+care.ot.north@lauris.demo	therapist	Lauris Care Demo Clinic North
+care.behavior.north@lauris.demo	therapist	Lauris Care Demo Clinic North
+care.speech.south@lauris.demo	therapist	Lauris Care Demo Clinic South
+care.ot.south@lauris.demo	therapist	Lauris Care Demo Clinic South
+jtrinidad7@gmail.com		super_admin	(existing account — no password change)
+
+
+Best ones to test for Care:
+care.admin.north@lauris.demo
+care.speech.north@lauris.demo
 parent.north.01@lauris.demo
+
+care.admin.south@lauris.demo
+Demo2026!
+
+
+
+
+
+
+-- ── reset_demo_passwords.sql ─────────────────────────────────────────────────
+--
+-- Sets the password for all @lauris.demo accounts to: Demo2026!
+--
+-- Safe to run multiple times.
+-- Run in Supabase SQL editor (service-role context).
+-- ─────────────────────────────────────────────────────────────────────────────
+
+DO $$
+DECLARE
+  _enc TEXT := crypt('Demo2026!', gen_salt('bf', 10));
+  _n   INT;
+BEGIN
+  UPDATE auth.users
+     SET encrypted_password = _enc,
+         updated_at         = NOW()
+   WHERE email LIKE '%@lauris.demo';
+
+  GET DIAGNOSTICS _n = ROW_COUNT;
+  RAISE NOTICE 'Password reset to Demo2026! for % @lauris.demo account(s).', _n;
+END $$;
+===============
+SELECT
+  u.email,
+  p.full_name,
+  p.role           AS learn_role,
+  p.school_id,
+  om.role          AS care_role,
+  org.name         AS clinic_name
+FROM auth.users u
+LEFT JOIN profiles p              ON p.id = u.id
+LEFT JOIN organization_memberships om ON om.profile_id = u.id AND om.status = 'active'
+LEFT JOIN organizations org       ON org.id = om.organization_id
+WHERE u.email LIKE '%@lauris.demo'
+ORDER BY org.name, om.role, u.email;
+
+
 
 ==============================================================
 Based on my analysis of the demo seeder, here are the best logins for testing the parent portal:
@@ -49,36 +109,21 @@ Concerns/Questions:
 1. How can we split features that are core vs premium?
 3. Sample proud moments suggestions that pull from a database table
 
-6. Online Classes need to be polished.
+
 . Parent updates based on Suggestion
 
-
-
-==============================================================
-Use Progress Report Assistant
-Draft from progress report
-
-Use progress report or load session notes max 10mb
-
-You need to continue working on the IEP.. there are other phases
-
 ================
 
-by the turn of the new school year, what are the areas i would not history of? What areas to maintain
 
 
-
-================
-IEP Testing notes
-1. Items that are required from the teacher for creating an initial draft
-2. Mark each area of responsibility.. 
-
-L4uryn3F41th!
+- 
+Help topic/ drawers
+What is a teacher able to view vs a school admin? 
 
 
-
-
-
+for review:
+Grading
+Lauris Learn Notifications
 
 
 

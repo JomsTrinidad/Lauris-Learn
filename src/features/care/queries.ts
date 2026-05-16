@@ -11,7 +11,9 @@
 
 import { createClient } from "@/lib/supabase/client";
 import type {
+  CareChildDetailBundle,
   CareChildRow,
+  ChildClinicMembershipState,
   ChildIdentifier,
   ChildIdentity,
   ClinicMembership,
@@ -505,43 +507,92 @@ export async function listChildIdentifiers(
 }
 
 /** Documents shared with the caller's clinic, anchored on
- *  document_organization_access_grants via the migration-077 RPC. */
+ *  document_organization_access_grants.
+ *
+ *  Care Performance Phase 3 — pushes the per-child filter to the
+ *  database via `get_care_documents_for_organization` (migration 105)
+ *  instead of fetching the org-wide set and filtering in JS. On RPC
+ *  failure (network blip, migration not yet applied in a given
+ *  environment), falls back to the legacy
+ *  `list_documents_for_organization` (077) path so behaviour is
+ *  preserved. Zero-row responses are treated as legitimate empty
+ *  results — auth denials are NOT masked. */
 export async function listSharedDocuments(
   organizationId: string,
   filterChildProfileId?: string,
 ): Promise<SharedDocument[]> {
   const supabase = createClient() as AnyClient;
-  const { data, error } = await supabase.rpc("list_documents_for_organization", {
+
+  // Primary path: filtered RPC (105). The DB does the filtering;
+  // we transmit only the rows the page actually needs.
+  const primary = await supabase.rpc("get_care_documents_for_organization", {
+    p_org_id: organizationId,
+    p_child_profile_id: filterChildProfileId ?? null,
+    p_limit: null,
+    p_offset: null,
+  });
+
+  if (!primary.error) {
+    const rows = (primary.data ?? []) as RawSharedDocRow[];
+    return rows.map(mapSharedDocRow);
+  }
+
+  console.warn(
+    "[care] listSharedDocuments RPC failed; falling back to legacy 077 path:",
+    primary.error,
+  );
+
+  // Fallback path: legacy 077 RPC + client-side filter. Same byte
+  // shape as before Phase 3 so the page stays functional during the
+  // rollout window.
+  const fallback = await supabase.rpc("list_documents_for_organization", {
     p_org_id: organizationId,
   });
 
-  if (error) {
-    console.error("[care] listSharedDocuments:", error);
+  if (fallback.error) {
+    console.error("[care] listSharedDocuments legacy fallback:", fallback.error);
     return [];
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const rows = (data ?? []) as any[];
-
+  const rows = (fallback.data ?? []) as RawSharedDocRow[];
   return rows
     .filter((row) => {
       if (!filterChildProfileId) return true;
       return row.child_profile_id === filterChildProfileId;
     })
-    .map<SharedDocument>((row) => ({
-      documentId: row.document_id,
-      title: row.title,
-      documentType: row.document_type,
-      docStatus: row.doc_status,
-      versionNumber: row.version_number,
-      mimeType: row.mime_type,
-      fileName: row.file_name,
-      fileSizeBytes: row.file_size_bytes ?? null,
-      childProfileId: row.child_profile_id ?? null,
-      permissions: normalizePermissions(row.permissions),
-      grantValidUntil: row.grant_valid_until,
-      grantCreatedAt: row.grant_created_at,
-    }));
+    .map(mapSharedDocRow);
+}
+
+interface RawSharedDocRow {
+  document_id: string;
+  title: string;
+  document_type: SharedDocument["documentType"];
+  doc_status: SharedDocument["docStatus"];
+  version_number: number;
+  mime_type: string;
+  file_name: string;
+  file_size_bytes: number | null;
+  child_profile_id: string | null;
+  permissions: unknown;
+  grant_valid_until: string;
+  grant_created_at: string;
+}
+
+function mapSharedDocRow(row: RawSharedDocRow): SharedDocument {
+  return {
+    documentId: row.document_id,
+    title: row.title,
+    documentType: row.document_type,
+    docStatus: row.doc_status,
+    versionNumber: row.version_number,
+    mimeType: row.mime_type,
+    fileName: row.file_name,
+    fileSizeBytes: row.file_size_bytes ?? null,
+    childProfileId: row.child_profile_id ?? null,
+    permissions: normalizePermissions(row.permissions),
+    grantValidUntil: row.grant_valid_until,
+    grantCreatedAt: row.grant_created_at,
+  };
 }
 
 function normalizePermissions(raw: unknown): DocPermissions {
@@ -552,4 +603,145 @@ function normalizePermissions(raw: unknown): DocPermissions {
     comment: p.comment === true,
     upload_new_version: p.upload_new_version === true,
   };
+}
+
+// ── Care Performance Phase 1 ───────────────────────────────────────────
+//
+// Bundled child detail fetch. Replaces five client-side round-trips
+// (listOwnedChildren + listGrantedChildren + getChildIdentity +
+// listChildIdentifiers + getChildClinicMembershipState) with a single
+// SECURITY DEFINER RPC. RLS semantics are preserved at the server.
+//
+// On any RPC failure (RPC missing, transient error, network issue),
+// the wrapper returns `null` so callers can fall back to the legacy
+// 5-query path without behaviour change. This keeps the deploy safe
+// during the small window where the migration may not yet be applied.
+
+interface RawChildDetailRow {
+  child_profile_id: string;
+  display_name: string;
+  legal_name: string | null;
+  preferred_name: string | null;
+  first_name: string | null;
+  middle_name: string | null;
+  last_name: string | null;
+  date_of_birth: string | null;
+  sex_at_birth: string | null;
+  gender_identity: string | null;
+  primary_language: string | null;
+  country_code: string | null;
+  origin_type: "owned" | "shared";
+  grant_scope: GrantScope | null;
+  grant_valid_until: string | null;
+  membership_state: ChildClinicMembershipState;
+  show_identifiers: boolean;
+  identifiers: unknown;
+}
+
+function normalizeIdentifiers(raw: unknown): ChildIdentifier[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((r): r is Record<string, unknown> => typeof r === "object" && r !== null)
+    .map((r) => ({
+      id: typeof r.id === "string" ? r.id : "",
+      identifierType:
+        typeof r.identifier_type === "string" ? r.identifier_type : "",
+      identifierValue:
+        typeof r.identifier_value === "string" ? r.identifier_value : "",
+      countryCode:
+        typeof r.country_code === "string" ? r.country_code : null,
+    }))
+    .filter((row) => row.id && row.identifierType && row.identifierValue);
+}
+
+function mapBundle(row: RawChildDetailRow): CareChildDetailBundle {
+  const identity: ChildIdentity = {
+    id: row.child_profile_id,
+    displayName: row.display_name,
+    legalName: row.legal_name,
+    preferredName: row.preferred_name,
+    firstName: row.first_name,
+    middleName: row.middle_name,
+    lastName: row.last_name,
+    dateOfBirth: row.date_of_birth,
+    sexAtBirth: row.sex_at_birth,
+    genderIdentity: row.gender_identity,
+    primaryLanguage: row.primary_language,
+    countryCode: row.country_code,
+  };
+
+  const origin: CareChildRow =
+    row.origin_type === "owned"
+      ? {
+          childProfileId: row.child_profile_id,
+          displayName: row.display_name,
+          preferredName: row.preferred_name,
+          dateOfBirth: row.date_of_birth,
+          originType: "owned",
+        }
+      : {
+          childProfileId: row.child_profile_id,
+          displayName: row.display_name,
+          preferredName: row.preferred_name,
+          dateOfBirth: row.date_of_birth,
+          originType: "shared",
+          // The RPC only emits a row when access is permitted; for
+          // shared children, grant_scope / grant_valid_until are
+          // guaranteed non-null. Fall back defensively just in case.
+          scope: (row.grant_scope ?? "identity_only") as GrantScope,
+          grantValidUntil: row.grant_valid_until ?? "",
+        };
+
+  return {
+    identity,
+    identifiers: normalizeIdentifiers(row.identifiers),
+    origin,
+    membershipState: row.membership_state,
+    showIdentifiers: row.show_identifiers,
+  };
+}
+
+/**
+ * Bundled child detail fetch (Care Performance Phase 1).
+ *
+ * Returns one of:
+ *   - { kind: 'ok', bundle }           access permitted, single RPC hit
+ *   - { kind: 'not_found' }            authenticated but no row visible
+ *   - { kind: 'fallback' }             RPC failed — caller should
+ *                                       run the legacy 5-query path
+ *
+ * The not_found case is a real access denial (no ownership + no
+ * active grant), distinguishable from RPC plumbing failures so the
+ * page can render an empty state rather than re-running expensive
+ * fallback queries.
+ */
+export type CareChildDetailResult =
+  | { kind: "ok"; bundle: CareChildDetailBundle }
+  | { kind: "not_found" }
+  | { kind: "fallback" };
+
+export async function getCareChildWithDetails(
+  childProfileId: string,
+  organizationId: string,
+): Promise<CareChildDetailResult> {
+  const supabase = createClient() as AnyClient;
+  const { data, error } = await supabase.rpc("get_care_child_with_details", {
+    p_child_profile_id: childProfileId,
+    p_org_id: organizationId,
+  });
+
+  if (error) {
+    console.warn(
+      "[care] getCareChildWithDetails failed; falling back to legacy queries:",
+      error,
+    );
+    return { kind: "fallback" };
+  }
+
+  const rows = (data ?? []) as RawChildDetailRow[];
+  if (rows.length === 0) {
+    return { kind: "not_found" };
+  }
+
+  return { kind: "ok", bundle: mapBundle(rows[0]) };
 }

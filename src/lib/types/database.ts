@@ -1613,6 +1613,91 @@ export type Database = {
           grant_created_at: string;
         }[];
       };
+      get_care_child_with_details: {
+        Args: { p_child_profile_id: string; p_org_id: string };
+        Returns: {
+          child_profile_id: string;
+          display_name: string;
+          legal_name: string | null;
+          preferred_name: string | null;
+          first_name: string | null;
+          middle_name: string | null;
+          last_name: string | null;
+          date_of_birth: string | null;
+          sex_at_birth: string | null;
+          gender_identity: string | null;
+          primary_language: string | null;
+          country_code: string | null;
+          origin_type: "owned" | "shared";
+          grant_scope: "identity_only" | "identity_with_identifiers" | null;
+          grant_valid_until: string | null;
+          membership_state:
+            | "owned"
+            | "accepted"
+            | "shared_pending"
+            | "shared_no_grant";
+          show_identifiers: boolean;
+          identifiers: Json;
+        }[];
+      };
+      get_care_documents_for_organization: {
+        Args: {
+          p_org_id: string;
+          p_child_profile_id?: string | null;
+          p_limit?: number | null;
+          p_offset?: number | null;
+        };
+        Returns: {
+          document_id: string;
+          title: string;
+          document_type:
+            | "iep"
+            | "therapy_evaluation"
+            | "therapy_progress"
+            | "school_accommodation"
+            | "medical_certificate"
+            | "dev_pediatrician_report"
+            | "parent_provided"
+            | "other_supporting";
+          doc_status: "draft" | "active" | "shared" | "archived" | "revoked";
+          current_version_id: string;
+          version_number: number;
+          mime_type: string;
+          file_name: string;
+          file_size_bytes: number | null;
+          child_profile_id: string | null;
+          permissions: Json;
+          grant_valid_until: string;
+          grant_created_at: string;
+        }[];
+      };
+      get_care_sessions_with_therapists: {
+        Args: {
+          p_org_id: string;
+          p_from_iso?: string | null;
+          p_to_iso?: string | null;
+          p_status?: string | null;
+          p_therapy_type?: string | null;
+          p_child_profile_id?: string | null;
+        };
+        Returns: {
+          id: string;
+          clinic_organization_id: string;
+          child_profile_id: string;
+          child_display_name: string | null;
+          therapist_profile_id: string;
+          therapist_full_name: string | null;
+          therapist_email: string | null;
+          therapy_type: string;
+          scheduled_at: string;
+          duration_minutes: number | null;
+          status: string;
+          notes: string | null;
+          parent_visible_summary: string | null;
+          created_at: string;
+          updated_at: string;
+        }[];
+      };
       list_clinic_organizations_for_sharing: {
         Args: { p_query?: string | null; p_limit?: number };
         Returns: {

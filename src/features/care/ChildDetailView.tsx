@@ -25,6 +25,7 @@ import { ScheduleSessionModal } from "./ScheduleSessionModal";
 import { EditSessionModal } from "./EditSessionModal";
 import { AcceptAsTherapyClientCard } from "./AcceptAsTherapyClientCard";
 import { ChildTimeline } from "./ChildTimeline";
+import { SecondarySectionSkeleton } from "./ChildDetailSkeleton";
 import type {
   CareChildRow,
   ChildClinicMembershipState,
@@ -65,6 +66,10 @@ interface Props {
   /** Phase 6E — active CareContext organization id (used by sessions
    *  modals for the clinic_organization_id payload). */
   activeOrganizationId?: string;
+  /** Care Performance Phase 1 — when true, secondary cards (sessions,
+   *  documents) render skeleton blocks instead of empty content. The
+   *  identity / identifiers cards always render immediately. */
+  secondaryLoading?: boolean;
   /** Called after a successful edit so the parent page can refetch. */
   onChanged?: () => void;
 }
@@ -101,6 +106,7 @@ export function ChildDetailView({
   sessionsWithNotes,
   membershipState,
   activeOrganizationId,
+  secondaryLoading = false,
   onChanged,
 }: Props) {
   const notesSet = sessionsWithNotes ?? new Set<string>();
@@ -315,12 +321,16 @@ export function ChildDetailView({
               </Button>
             )}
           </div>
-          <TherapySessionsList
-            sessions={sessions}
-            showChildColumn={false}
-            sessionsWithNotes={notesSet}
-            onSelect={(s) => setEditSessionTarget(s)}
-          />
+          {secondaryLoading ? (
+            <SecondarySectionSkeleton />
+          ) : (
+            <TherapySessionsList
+              sessions={sessions}
+              showChildColumn={false}
+              sessionsWithNotes={notesSet}
+              onSelect={(s) => setEditSessionTarget(s)}
+            />
+          )}
         </div>
       )}
 
@@ -343,11 +353,15 @@ export function ChildDetailView({
               </Button>
             )}
           </div>
-          <ClinicDocumentsList
-            documents={clinicDocuments}
-            isClinicAdmin={isClinicAdmin}
-            onChanged={() => onChanged?.()}
-          />
+          {secondaryLoading ? (
+            <SecondarySectionSkeleton />
+          ) : (
+            <ClinicDocumentsList
+              documents={clinicDocuments}
+              isClinicAdmin={isClinicAdmin}
+              onChanged={() => onChanged?.()}
+            />
+          )}
         </div>
       ) : (
         <div className="space-y-2">
@@ -355,7 +369,11 @@ export function ChildDetailView({
             <FileText className="w-4 h-4" />
             Shared documents
           </h2>
-          <SharedDocumentsList documents={documents} hideChildColumn />
+          {secondaryLoading ? (
+            <SecondarySectionSkeleton />
+          ) : (
+            <SharedDocumentsList documents={documents} hideChildColumn />
+          )}
         </div>
       )}
 
@@ -420,7 +438,7 @@ export function ChildDetailView({
       )}
 
       {/* Phase 6E.1 — Timeline (clinically-treated children only). */}
-      {isClinicallyTreated && (
+      {isClinicallyTreated && !secondaryLoading && (
         <ChildTimeline
           sessions={sessions}
           clinicDocuments={clinicDocuments}

@@ -54,8 +54,71 @@ interface ListSessionsForClinicParams {
   therapyType?: TherapyType | "";
 }
 
-export async function listSessionsForClinic(
-  params: ListSessionsForClinicParams,
+/** Shape returned by the get_care_sessions_with_therapists RPC. */
+interface RawSessionRpcRow {
+  id: string;
+  clinic_organization_id: string;
+  child_profile_id: string;
+  child_display_name: string | null;
+  therapist_profile_id: string;
+  therapist_full_name: string | null;
+  therapist_email: string | null;
+  therapy_type: string;
+  scheduled_at: string;
+  duration_minutes: number | null;
+  status: string;
+  notes: string | null;
+  parent_visible_summary: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+function mapRpcRow(row: RawSessionRpcRow): TherapySession {
+  return {
+    id: row.id,
+    clinicOrganizationId: row.clinic_organization_id,
+    childProfileId: row.child_profile_id,
+    childDisplayName: row.child_display_name ?? null,
+    therapistProfileId: row.therapist_profile_id,
+    // Match the legacy fallback the UI relied on:
+    //   member.fullName ?? member.email ?? null
+    therapistName:
+      row.therapist_full_name ?? row.therapist_email ?? null,
+    therapyType: row.therapy_type as TherapyType,
+    scheduledAt: row.scheduled_at,
+    durationMinutes: row.duration_minutes ?? null,
+    status: row.status as SessionStatus,
+    notes: row.notes ?? null,
+    parentVisibleSummary: row.parent_visible_summary ?? null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+// Care Performance Phase 2 — bundled sessions + therapist-name read.
+//
+// One RPC replaces the previous 2-call waterfall:
+//   1. SELECT therapy_sessions ⨝ child_profiles
+//   2. RPC list_clinic_members (just to resolve therapist_profile_id
+//      → display name)
+//
+// The RPC re-applies the `select_therapy_sessions` policy predicate
+// (082 §3.A) inside its SECURITY DEFINER body, so visibility matches
+// direct-SELECT byte-for-byte. We keep a fallback to the legacy
+// 2-call path on RPC failure (e.g. transient error or migration not
+// yet applied in a given environment) so the page stays functional.
+// Unauthorized callers receive 0 rows from BOTH paths — same RLS
+// outcome — so the fallback does not mask real auth errors.
+
+async function listSessionsViaLegacyPath(
+  organizationId: string,
+  childProfileId: string | null,
+  filters?: {
+    fromIso?: string;
+    toIso?: string;
+    status?: SessionStatus | "";
+    therapyType?: TherapyType | "";
+  },
 ): Promise<TherapySession[]> {
   const supabase = createClient() as AnyClient;
   let q = supabase
@@ -66,50 +129,18 @@ export async function listSessionsForClinic(
        parent_visible_summary, created_at, updated_at,
        child_profiles:child_profile_id ( display_name )`,
     )
-    .eq("clinic_organization_id", params.organizationId)
+    .eq("clinic_organization_id", organizationId)
     .order("scheduled_at", { ascending: false });
 
-  if (params.fromIso) q = q.gte("scheduled_at", params.fromIso);
-  if (params.toIso) q = q.lte("scheduled_at", params.toIso);
-  if (params.status) q = q.eq("status", params.status);
-  if (params.therapyType) q = q.eq("therapy_type", params.therapyType);
+  if (childProfileId) q = q.eq("child_profile_id", childProfileId);
+  if (filters?.fromIso) q = q.gte("scheduled_at", filters.fromIso);
+  if (filters?.toIso) q = q.lte("scheduled_at", filters.toIso);
+  if (filters?.status) q = q.eq("status", filters.status);
+  if (filters?.therapyType) q = q.eq("therapy_type", filters.therapyType);
 
   const { data, error } = await q;
   if (error) {
-    console.error("[care] listSessionsForClinic:", error);
-    return [];
-  }
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const rows = (data ?? []) as any[];
-
-  // Resolve therapist names via list_clinic_members.
-  const members = await listClinicMembers(params.organizationId);
-  const memberMap = new Map<string, ClinicMember>();
-  for (const m of members) memberMap.set(m.id, m);
-
-  return rows.map<TherapySession>((row) => mapRow(row, memberMap));
-}
-
-export async function listSessionsForChild(
-  organizationId: string,
-  childProfileId: string,
-): Promise<TherapySession[]> {
-  const supabase = createClient() as AnyClient;
-  const { data, error } = await supabase
-    .from("therapy_sessions")
-    .select(
-      `id, clinic_organization_id, child_profile_id, therapist_profile_id,
-       therapy_type, scheduled_at, duration_minutes, status, notes,
-       parent_visible_summary, created_at, updated_at,
-       child_profiles:child_profile_id ( display_name )`,
-    )
-    .eq("clinic_organization_id", organizationId)
-    .eq("child_profile_id", childProfileId)
-    .order("scheduled_at", { ascending: false });
-
-  if (error) {
-    console.error("[care] listSessionsForChild:", error);
+    console.error("[care] listSessions legacy fallback:", error);
     return [];
   }
 
@@ -120,6 +151,68 @@ export async function listSessionsForChild(
   for (const m of members) memberMap.set(m.id, m);
 
   return rows.map<TherapySession>((row) => mapRow(row, memberMap));
+}
+
+export async function listSessionsForClinic(
+  params: ListSessionsForClinicParams,
+): Promise<TherapySession[]> {
+  const supabase = createClient() as AnyClient;
+  const { data, error } = await supabase.rpc(
+    "get_care_sessions_with_therapists",
+    {
+      p_org_id: params.organizationId,
+      p_from_iso: params.fromIso ?? null,
+      p_to_iso: params.toIso ?? null,
+      p_status: params.status ? params.status : null,
+      p_therapy_type: params.therapyType ? params.therapyType : null,
+      p_child_profile_id: null,
+    },
+  );
+
+  if (error) {
+    console.warn(
+      "[care] listSessionsForClinic RPC failed; falling back to legacy path:",
+      error,
+    );
+    return listSessionsViaLegacyPath(params.organizationId, null, {
+      fromIso: params.fromIso,
+      toIso: params.toIso,
+      status: params.status,
+      therapyType: params.therapyType,
+    });
+  }
+
+  const rows = (data ?? []) as RawSessionRpcRow[];
+  return rows.map(mapRpcRow);
+}
+
+export async function listSessionsForChild(
+  organizationId: string,
+  childProfileId: string,
+): Promise<TherapySession[]> {
+  const supabase = createClient() as AnyClient;
+  const { data, error } = await supabase.rpc(
+    "get_care_sessions_with_therapists",
+    {
+      p_org_id: organizationId,
+      p_from_iso: null,
+      p_to_iso: null,
+      p_status: null,
+      p_therapy_type: null,
+      p_child_profile_id: childProfileId,
+    },
+  );
+
+  if (error) {
+    console.warn(
+      "[care] listSessionsForChild RPC failed; falling back to legacy path:",
+      error,
+    );
+    return listSessionsViaLegacyPath(organizationId, childProfileId);
+  }
+
+  const rows = (data ?? []) as RawSessionRpcRow[];
+  return rows.map(mapRpcRow);
 }
 
 export interface CreateSessionInput {
