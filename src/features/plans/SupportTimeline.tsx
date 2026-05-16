@@ -23,7 +23,7 @@ interface KindConfig {
 const KIND_CONFIG: Record<TimelineEventKind, KindConfig> = {
   plan_created:        { icon: ClipboardList, dotClass: "bg-primary border-primary",           iconClass: "text-primary-foreground" },
   plan_revised:        { icon: ClipboardList, dotClass: "bg-primary border-primary",           iconClass: "text-primary-foreground" },
-  plan_submitted:      { icon: Send,          dotClass: "bg-blue-500 border-blue-500",         iconClass: "text-white" },
+  plan_submitted:      { icon: Send,          dotClass: "bg-blue-100 border-blue-300",         iconClass: "text-blue-600" },
   review_started:      { icon: Eye,           dotClass: "bg-amber-500 border-amber-500",       iconClass: "text-white" },
   plan_finalized:      { icon: CheckCircle2,  dotClass: "bg-green-500 border-green-500",       iconClass: "text-white" },
   plan_approved:       { icon: CheckCircle2,  dotClass: "bg-green-500 border-green-500",       iconClass: "text-white" },
