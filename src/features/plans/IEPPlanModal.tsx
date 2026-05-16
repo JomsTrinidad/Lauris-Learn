@@ -1193,6 +1193,9 @@ export function IEPPlanModal({
                     nextReviewNa={nextReviewNa} setNextReviewNa={setNextReviewNa}
                     status={status}
                     canEdit={canEdit}
+                    planId={stableId}
+                    studentId={studentId}
+                    schoolId={schoolId}
                   />
                 )}
 

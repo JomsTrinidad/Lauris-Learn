@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter, usePathname } from "next/navigation";
-import { ShieldCheck, School, FlaskConical, LogOut, ChevronDown, Menu, History } from "lucide-react";
+import { ShieldCheck, School, FlaskConical, LogOut, ChevronDown, Menu, History, Activity } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { Spinner } from "@/components/ui/spinner";
 import { getInitials } from "@/lib/utils";
@@ -17,9 +17,10 @@ interface AdminUser {
 }
 
 const navItems = [
-  { path: "/super-admin/schools",   label: "Schools",      icon: School },
-  { path: "/super-admin/demo-data", label: "Demo Data",    icon: FlaskConical },
-  { path: "/super-admin/activity",  label: "Activity Log", icon: History },
+  { path: "/super-admin/schools",       label: "Schools",         icon: School },
+  { path: "/super-admin/demo-data",     label: "Demo Data",       icon: FlaskConical },
+  { path: "/super-admin/activity",      label: "Activity Log",    icon: History },
+  { path: "/super-admin/intelligence",  label: "Ops Intelligence", icon: Activity },
 ];
 
 export default function SuperAdminLayout({ children }: { children: React.ReactNode }) {

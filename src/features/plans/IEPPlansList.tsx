@@ -9,7 +9,7 @@
  * state text is adapted for "no pending reviews".
  */
 
-import { ClipboardList, ArrowRight, Clock } from "lucide-react";
+import { ClipboardList, ArrowRight, Clock, History, CheckCircle2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PLAN_STATUS_LABELS } from "./constants";
@@ -30,10 +30,12 @@ const STATUS_VARIANT: Record<PlanStatus, "draft" | "scheduled" | "waitlisted" | 
 export function IEPPlansList({
   plans,
   onOpen,
+  onOpenTimeline,
   queueMode = false,
 }: {
   plans: PlanListItem[];
   onOpen: (plan: PlanListItem) => void;
+  onOpenTimeline?: (plan: PlanListItem) => void;
   queueMode?: boolean;
 }) {
   if (plans.length === 0) {
@@ -77,7 +79,7 @@ export function IEPPlansList({
                 <Th>School Year</Th>
                 <Th>Status</Th>
                 <Th>{queueMode ? "Waiting" : "Last Updated"}</Th>
-                <Th className="text-right">Open</Th>
+                <Th className="text-right">Actions</Th>
               </tr>
             </thead>
             <tbody>
@@ -115,9 +117,24 @@ export function IEPPlansList({
                     {p.school_year?.name ?? "—"}
                   </td>
                   <td className="px-5 py-3">
-                    <Badge variant={STATUS_VARIANT[p.status]}>
-                      {PLAN_STATUS_LABELS[p.status]}
-                    </Badge>
+                    <div className="space-y-1">
+                      <Badge variant={STATUS_VARIANT[p.status]}>
+                        {PLAN_STATUS_LABELS[p.status]}
+                      </Badge>
+                      {(p.status === "finalized" || p.status === "approved") && (
+                        p.parent_acknowledged_at ? (
+                          <div className="flex items-center gap-1 text-xs text-green-700">
+                            <CheckCircle2 className="w-3 h-3 shrink-0" />
+                            <span>Parent acknowledged</span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1 text-xs text-amber-600">
+                            <Clock className="w-3 h-3 shrink-0" />
+                            <span>Awaiting parent</span>
+                          </div>
+                        )
+                      )}
+                    </div>
                   </td>
                   <td className="px-5 py-3 text-muted-foreground">
                     {queueMode && isPending(p.status) ? (
@@ -131,7 +148,19 @@ export function IEPPlansList({
                     )}
                   </td>
                   <td className="px-5 py-3 text-right">
-                    <ArrowRight className="w-4 h-4 text-muted-foreground inline-block" />
+                    <div className="flex items-center justify-end gap-1">
+                      {onOpenTimeline && (
+                        <button
+                          type="button"
+                          title="View history"
+                          onClick={(e) => { e.stopPropagation(); onOpenTimeline(p); }}
+                          className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                        >
+                          <History className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                      <ArrowRight className="w-4 h-4 text-muted-foreground" />
+                    </div>
                   </td>
                 </tr>
               ))}

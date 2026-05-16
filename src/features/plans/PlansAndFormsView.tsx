@@ -40,6 +40,7 @@ import { listPlans } from "./queries";
 import { getPendingReviewCount, PENDING_REVIEW_STATUSES } from "./review-queue";
 import { IEPPlansList } from "./IEPPlansList";
 import { IEPPlanModal } from "./IEPPlanModal";
+import { SupportTimelineModal } from "./SupportTimelineModal";
 import { PLAN_STATUS_LABELS } from "./constants";
 import type { PlanListItem, PlanStatus, IepWorkflowMode } from "./types";
 import { cn } from "@/lib/utils";
@@ -118,9 +119,12 @@ export function PlansAndFormsView({
   const [reviewQueueActive, setReviewQueueActive] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
 
-  // ── Modal ─────────────────────────────────────────────────────────────
+  // ── Plan edit modal ───────────────────────────────────────────────────
   const [modalOpen, setModalOpen]   = useState(false);
   const [editingId, setEditingId]   = useState<string | null>(null);
+
+  // ── Timeline modal ────────────────────────────────────────────────────
+  const [timelinePlan, setTimelinePlan] = useState<PlanListItem | null>(null);
 
   // ── Load pending count ────────────────────────────────────────────────
   const reloadPendingCount = useCallback(async () => {
@@ -293,7 +297,20 @@ export function PlansAndFormsView({
       {loading ? (
         <PageSpinner />
       ) : (
-        <IEPPlansList plans={plans} onOpen={openExisting} queueMode={reviewQueueActive} />
+        <IEPPlansList
+          plans={plans}
+          onOpen={openExisting}
+          onOpenTimeline={setTimelinePlan}
+          queueMode={reviewQueueActive}
+        />
+      )}
+
+      {timelinePlan && (
+        <SupportTimelineModal
+          plan={timelinePlan}
+          onClose={() => setTimelinePlan(null)}
+          onOpenPlan={() => { openExisting(timelinePlan); setTimelinePlan(null); }}
+        />
       )}
 
       <IEPPlanModal

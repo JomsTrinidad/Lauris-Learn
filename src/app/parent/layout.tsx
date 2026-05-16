@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Home, MessageSquare, User, CreditCard, LogOut,
-  GraduationCap, TrendingUp, CalendarDays, FileText, MoreHorizontal,
+  GraduationCap, TrendingUp, CalendarDays, FileText, MoreHorizontal, ClipboardList,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { BrandingApplier } from "@/components/BrandingApplier";
@@ -31,7 +31,7 @@ const NAV_PRIMARY = [
 ] as const;
 
 // Routes that belong under "More"
-const MORE_ROUTES = ["/parent/student", "/parent/documents", "/parent/billing"];
+const MORE_ROUTES = ["/parent/student", "/parent/documents", "/parent/billing", "/parent/plans"];
 
 export default function ParentLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -279,6 +279,19 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
                 >
                   <User className="w-5 h-5 flex-shrink-0 text-muted-foreground" />
                   Child Profile
+                </Link>
+
+                <Link
+                  href="/parent/plans"
+                  onClick={() => setShowMore(false)}
+                  className={`flex items-center gap-3 px-3 py-3.5 rounded-xl transition-colors text-sm font-medium ${
+                    pathname.startsWith("/parent/plans")
+                      ? "bg-primary/10 text-primary"
+                      : "hover:bg-accent/60 text-foreground"
+                  }`}
+                >
+                  <ClipboardList className="w-5 h-5 flex-shrink-0 text-muted-foreground" />
+                  Support Plans
                 </Link>
 
                 <Link

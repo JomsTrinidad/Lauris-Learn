@@ -1206,6 +1206,109 @@ export type Database = {
           { foreignKeyName: "student_plan_attachments_attached_by_fkey"; columns: ["attached_by"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] }
         ];
       };
+      parent_observations: {
+        Row: {
+          id: string;
+          follow_through_item_id: string;
+          plan_id: string;
+          student_id: string;
+          school_id: string;
+          guardian_id: string | null;
+          observation_text: string;
+          observation_kind: string | null;
+          observed_at: string | null;
+          created_at: string;
+          archived_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          follow_through_item_id: string;
+          plan_id: string;
+          student_id: string;
+          school_id: string;
+          guardian_id?: string | null;
+          observation_text: string;
+          observation_kind?: string | null;
+          observed_at?: string | null;
+          created_at?: string;
+          archived_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          follow_through_item_id?: string;
+          plan_id?: string;
+          student_id?: string;
+          school_id?: string;
+          guardian_id?: string | null;
+          observation_text?: string;
+          observation_kind?: string | null;
+          observed_at?: string | null;
+          created_at?: string;
+          archived_at?: string | null;
+        };
+        Relationships: [
+          { foreignKeyName: "po_item_fkey"; columns: ["follow_through_item_id"]; isOneToOne: false; referencedRelation: "support_follow_through_items"; referencedColumns: ["id"] },
+          { foreignKeyName: "po_plan_fkey"; columns: ["plan_id"]; isOneToOne: false; referencedRelation: "student_plans"; referencedColumns: ["id"] },
+          { foreignKeyName: "po_student_fkey"; columns: ["student_id"]; isOneToOne: false; referencedRelation: "students"; referencedColumns: ["id"] },
+          { foreignKeyName: "po_school_fkey"; columns: ["school_id"]; isOneToOne: false; referencedRelation: "schools"; referencedColumns: ["id"] },
+          { foreignKeyName: "po_guardian_fkey"; columns: ["guardian_id"]; isOneToOne: false; referencedRelation: "guardians"; referencedColumns: ["id"] }
+        ];
+      };
+      support_follow_through_items: {
+        Row: {
+          id: string;
+          plan_id: string;
+          student_id: string;
+          school_id: string;
+          title: string;
+          description: string | null;
+          category: string | null;
+          review_date: string | null;
+          is_shared_with_parent: boolean;
+          shared_with_parent_at: string | null;
+          sort_order: number;
+          created_by: string | null;
+          created_at: string;
+          archived_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          plan_id: string;
+          student_id: string;
+          school_id: string;
+          title: string;
+          description?: string | null;
+          category?: string | null;
+          review_date?: string | null;
+          is_shared_with_parent?: boolean;
+          shared_with_parent_at?: string | null;
+          sort_order?: number;
+          created_by?: string | null;
+          created_at?: string;
+          archived_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          plan_id?: string;
+          student_id?: string;
+          school_id?: string;
+          title?: string;
+          description?: string | null;
+          category?: string | null;
+          review_date?: string | null;
+          is_shared_with_parent?: boolean;
+          shared_with_parent_at?: string | null;
+          sort_order?: number;
+          created_by?: string | null;
+          archived_at?: string | null;
+        };
+        Relationships: [
+          { foreignKeyName: "sfti_plan_id_fkey"; columns: ["plan_id"]; isOneToOne: false; referencedRelation: "student_plans"; referencedColumns: ["id"] },
+          { foreignKeyName: "sfti_student_id_fkey"; columns: ["student_id"]; isOneToOne: false; referencedRelation: "students"; referencedColumns: ["id"] },
+          { foreignKeyName: "sfti_school_id_fkey"; columns: ["school_id"]; isOneToOne: false; referencedRelation: "schools"; referencedColumns: ["id"] },
+          { foreignKeyName: "sfti_created_by_fkey"; columns: ["created_by"]; isOneToOne: false; referencedRelation: "profiles"; referencedColumns: ["id"] }
+        ];
+      };
       iep_report_extractions: {
         Row: {
           id: string;
@@ -1453,6 +1556,10 @@ export type Database = {
       };
     Views: Record<string, never>;
     Functions: {
+      acknowledge_plan: {
+        Args: { p_plan_id: string };
+        Returns: "ok" | "plan_not_found" | "not_authorized" | "plan_not_ready";
+      };
       log_document_access: {
         Args: {
           p_doc_id: string;
@@ -1560,6 +1667,20 @@ export type Database = {
           relationship_kind: string;
           status: string;
         }[];
+      };
+      get_operational_activity_summary: {
+        Args: { p_from: string; p_to: string };
+        Returns: {
+          table_name: string;
+          activity_count: number;
+          active_users: number;
+          active_schools: number;
+          last_activity: string | null;
+        }[];
+      };
+      get_workflow_health_signals: {
+        Args: { p_from: string; p_to: string };
+        Returns: Json;
       };
       list_parent_visible_therapy_updates: {
         Args: { p_student_id: string };

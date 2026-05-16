@@ -9,7 +9,7 @@ import {
   Link as LinkIcon, Copy, Check, BookOpen,
   ArrowRight, RefreshCw, Users, GraduationCap,
   HelpCircle, AlertTriangle, ChevronRight, X, UserPlus, UserCheck, FileText,
-  Share2, MoreHorizontal, Printer, Heart, Hash,
+  Share2, MoreHorizontal, Printer, Heart, Hash, History,
 } from "lucide-react";
 import { DatePicker } from "@/components/ui/datepicker";
 import { AvatarUpload } from "@/components/ui/avatar-upload";
@@ -20,7 +20,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Modal, ModalCancelButton } from "@/components/ui/modal";
 import { Card, CardContent } from "@/components/ui/card";
-import { PageSpinner, ErrorAlert } from "@/components/ui/spinner";
+import { PageSpinner, ErrorAlert, Spinner } from "@/components/ui/spinner";
 import { getInitials, cn } from "@/lib/utils";
 import { compressImage, PROFILE_PHOTO_MAX_W, PROFILE_PHOTO_MAX_BYTES } from "@/lib/image-compress";
 import { trackUpload } from "@/lib/track-upload";
@@ -28,6 +28,10 @@ import { createClient } from "@/lib/supabase/client";
 import { useSchoolContext } from "@/contexts/SchoolContext";
 import { queryKeys } from "@/lib/query-client";
 import { ShareIdentityWithClinicModal } from "@/features/clinic-sharing/ShareIdentityWithClinicModal";
+import { StudentSupportHistoryModal } from "@/features/plans/StudentSupportHistoryModal";
+import { SupportTimeline } from "@/features/plans/SupportTimeline";
+import { loadStudentSupportHistory } from "@/features/plans/timeline";
+import type { StudentHistoryEvent } from "@/features/plans/timeline";
 import { getSchoolOrganizationId } from "@/features/clinic-sharing/queries";
 import { useStudentsList, useStudentsClasses } from "@/lib/hooks";
 import { reportError, generateRequestId } from "@/lib/monitoring";
@@ -376,11 +380,13 @@ function RowMenu({
   onEdit,
   onShare,
   onGraduate,
+  onSupportHistory,
 }: {
   student: Student;
   onEdit: () => void;
   onShare: (() => void) | null;
   onGraduate: (() => void) | null;
+  onSupportHistory: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
@@ -391,7 +397,7 @@ function RowMenu({
     if (!btnRef.current) return;
     const rect = btnRef.current.getBoundingClientRect();
     const extraItems = (onShare ? 1 : 0) + (onGraduate ? 1 : 0);
-    const menuH = 68 + extraItems * 40;
+    const menuH = 108 + extraItems * 40; // +40 for Support History item
     const spaceBelow = window.innerHeight - rect.bottom;
     const top = spaceBelow > menuH ? rect.bottom + 4 : rect.top - menuH - 4;
     setPos({ top, left: rect.right - 192 });
@@ -443,6 +449,14 @@ function RowMenu({
           </Link>
           <button
             type="button"
+            onClick={() => { setOpen(false); onSupportHistory(); }}
+            className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-muted transition-colors text-foreground text-left"
+          >
+            <History className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+            Support History
+          </button>
+          <button
+            type="button"
             onClick={() => { setOpen(false); onEdit(); }}
             className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-muted transition-colors text-foreground text-left"
           >
@@ -479,6 +493,82 @@ function RowMenu({
         document.body
       )}
     </>
+  );
+}
+
+function SupportHistoryProfileCard({
+  studentId,
+  onViewFull,
+}: {
+  studentId: string;
+  onViewFull: () => void;
+}) {
+  const [events, setEvents] = useState<StudentHistoryEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const supabase = createClient();
+    setLoading(true);
+    setError(null);
+    loadStudentSupportHistory(supabase, studentId)
+      .then(setEvents)
+      .catch((err) => {
+        console.error("[SupportHistoryProfileCard]", err);
+        setError("Could not load support history.");
+      })
+      .finally(() => setLoading(false));
+  }, [studentId]);
+
+  const preview = events.slice(0, 5);
+
+  return (
+    <div className="rounded-xl border border-border bg-card shadow-sm">
+      <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-border">
+        <div className="flex items-center gap-2.5">
+          <div className="w-7 h-7 rounded-lg bg-[var(--theme-accent-muted)] flex items-center justify-center shrink-0">
+            <History className="w-3.5 h-3.5 text-[var(--theme-accent)]" />
+          </div>
+          <span className="text-sm font-semibold">Support History</span>
+        </div>
+        {!loading && events.length > 0 && (
+          <button
+            type="button"
+            onClick={onViewFull}
+            className="text-xs text-primary hover:underline shrink-0"
+          >
+            View full history →
+          </button>
+        )}
+      </div>
+      <div className="px-4 py-3">
+        {loading ? (
+          <div className="flex justify-center py-4">
+            <Spinner size="sm" />
+          </div>
+        ) : error ? (
+          <p className="text-xs text-destructive">{error}</p>
+        ) : events.length === 0 ? (
+          <div className="py-1 space-y-0.5">
+            <p className="text-sm text-muted-foreground">No support history yet.</p>
+            <p className="text-xs text-muted-foreground/70">Support plans, evidence, and progress updates will appear here.</p>
+          </div>
+        ) : (
+          <>
+            <SupportTimeline events={preview} />
+            {events.length > 5 && (
+              <button
+                type="button"
+                onClick={onViewFull}
+                className="mt-3 text-xs text-primary hover:underline"
+              >
+                +{events.length - 5} more event{events.length - 5 !== 1 ? "s" : ""} — view full history
+              </button>
+            )}
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -565,6 +655,9 @@ export default function StudentsPage() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [helpSearch, setHelpSearch] = useState("");
   const [helpExpanded, setHelpExpanded] = useState<Record<string, boolean>>({});
+
+  // Support History modal
+  const [supportHistoryStudent, setSupportHistoryStudent] = useState<Student | null>(null);
 
   // Graduate workflow state
   const [graduateTarget, setGraduateTarget] = useState<Student | null>(null);
@@ -2236,6 +2329,7 @@ export default function StudentsPage() {
                             <RowMenu
                               student={student}
                               onEdit={() => openEdit(student)}
+                              onSupportHistory={() => setSupportHistoryStudent(student)}
                               onGraduate={
                                 userRole === "school_admin" &&
                                 !isHistoricalView &&
@@ -3072,6 +3166,12 @@ export default function StudentsPage() {
                     </div>
                   </div>
                 )}
+
+                {/* Support History */}
+                <SupportHistoryProfileCard
+                  studentId={selectedStudent.id}
+                  onViewFull={() => setSupportHistoryStudent(selectedStudent)}
+                />
 
               </div>
             </div>
@@ -4085,6 +4185,15 @@ export default function StudentsPage() {
           lockedStudentName={shareClinicTarget?.name}
           onClose={() => setShareClinicTarget(null)}
           onShared={() => setShareClinicTarget(null)}
+        />
+      )}
+
+      {/* Support History modal */}
+      {supportHistoryStudent && (
+        <StudentSupportHistoryModal
+          studentId={supportHistoryStudent.id}
+          studentName={`${supportHistoryStudent.firstName} ${supportHistoryStudent.lastName}`.trim()}
+          onClose={() => setSupportHistoryStudent(null)}
         />
       )}
 

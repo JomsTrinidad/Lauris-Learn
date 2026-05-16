@@ -18,6 +18,7 @@ import {
   ShieldCheck,
   FileText,
   History,
+  Activity,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -187,24 +188,46 @@ export function Sidebar({
             );
           })}
 
-          {/* Super Admin link */}
+          {/* Platform section — super_admin only */}
           {userRole === "super_admin" && (
             <div className="border-t border-sidebar-border pt-4">
               <p className="px-3 mb-1 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                 Platform
               </p>
-              <Link
-                href="/super-admin/schools"
-                className={cn(
-                  "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors text-sm",
-                  pathname.startsWith("/super-admin")
-                    ? "shadow-[inset_3px_0_0_var(--theme-indicator)] bg-[var(--theme-accent-subtle)] text-[var(--theme-accent)] font-medium"
-                    : "text-sidebar-foreground hover:bg-sidebar-accent"
-                )}
-              >
-                <ShieldCheck className="w-4 h-4 flex-shrink-0" />
-                <span>Super Admin</span>
-              </Link>
+              <ul className="space-y-1">
+                {/* "Super Admin" covers all /super-admin/* except /intelligence */}
+                {[
+                  {
+                    href: "/super-admin/schools",
+                    label: "Super Admin",
+                    icon: ShieldCheck,
+                    active:
+                      pathname.startsWith("/super-admin") &&
+                      !pathname.startsWith("/super-admin/intelligence"),
+                  },
+                  {
+                    href: "/super-admin/intelligence",
+                    label: "Ops Intelligence",
+                    icon: Activity,
+                    active: pathname.startsWith("/super-admin/intelligence"),
+                  },
+                ].map((item) => (
+                  <li key={item.href}>
+                    <Link
+                      href={item.href}
+                      className={cn(
+                        "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors text-sm",
+                        item.active
+                          ? "shadow-[inset_3px_0_0_var(--theme-indicator)] bg-[var(--theme-accent-subtle)] text-[var(--theme-accent)] font-medium"
+                          : "text-sidebar-foreground hover:bg-sidebar-accent"
+                      )}
+                    >
+                      <item.icon className="w-4 h-4 flex-shrink-0" />
+                      <span>{item.label}</span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
         </nav>

@@ -4,6 +4,7 @@ import type { Dispatch, SetStateAction } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { Field, NaToggle } from "./shared";
 import type { PlanStatus } from "../types";
+import { HomeSupportItems } from "../HomeSupportItems";
 
 export interface Step7AgreementsProps {
   agreements: string; setAgreements: (v: string) => void;
@@ -18,6 +19,10 @@ export interface Step7AgreementsProps {
   nextReviewNa: boolean; setNextReviewNa: (v: boolean) => void;
   status: PlanStatus;
   canEdit: boolean;
+  /** Plan DB id — null for unsaved new plans. Required by HomeSupportItems. */
+  planId: string | null;
+  studentId: string;
+  schoolId: string;
 }
 
 export function Step7Agreements({
@@ -32,6 +37,7 @@ export function Step7Agreements({
   concernsNa, setConcernsNa,
   nextReviewNa, setNextReviewNa,
   status, canEdit,
+  planId, studentId, schoolId,
 }: Step7AgreementsProps) {
 
   const isDraft = status === "draft";
@@ -179,6 +185,23 @@ export function Step7Agreements({
             Family acknowledgement will be available once this plan is shared for review.
           </p>
         )}
+      </div>
+
+      {/* ── Home Support Guidance ── */}
+      <div className="rounded-xl border border-border/50 bg-muted/60 p-5 space-y-4">
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">Home Support Guidance</h3>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Structured focus areas and reinforcement suggestions for the family to continue at home.
+            Each item can be individually shared with parents once the plan is finalized.
+          </p>
+        </div>
+        <HomeSupportItems
+          planId={planId}
+          studentId={studentId}
+          schoolId={schoolId}
+          canEdit={canEdit}
+        />
       </div>
 
     </div>
