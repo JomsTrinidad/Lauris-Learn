@@ -618,7 +618,7 @@ export default function ParentDashboard() {
           </Link>
         </div>
         {/* Filter pills */}
-        <div className="flex items-center gap-1.5 flex-wrap mb-3">
+        <div className="flex items-center gap-1.5 flex-wrap mb-2">
           {JOURNEY_FILTERS.map((f) => {
             const isActive = activeFilter === f;
             return (

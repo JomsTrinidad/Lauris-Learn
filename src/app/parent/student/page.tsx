@@ -101,18 +101,21 @@ export default function ParentStudentPage() {
                 : getInitials(`${student.firstName} ${student.lastName}`)
               }
             </div>
-            <div>
-              <h2 className="text-lg font-semibold">
+            <div className="min-w-0">
+              <h2 className="text-lg font-semibold leading-tight">
                 {student.firstName} {student.lastName}
               </h2>
               {student.preferredName && (
-                <p className="text-sm text-muted-foreground">"{student.preferredName}"</p>
+                <p className="text-sm text-muted-foreground">&ldquo;{student.preferredName}&rdquo;</p>
               )}
               {student.studentCode && (
                 <p className="text-xs font-mono text-muted-foreground mt-0.5 bg-muted px-2 py-0.5 rounded inline-block">
                   ID: {student.studentCode}
                 </p>
               )}
+              <p className="text-xs text-muted-foreground mt-1.5">
+                One child journey · supported by your school and home
+              </p>
             </div>
             {student.enrollmentStatus && (
               <div className="ml-auto">

@@ -151,7 +151,7 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
 
       {/* ── Top header ──────────────────────────────────────────────────────── */}
       <header className="flex-shrink-0 border-b border-border bg-card px-4 py-3 flex items-center justify-between z-30">
-        {/* Child info — tapping opens child profile */}
+        {/* Brand + child context — tapping opens child profile */}
         <Link
           href="/parent/student"
           className="flex items-center gap-3 hover:opacity-75 transition-opacity min-w-0"
@@ -160,14 +160,18 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
             <GraduationCap className="w-4 h-4 text-primary-foreground" />
           </div>
           <div className="min-w-0">
-            <p className="text-sm font-semibold leading-none truncate">{schoolName || "School Portal"}</p>
-            {selectedChild && (
+            <p className="text-sm font-semibold leading-none truncate">Lauris Parent</p>
+            {selectedChild ? (
               <p className="text-xs text-muted-foreground mt-0.5 truncate">
                 {selectedChild.firstName} {selectedChild.lastName}
-                {selectedChild.studentCode && (
-                  <span className="font-mono ml-1">· {selectedChild.studentCode}</span>
+                {schoolName && (
+                  <span className="ml-1">· {schoolName}</span>
                 )}
               </p>
+            ) : (
+              schoolName && (
+                <p className="text-xs text-muted-foreground mt-0.5 truncate">{schoolName}</p>
+              )
             )}
           </div>
         </Link>

@@ -4,6 +4,50 @@
 
 ---
 
+## Shared Supabase Project — IMPORTANT
+
+**Lauris Learn and Lauris Care are two separate Next.js applications that share a SINGLE Supabase project.** Do not assume they are independent databases. Verify by comparing `.env.local` in both repos — same `NEXT_PUBLIC_SUPABASE_URL`, same `NEXT_PUBLIC_SUPABASE_ANON_KEY`, same `SUPABASE_SERVICE_ROLE_KEY`. Sibling repo path (local): `c:/Users/Desktop/Desktop/Clients/Lauris-Care/`.
+
+**Implications, all real (not theoretical):**
+
+- One `auth.users` table. A parent who signs into either app resolves to the same `auth.uid()`; the same JWT email claim drives RLS in both halves.
+- One `public` schema. Care's tables (`care_session_notes`, `care_family_members`, `care_support_context`, `care_parent_observations`, `voice_notes`, etc.) and Learn's tables (`students`, `guardians`, `parent_updates`, `progress_observations`, etc.) live in the same database. `therapy_sessions` was created by **Lauris Learn's migration 082** — Care reads it directly; Learn reads it via a parent-safe RPC.
+- Migrations from both repos apply to the same database. **Migration number space is shared by convention, not by enforcement.** Today Learn occupies `001–099` and `106` (room left at `100–105` for Care); Care occupies `084–095`. When adding a new migration in either repo, check the highest committed number across **both** repos to avoid collisions. (See "Migration numbering" below.)
+- Cross-app identity bridge is `students.child_profile_id` (a Learn-owned FK column added in migration 071) → `child_profiles.id` (the shared identity table). The same `child_profile_id` is the join key Care's `therapy_sessions`, `care_session_notes`, `care_family_members`, `care_support_context` all key off. To make a school student "the same person" as a Care child profile, set `students.child_profile_id`.
+
+**What this means for cross-app feature work:**
+
+- DO NOT propose mock data, simulated cross-app feeds, or backend bridges. The bridge already exists.
+- DO NOT treat Care RLS as a foreign system. The same `auth.uid()` flows through both. Reuse existing helpers (`parent_student_ids()` for guardian gating, `caller_visible_child_profile_ids()` for clinic-side identity reads).
+- When Learn needs Care data, prefer adding a new **parent-safe SECURITY DEFINER RPC** in Learn's migrations (pattern: `list_parent_visible_*`). Two examples shipped already: `list_parent_visible_therapy_updates` and `list_parent_child_connected_services` (migration 091, fixed by 106).
+- When Care needs Learn data, the same applies in reverse — write a `SECURITY DEFINER` RPC in Care's migrations gated by Care's role helpers.
+- Service-role queries in either repo's `/api/*` route hit the same database. RLS is the only safety boundary between school and clinic data.
+
+**Cross-app parent data flow (already live):**
+
+Migration 091 defines `list_parent_visible_therapy_updates(p_student_id UUID)` — SECURITY DEFINER STABLE. Caller-gated by `parent_student_ids()` (which reads `guardians.email = auth.jwt() ->> 'email'`). Resolves `students.child_profile_id`, queries `therapy_sessions` where `status='completed'` AND `parent_visible_summary` is non-empty. Returns ONLY parent-safe columns (id, clinic_name, therapy_type, scheduled_at, status, parent_visible_summary, therapist_name from `profiles.full_name`). Internal `therapy_sessions.notes`, raw clinical data, sub-tables, and clinic documents are NEVER returned. The Learn parent dashboard already calls this in [`src/features/parent-journey/queries.ts`](src/features/parent-journey/queries.ts) and routes results into the Therapy filter chip via `therapySessionToJourney` ([`src/features/parent-journey/adapters.ts`](src/features/parent-journey/adapters.ts)).
+
+**Pitfalls learned the hard way:**
+
+- **`auth.jwt() ->> 'email'` is case-sensitive.** Supabase Auth typically lowercases emails on signup, so `guardians.email` rows inserted with a different case (e.g., `Parent@lauriscare.test`) will silently fail to match. RPCs that gate on `parent_student_ids()` will return 0 rows. Fix: normalize `guardians.email` to lowercase, or `LOWER(...)`-match in the helper. Verify with `SELECT email FROM auth.users WHERE id = '<uid>'` vs `SELECT email FROM guardians WHERE student_id = '<sid>'`.
+- **`RETURNS TABLE (id UUID, ...)` in plpgsql shadows the column name `id`.** Any unqualified `WHERE id = ...` inside the function body becomes ambiguous (Postgres error 42702, REST surface 400). Always qualify with a table alias: `FROM students s ... WHERE s.id = p_student_id`. Migration 091 had this bug; migration 106 fixes it for both affected RPCs. Smoke-test new RPCs with `RETURNS TABLE` early.
+- **PostgREST schema cache can lag.** After adding or replacing a function, run `NOTIFY pgrst, 'reload schema';` (or include it at the bottom of the migration) so the next REST call sees the new body.
+- **The Care app's `app/layout.tsx` renders the staff Navbar at the root**, so parent routes there hide it via `if (pathname.startsWith('/parent')) return null;` in `components/shared/navbar.tsx`. Mention this when reasoning about Care chrome on cross-app feature work.
+
+### Migration numbering (shared with Care)
+
+When adding a migration in this repo:
+
+1. Run something like `ls Lauris-Learn/supabase/migrations/*.sql ../Lauris-Care/supabase/migrations/*.sql | sort -V | tail -20` to see the highest numbers across **both** repos.
+2. Pick the next free integer in the shared space. Don't reuse a number that exists in either repo even if it's in "the other app's territory" — both apply to the same DB.
+3. Bias toward never touching tables/policies/helpers owned by the sibling repo without a comment block explaining why. Cross-repo schema changes are legal but high-risk.
+
+### Demo accounts under the shared model
+
+`parent@lauriscare.test` is one auth user. Linking it via Learn's `guardians.email` AND Care's `care_family_members.profile_id` makes the same person a parent in both apps — see Session Log 2026-05-18 entries for the exact SQL. The cross-app parent demo is real (Therapy chip in Learn shows real Care `therapy_sessions` rows via RPC); no mocks are used.
+
+---
+
 ## Tech Stack
 
 | Layer | Choice |

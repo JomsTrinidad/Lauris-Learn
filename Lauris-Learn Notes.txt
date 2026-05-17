@@ -1,3 +1,5 @@
+
+
 Logins: 
 jtrinidad7@gmail.com - L4uryn3F41th!
 
@@ -5,10 +7,20 @@ jtrinidad7@gmail.com - L4uryn3F41th!
 admin@sunshine.test
 t1@sunshine.test … t8@sunshine.test
 p1@sunshine.test … p15@sunshine.test p7@sunshine.test | p5@sunshine.test
+
+therapist@lauriscare.test
+parent@lauriscare.test
+LaurisTest2024!
+
+
+
 Password: SunshineDemo2026!
 admin@goldensteps.test
 GoldenDemo2026!
+https://lauris-learn.vercel.app/auth/callback
 
+
+NEXT_PUBLIC_APP_URL=https://your-app.vercel.app
 
 Email	Role	Clinic
 care.admin.north@lauris.demo	clinic_admin	Lauris Care Demo Clinic North
@@ -26,8 +38,10 @@ care.admin.north@lauris.demo
 care.speech.north@lauris.demo
 parent.north.01@lauris.demo
 
+parent@lauriscare.demo
 care.admin.south@lauris.demo
 Demo2026!
+
 
 
 
