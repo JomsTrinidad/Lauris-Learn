@@ -5,8 +5,9 @@ import {
   Plus, Eye, Pencil, AlertTriangle, CheckCircle, XCircle, Clock,
   Ban, CreditCard, FlaskConical, HardDrive, ChevronDown, ChevronUp, ShieldCheck,
   HelpCircle, X, Search, ChevronRight, BookOpen, Layers, School as SchoolIcon,
-  Shield, Key, Database, Server, UserCheck, ArrowRight,
+  Shield, Key, Database, Server, UserCheck, ArrowRight, Users,
 } from "lucide-react";
+import { ManageAdminsModal } from "@/components/super-admin/ManageAdminsModal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -161,8 +162,10 @@ export default function SuperAdminSchoolsPage() {
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingSchool, setEditingSchool] = useState<School | null>(null);
+  const [adminsSchool, setAdminsSchool] = useState<School | null>(null);
   const [form, setForm] = useState<SchoolForm>(EMPTY_FORM);
   const [formError, setFormError] = useState("");
+  const [createBanner, setCreateBanner] = useState("");
 
   async function loadStorageStats() {
     setStorageLoading(true);
@@ -324,6 +327,15 @@ export default function SuperAdminSchoolsPage() {
         fetchSchools();
         return;
       }
+
+      // Success banner (shown at top of page after modal closes)
+      if (json.adminMode === "invited") {
+        setCreateBanner(`School created and invite email sent to ${form.adminEmail.trim()}.`);
+      } else if (json.adminMode === "assigned") {
+        setCreateBanner(`School created and admin access assigned to ${form.adminEmail.trim()}.`);
+      } else {
+        setCreateBanner("School created. Add an admin from the Admins button on its row.");
+      }
     } catch {
       setFormError("Network error. Please try again.");
       setSaving(false);
@@ -443,6 +455,19 @@ export default function SuperAdminSchoolsPage() {
       </div>
 
       {error && <ErrorAlert message={error} />}
+      {createBanner && (
+        <div className="flex items-start gap-3 px-4 py-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-800">
+          <CheckCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+          <span className="flex-1">{createBanner}</span>
+          <button
+            onClick={() => setCreateBanner("")}
+            className="text-green-600 hover:text-green-900"
+            aria-label="Dismiss"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* Summary cards — demo schools excluded from metrics */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
@@ -546,6 +571,9 @@ export default function SuperAdminSchoolsPage() {
                           )}
                           <Button size="sm" variant="outline" onClick={() => handleImpersonate(school)}>
                             <Eye className="w-3.5 h-3.5 mr-1" /> View
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={() => setAdminsSchool(school)}>
+                            <Users className="w-3.5 h-3.5 mr-1" /> Admins
                           </Button>
                           <Button size="sm" variant="outline" onClick={() => openEdit(school)}>
                             <Pencil className="w-3.5 h-3.5 mr-1" /> Edit
@@ -780,7 +808,8 @@ export default function SuperAdminSchoolsPage() {
                   placeholder="admin@school.com"
                 />
                 <p className="text-xs text-muted-foreground mt-1">
-                  The user must already have an account. Their profile will be linked to this school.
+                  If the email already has an account it&apos;ll be linked to this school as an admin.
+                  Otherwise we&apos;ll send a Supabase invite email to set a password. You can also leave this blank and add an admin later from the Admins button.
                 </p>
               </div>
               <div>
@@ -802,6 +831,13 @@ export default function SuperAdminSchoolsPage() {
           </div>
         </div>
       </Modal>
+
+      <ManageAdminsModal
+        open={adminsSchool !== null}
+        schoolId={adminsSchool?.id ?? null}
+        schoolName={adminsSchool?.name ?? ""}
+        onClose={() => setAdminsSchool(null)}
+      />
 
       {/* ── Platform Docs Help Drawer ── */}
       {helpOpen && (
