@@ -11,6 +11,7 @@ import { PageSpinner, ErrorAlert } from "@/components/ui/spinner";
 import { getInitials, formatTime } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { useSchoolContext } from "@/contexts/SchoolContext";
+import { fetchTeacherProfileId, fetchTeacherClassIdsForYear } from "@/lib/teacher-scope";
 
 type AttendanceStatus = "present" | "late" | "absent" | "excused" | null;
 
@@ -27,6 +28,7 @@ interface ClassOption {
   id: string;
   name: string;
   startTime: string | null;
+  endTime: string | null;
 }
 
 interface AbsenceNotif {
@@ -58,15 +60,21 @@ function getTodayStr() {
   return new Date().toISOString().split("T")[0];
 }
 
+function hhmmToMins(t: string): number {
+  const [h, m] = t.split(":").map(Number);
+  return (h || 0) * 60 + (m || 0);
+}
+
 function isWeekend(dateStr: string): boolean {
   const dow = new Date(dateStr + "T00:00:00").getDay();
   return dow === 0 || dow === 6;
 }
 
 export default function AttendancePage() {
-  const { schoolId, activeYear, isHistoricalView, viewingYear } = useSchoolContext();
+  const { schoolId, activeYear, isHistoricalView, viewingYear, userId, userRole } = useSchoolContext();
   const supabase = createClient();
   const searchParams = useSearchParams();
+  const isTeacher = userRole === "teacher";
 
   const [classOptions, setClassOptions] = useState<ClassOption[]>([]);
   const [selectedClass, setSelectedClass] = useState<string>("");
@@ -106,7 +114,7 @@ export default function AttendancePage() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error: err } = await (supabase as any)
       .from("classes")
-      .select("id, name, start_time")
+      .select("id, name, start_time, end_time")
       .eq("school_id", schoolId!)
       .eq("school_year_id", effectiveYear.id)
       .eq("is_active", true)
@@ -115,16 +123,99 @@ export default function AttendancePage() {
 
     if (err) { setError(err.message); setLoading(false); return; }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const opts: ClassOption[] = (data ?? []).map((c: any) => ({ id: c.id, name: c.name, startTime: c.start_time ?? null }));
+    const opts: ClassOption[] = (data ?? []).map((c: any) => ({
+      id: c.id,
+      name: c.name,
+      startTime: c.start_time ?? null,
+      endTime: c.end_time ?? null,
+    }));
     setClassOptions(opts);
 
-    // Pre-select from URL param or first class
+    // Pre-select: URL param wins, then teacher-priority (today only),
+    // then first class as the catch-all default.
     const paramClass = searchParams.get("class");
     const paramView  = searchParams.get("view");
-    const initial = paramClass && opts.find((c) => c.id === paramClass) ? paramClass : (opts[0]?.id ?? "");
+    const today = getTodayStr();
+    let initial = "";
+    if (paramClass && opts.find((c) => c.id === paramClass)) {
+      initial = paramClass;
+    } else if (isTeacher && userId && selectedDate === today) {
+      initial = await pickTeacherPriorityClass(opts, effectiveYear.id, today);
+      if (!initial) initial = opts[0]?.id ?? "";
+    } else {
+      initial = opts[0]?.id ?? "";
+    }
     setSelectedClass(initial);
     if (paramView === "summary") setView("summary");
     setLoading(false);
+  }
+
+  /**
+   * Teacher-friendly default class for the Attendance dropdown.
+   *
+   * Priority (today only):
+   *   1. Teacher's class currently in progress and not yet marked
+   *   2. Teacher's earlier class today (already ended) that hasn't been marked
+   *   3. Teacher's class that hasn't started yet today (upcoming)
+   *   4. Teacher's first class of the day (fallback)
+   *
+   * Returns "" when the teacher has no assigned classes for the year.
+   */
+  async function pickTeacherPriorityClass(
+    opts: ClassOption[],
+    schoolYearId: string,
+    today: string,
+  ): Promise<string> {
+    if (!schoolId || !userId) return "";
+    const tpId = await fetchTeacherProfileId(supabase, userId, schoolId);
+    if (!tpId) return "";
+    const myClassIds = await fetchTeacherClassIdsForYear(supabase, tpId, schoolId, schoolYearId);
+    if (myClassIds.length === 0) return "";
+    const mySet = new Set(myClassIds);
+    const myClasses = opts.filter((c) => mySet.has(c.id));
+    if (myClasses.length === 0) return "";
+
+    // Which of MY classes already have at least one attendance row for today?
+    const { data: attRows } = await supabase
+      .from("attendance_records")
+      .select("class_id")
+      .in("class_id", myClasses.map((c) => c.id))
+      .eq("date", today);
+    const markedSet = new Set(
+      ((attRows ?? []) as Array<{ class_id: string }>).map((r) => r.class_id),
+    );
+
+    // Compute the time bucket each class falls in right now.
+    const now = new Date();
+    const nowMins = now.getHours() * 60 + now.getMinutes();
+    function bucket(c: ClassOption): "in_progress" | "earlier" | "upcoming" {
+      const start = c.startTime ? hhmmToMins(c.startTime) : null;
+      const end = c.endTime ? hhmmToMins(c.endTime) : null;
+      if (start !== null && end !== null) {
+        if (nowMins < start) return "upcoming";
+        if (nowMins <= end) return "in_progress";
+        return "earlier";
+      }
+      if (start !== null) {
+        return nowMins < start ? "upcoming" : "in_progress";
+      }
+      return "in_progress";
+    }
+
+    // Priority 1: in-progress + unmarked
+    const inProgress = myClasses.find((c) => bucket(c) === "in_progress" && !markedSet.has(c.id));
+    if (inProgress) return inProgress.id;
+
+    // Priority 2: earlier today + unmarked
+    const earlier = myClasses.find((c) => bucket(c) === "earlier" && !markedSet.has(c.id));
+    if (earlier) return earlier.id;
+
+    // Priority 3: upcoming (earliest)
+    const upcoming = myClasses.find((c) => bucket(c) === "upcoming");
+    if (upcoming) return upcoming.id;
+
+    // Fallback: first of teacher's classes for the day (opts is already start_time-ordered)
+    return myClasses[0]?.id ?? "";
   }
 
   // Load students + existing attendance when class or date changes

@@ -1870,11 +1870,12 @@ export default function StudentsPage() {
     // Teacher scope: limit to students whose displayed enrollment (for the viewed year)
     // is in one of the teacher's assigned classes. Honors historical assignments.
     // When teacher selects "All Students" (current year only), the clamp is dropped.
+    // While `teacherScopedClassIds` is unresolved (null) in "my" mode, we deny all
+    // rows so the page never flashes the full school roster before narrowing.
     const matchTeacherScope =
       !isTeacher ||
       teacherScope === "all" ||
-      teacherScopedClassIds === null ||
-      (disp.classId !== null && teacherScopedClassIds.has(disp.classId));
+      (teacherScopedClassIds !== null && disp.classId !== null && teacherScopedClassIds.has(disp.classId));
 
     // Active-year default ("Active Students"): hide completed and withdrawn enrollments
     // so graduated/inactive records don't pollute the operational list.
@@ -2042,6 +2043,9 @@ export default function StudentsPage() {
   const classifiedCount = classPromoteRows.length - unsetCount;
 
   if (studentsQuery.isLoading || classesQuery.isLoading) return <PageSpinner />;
+  // For teachers, also wait for the teacher-class scope to resolve before rendering
+  // the student list. This prevents the "flash all students, then narrow" effect.
+  if (isTeacher && teacherScope === "my" && teacherScopedClassIds === null) return <PageSpinner />;
 
   // ─── Render ───────────────────────────────────────────────────────────────
 

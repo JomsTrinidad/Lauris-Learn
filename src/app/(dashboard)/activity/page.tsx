@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { format, subDays } from "date-fns";
 import {
   History,
@@ -18,233 +18,52 @@ import {
   FileText,
   Filter,
   Layers,
+  AlertCircle,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useSchoolContext } from "@/contexts/SchoolContext";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { DatePicker } from "@/components/ui/datepicker";
 import { PageSpinner, ErrorAlert } from "@/components/ui/spinner";
 import type { Json } from "@/lib/types/database";
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-type AuditLog = {
-  id: string;
-  school_id: string | null;
-  actor_user_id: string | null;
-  actor_role: string | null;
-  table_name: string;
-  record_id: string | null;
-  action: "INSERT" | "UPDATE" | "DELETE";
-  old_values: Record<string, unknown> | null;
-  new_values: Record<string, unknown> | null;
-  created_at: string;
-};
-
-// ─── Mapping layer ────────────────────────────────────────────────────────────
-
-const AREA_MAP: Record<string, string> = {
-  students: "Students",
-  guardians: "Students",
-  enrollments: "Enrollment",
-  enrollment_inquiries: "Enrollment",
-  enrollment_transitions: "Enrollment",
-  student_class_assignments: "Enrollment",
-  school_year_completions: "Enrollment",
-  attendance_records: "Attendance",
-  absence_notifications: "Attendance",
-  billing_records: "Billing",
-  payments: "Billing",
-  billing_discounts: "Billing",
-  student_credits: "Finance Setup",
-  fee_types: "Finance Setup",
-  tuition_configs: "Finance Setup",
-  discounts: "Finance Setup",
-  parent_updates: "Communication",
-  events: "Events",
-  event_rsvps: "Events",
-  progress_observations: "Progress",
-  proud_moments: "Progress",
-  grading_scale_sets: "Progress",
-  grading_scales: "Progress",
-  grading_scale_assignments: "Progress",
-  classes: "Classes",
-  class_teachers: "Classes",
-  class_levels: "Settings",
-  school_years: "Settings",
-  academic_periods: "Settings",
-  holidays: "Settings",
-  teacher_profiles: "Settings",
-  online_class_sessions: "Online Classes",
-  student_plans: "Support Plans",
-  student_plan_goals: "Support Plans",
-  student_plan_interventions: "Support Plans",
-  student_plan_progress_entries: "Support Plans",
-  student_plan_attachments: "Support Plans",
-  child_documents: "Documents",
-  child_document_versions: "Documents",
-  document_consents: "Documents",
-  document_access_grants: "Documents",
-  document_requests: "Documents",
-  external_contacts: "Documents",
-};
-
-const ENTITY_MAP: Record<string, string> = {
-  students: "Student",
-  guardians: "Guardian",
-  enrollments: "Enrollment",
-  enrollment_inquiries: "Inquiry",
-  enrollment_transitions: "Enrollment Transition",
-  student_class_assignments: "Class Assignment",
-  school_year_completions: "Year-End Snapshot",
-  attendance_records: "Attendance Record",
-  absence_notifications: "Absence Notification",
-  billing_records: "Billing Record",
-  payments: "Payment",
-  billing_discounts: "Applied Discount",
-  student_credits: "Student Credit",
-  fee_types: "Fee Type",
-  tuition_configs: "Tuition Config",
-  discounts: "Discount",
-  parent_updates: "Class Update",
-  events: "Event",
-  event_rsvps: "Event RSVP",
-  progress_observations: "Progress Observation",
-  proud_moments: "Proud Moment",
-  grading_scale_sets: "Grading Scale Set",
-  grading_scales: "Grading Scale",
-  grading_scale_assignments: "Scale Assignment",
-  classes: "Class",
-  class_teachers: "Teacher Assignment",
-  class_levels: "Class Level",
-  school_years: "School Year",
-  academic_periods: "Academic Period",
-  holidays: "Holiday",
-  teacher_profiles: "Teacher",
-  online_class_sessions: "Online Session",
-  student_plans: "Support Plan",
-  student_plan_goals: "Plan Goal",
-  student_plan_interventions: "Plan Intervention",
-  student_plan_progress_entries: "Progress Entry",
-  student_plan_attachments: "Plan Attachment",
-  child_documents: "Document",
-  child_document_versions: "Document Version",
-  document_consents: "Document Consent",
-  document_access_grants: "Document Access Grant",
-  document_requests: "Document Request",
-  external_contacts: "External Contact",
-};
-
-const ACTOR_LABELS: Record<string, string> = {
-  super_admin: "Platform Admin",
-  school_admin: "School Admin",
-  teacher: "Teacher",
-  parent: "Parent",
-  super_admin_impersonating: "Platform Admin",
-};
-
-const ACTION_LABELS: Record<string, string> = {
-  INSERT: "Created",
-  UPDATE: "Updated",
-  DELETE: "Deleted",
-};
-
-// Key field to pull from JSONB for a human-readable row summary
-const SUMMARY_FIELDS: Record<string, string[]> = {
-  students: ["full_name"],
-  guardians: ["full_name"],
-  classes: ["name"],
-  events: ["title"],
-  teacher_profiles: ["full_name"],
-  fee_types: ["name"],
-  discounts: ["name"],
-  school_years: ["name"],
-  holidays: ["name"],
-  academic_periods: ["name"],
-  student_plans: ["title"],
-  billing_records: ["billing_month"],
-  payments: ["amount"],
-  attendance_records: ["date"],
-  parent_updates: ["content"],
-  enrollment_inquiries: ["student_name"],
-  child_documents: ["title"],
-  document_requests: ["document_type"],
-  online_class_sessions: ["title"],
-  grading_scale_sets: ["name"],
-  grading_scales: ["label"],
-  class_levels: ["name"],
-  external_contacts: ["full_name", "email"],
-};
-
-// Fields to skip in the detail diff view (always shown in header or not meaningful)
-const SKIP_IN_DIFF = new Set([
-  "id",
-  "school_id",
-  "created_at",
-  "updated_at",
-  "set_at",
-  "changed_at",
-]);
-
-const FIELD_LABELS: Record<string, string> = {
-  billing_month: "Billing Month",
-  or_number: "OR Number",
-  class_id: "Class ID",
-  student_id: "Student ID",
-  guardian_id: "Guardian ID",
-  fee_type_id: "Fee Type ID",
-  academic_period_id: "Period ID",
-  school_year_id: "School Year ID",
-  level_id: "Level ID",
-  enrollment_id: "Enrollment ID",
-  is_active: "Active",
-  is_primary: "Primary Guardian",
-  is_hidden: "Hidden",
-  allow_download: "Allow Download",
-  allow_reshare: "Allow Reshare",
-  parent_visible: "Parent Visible",
-  full_name: "Full Name",
-  first_name: "First Name",
-  last_name: "Last Name",
-  birth_date: "Date of Birth",
-  student_code: "Student Code",
-  due_date: "Due Date",
-  start_date: "Start Date",
-  end_date: "End Date",
-  review_date: "Review Date",
-  expires_at: "Expires At",
-  revoked_at: "Revoked At",
-  revoke_reason: "Revoke Reason",
-  archive_reason: "Archive Reason",
-  change_reason: "Change Reason",
-  progression_status: "Progression Status",
-};
-
-// ─── Derived constants ────────────────────────────────────────────────────────
-
-const AREA_TABLE_MAP: Record<string, string[]> = {};
-for (const [table, area] of Object.entries(AREA_MAP)) {
-  if (!AREA_TABLE_MAP[area]) AREA_TABLE_MAP[area] = [];
-  AREA_TABLE_MAP[area].push(table);
-}
-const UNIQUE_AREAS = [...new Set(Object.values(AREA_MAP))].sort();
+import {
+  AREA_MAP,
+  CATEGORY_LABELS,
+  ENTITY_MAP,
+  FIELD_LABELS,
+  MVP_CATEGORIES,
+  SENSITIVE_FIELDS,
+  SKIP_IN_DIFF,
+  TABLES_BY_CATEGORY,
+  UUID_PATTERN,
+  formatActivity,
+  formatActivityTimestamp,
+  shouldSuppress,
+} from "@/features/activity";
+import type {
+  ActivityCategory,
+  AuditLogRow,
+  FormattedActivity,
+} from "@/features/activity";
 
 const PAGE_SIZE = 25;
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Detail-drawer helpers (kept local — power-user view of raw changes) ──────
 
 function humanizeField(key: string): string {
   if (FIELD_LABELS[key]) return FIELD_LABELS[key];
   return key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-function formatValue(val: unknown): string {
+function formatValue(field: string, val: unknown): string {
+  if (SENSITIVE_FIELDS.has(field)) return "•••";
   if (val === null || val === undefined) return "—";
   if (typeof val === "boolean") return val ? "Yes" : "No";
   if (typeof val === "number") return val.toLocaleString();
   if (typeof val === "string") {
+    // Mask raw UUID values — they're internal references with no UX value.
+    if (UUID_PATTERN.test(val)) return "—";
     if (/^\d{4}-\d{2}-\d{2}T/.test(val)) {
       try {
         return format(new Date(val), "MMM d, yyyy 'at' h:mm a");
@@ -270,46 +89,16 @@ function formatValue(val: unknown): string {
   return String(val);
 }
 
-function formatBillingMonth(val: string): string {
-  try {
-    const normalized = val.substring(0, 7);
-    return format(new Date(normalized + "-01T00:00:00"), "MMMM yyyy");
-  } catch {
-    return val;
-  }
-}
-
-function getRecordSummary(log: AuditLog): string {
-  const vals = log.action === "DELETE" ? log.old_values : log.new_values;
-  if (!vals) return "";
-  const fields = SUMMARY_FIELDS[log.table_name] ?? [];
-  for (const field of fields) {
-    const val = vals[field];
-    if (val == null || val === "") continue;
-    if (field === "billing_month" && typeof val === "string") {
-      return formatBillingMonth(val);
-    }
-    if (field === "amount" && typeof val === "number") {
-      return `₱${val.toLocaleString()}`;
-    }
-    if (field === "content" && typeof val === "string") {
-      return val.slice(0, 60) + (val.length > 60 ? "…" : "");
-    }
-    return String(val);
-  }
-  return "";
-}
-
-function getChangedFields(log: AuditLog) {
+function getChangedFields(log: AuditLogRow) {
   if (log.action !== "UPDATE" || !log.old_values || !log.new_values) return [];
-  const old_vals = log.old_values;
-  const new_vals = log.new_values;
-  const allKeys = new Set([...Object.keys(old_vals), ...Object.keys(new_vals)]);
+  const o = log.old_values;
+  const n = log.new_values;
+  const allKeys = new Set([...Object.keys(o), ...Object.keys(n)]);
   const result: Array<{ field: string; before: unknown; after: unknown }> = [];
   for (const key of allKeys) {
     if (SKIP_IN_DIFF.has(key)) continue;
-    if (JSON.stringify(old_vals[key]) !== JSON.stringify(new_vals[key])) {
-      result.push({ field: key, before: old_vals[key], after: new_vals[key] });
+    if (JSON.stringify(o[key]) !== JSON.stringify(n[key])) {
+      result.push({ field: key, before: o[key], after: n[key] });
     }
   }
   return result;
@@ -322,9 +111,9 @@ function getRecordFields(vals: Record<string, unknown> | null) {
     .map(([field, value]) => ({ field, value }));
 }
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
+// ─── Action badge ─────────────────────────────────────────────────────────────
 
-function ActionBadge({ action }: { action: string }) {
+function ActionBadge({ action }: { action: "INSERT" | "UPDATE" | "DELETE" }) {
   const cfg: Record<string, { label: string; className: string }> = {
     INSERT: {
       label: "Created",
@@ -335,14 +124,11 @@ function ActionBadge({ action }: { action: string }) {
       className: "bg-blue-100 text-blue-800 border-blue-200",
     },
     DELETE: {
-      label: "Deleted",
+      label: "Removed",
       className: "bg-red-100 text-red-800 border-red-200",
     },
   };
-  const c = cfg[action] ?? {
-    label: action,
-    className: "bg-muted text-muted-foreground border-border",
-  };
+  const c = cfg[action];
   return (
     <span
       className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${c.className}`}
@@ -352,7 +138,7 @@ function ActionBadge({ action }: { action: string }) {
   );
 }
 
-// ─── Help topics ──────────────────────────────────────────────────────────────
+// ─── Help drawer content ──────────────────────────────────────────────────────
 
 type HelpTopic = {
   id: string;
@@ -367,13 +153,14 @@ function buildHelpTopics(): HelpTopic[] {
     {
       id: "what-is",
       icon: History,
-      title: "What is the Activity Log?",
-      searchText: "what activity log overview purpose",
+      title: "What is Activity History?",
+      searchText: "what activity history overview purpose",
       body: (
         <p>
-          The Activity Log shows every change made to your school's data — who
-          changed it, when, and what the change was. Use it to track edits to
-          student records, billing, attendance, settings, and more.
+          Activity History gives you a friendly, plain-English feed of what
+          happened in your school recently — who added a student, who
+          submitted attendance, who finalized an IEP, who posted an update.
+          Use it for traceability and to spot anything unexpected.
         </p>
       ),
     },
@@ -384,35 +171,35 @@ function buildHelpTopics(): HelpTopic[] {
       searchText: "access permission role admin teacher parent",
       body: (
         <div className="space-y-1.5">
-          <p>Only school admins and platform admins can view the Activity Log.</p>
+          <p>Only school admins and platform admins can view Activity History.</p>
           <p>Teachers and parents cannot access this page.</p>
           <p>
-            Each school can only see its own activity — logs are never shared
-            between schools.
+            Each school sees only its own activity — there is no cross-school
+            visibility.
           </p>
         </div>
       ),
     },
     {
-      id: "what-is-tracked",
+      id: "categories",
       icon: Layers,
-      title: "What actions are tracked?",
-      searchText: "tracked actions created updated deleted tables areas",
+      title: "What's in the feed?",
+      searchText: "categories students attendance plans communication enrollment documents",
       body: (
         <div className="space-y-1.5">
-          <p>The log captures three types of actions:</p>
+          <p>The MVP feed focuses on high-value operational categories:</p>
           <ul className="list-disc list-inside space-y-1">
-            <li>
-              <strong>Created</strong> — a new record was added
-            </li>
-            <li>
-              <strong>Updated</strong> — an existing record was changed
-            </li>
-            <li>
-              <strong>Deleted</strong> — a record was removed
-            </li>
+            <li><strong>Students</strong> — student and guardian records</li>
+            <li><strong>Attendance</strong> — daily attendance and absence reports</li>
+            <li><strong>Plans &amp; IEP</strong> — support plans, goals, interventions</li>
+            <li><strong>Communication</strong> — parent updates, events, announcements</li>
+            <li><strong>Enrollment</strong> — enrollments, inquiries, classifications</li>
+            <li><strong>Documents</strong> — uploaded documents, consents, sharing</li>
           </ul>
-          <p className="mt-2">Covered areas include: Students, Enrollment, Attendance, Billing, Communication, Events, Progress, Classes, Finance Setup, Settings, and Support Plans.</p>
+          <p className="text-xs mt-2">
+            System-level technical events (auth refreshes, internal bookkeeping)
+            are not shown here.
+          </p>
         </div>
       ),
     },
@@ -420,52 +207,43 @@ function buildHelpTopics(): HelpTopic[] {
       id: "reading-entries",
       icon: FileText,
       title: "Reading an entry",
-      searchText: "reading entry columns when who action area what",
+      searchText: "reading entry summary actor action time",
       body: (
         <div className="space-y-1.5">
-          <p>Each row in the log shows:</p>
+          <p>Each row reads like a sentence — for example:</p>
           <ul className="list-disc list-inside space-y-1">
-            <li>
-              <strong>When</strong> — date and time of the change
-            </li>
-            <li>
-              <strong>Who</strong> — the role of the person who made the change
-              (School Admin, Teacher, Parent, or Platform Admin)
-            </li>
-            <li>
-              <strong>Action</strong> — Created, Updated, or Deleted
-            </li>
-            <li>
-              <strong>Area</strong> — which part of the system was affected
-            </li>
-            <li>
-              <strong>What</strong> — the type of record, with a brief
-              identifier where available
-            </li>
+            <li>"School Admin added student Gianna Aquino"</li>
+            <li>"Teacher submitted an attendance record for Oct 14, 2026"</li>
+            <li>"School Admin finalized IEP &quot;Q2 Plan&quot;"</li>
+            <li>"Teacher posted an update to a class"</li>
           </ul>
+          <p className="text-xs mt-2">
+            If you made the change yourself, &quot;(you)&quot; appears next to
+            your role.
+          </p>
         </div>
       ),
     },
     {
       id: "detail-view",
       icon: Info,
-      title: "Detail view: before and after",
+      title: "Detail view: what changed",
       searchText: "detail view before after changes fields diff",
       body: (
         <div className="space-y-1.5">
           <p>Click any row to open the detail panel.</p>
           <p>
-            For <strong>Updated</strong> entries, the panel shows only the
+            For an <strong>Updated</strong> entry, the panel shows only the
             fields that changed — with the old value on the left and the new
             value on the right.
           </p>
           <p>
-            For <strong>Created</strong> entries, the panel shows the full
+            For a <strong>Created</strong> entry, the panel shows the full
             record as it was saved.
           </p>
           <p>
-            For <strong>Deleted</strong> entries, the panel shows what the
-            record looked like before it was removed.
+            For a <strong>Removed</strong> entry, the panel shows what the
+            record looked like before it was deleted.
           </p>
         </div>
       ),
@@ -473,53 +251,42 @@ function buildHelpTopics(): HelpTopic[] {
     {
       id: "filtering",
       icon: Filter,
-      title: "Searching and filtering",
+      title: "Filtering the feed",
       searchText: "filter search date range area action user",
       body: (
         <div className="space-y-1.5">
-          <p>Use the filter bar to narrow down the log:</p>
+          <p>The filter bar lets you narrow down the feed:</p>
           <ul className="list-disc list-inside space-y-1">
-            <li>
-              <strong>Date range</strong> — pick a From and To date
-            </li>
-            <li>
-              <strong>Area</strong> — filter by a specific part of the system
-            </li>
-            <li>
-              <strong>Action</strong> — show only Created, Updated, or Deleted
-            </li>
-            <li>
-              <strong>Users</strong> — filter by role (School Admin, Teacher,
-              etc.)
-            </li>
-            <li>
-              <strong>Search</strong> — filters the current page by keyword
-            </li>
+            <li><strong>Category</strong> — All Activity, Students, Attendance, Plans &amp; IEP, Communication, Enrollment, Documents</li>
+            <li><strong>Date range</strong> — From and To dates (defaults to the last 7 days)</li>
+            <li><strong>Who</strong> — filter by role (School Admin, Teacher, Parent)</li>
+            <li><strong>Search</strong> — keyword search within the current page</li>
           </ul>
-          <p className="text-xs mt-2">
-            Note: the search box filters within the current page only. Use the
-            Area and Action filters to narrow the full dataset first.
-          </p>
         </div>
       ),
     },
     {
       id: "limitations",
-      icon: Info,
+      icon: AlertCircle,
       title: "Known limitations",
-      searchText: "limitations actor names search page",
+      searchText: "limitations actor names search page privacy",
       body: (
         <div className="space-y-1.5">
           <p>
-            <strong>Actor names:</strong> the log records the role of who made a
-            change (e.g. &ldquo;School Admin&rdquo;) but not their full name.
-            If you made the change yourself, the log shows &ldquo;(you)&rdquo;
-            next to your role.
+            <strong>Actor names:</strong> the feed currently shows the role of
+            who made a change (e.g. &quot;School Admin&quot;) rather than the
+            person's full name. If you made the change yourself, &quot;(you)&quot;
+            is appended.
           </p>
           <p>
             <strong>Search scope:</strong> keyword search applies to the current
-            page of results only (25 entries). For broader searches, use the
-            Area or Action filters to reduce the total result set first.
+            page only (25 entries). Use the Category, Date, and Who filters to
+            narrow the dataset first.
+          </p>
+          <p>
+            <strong>Privacy:</strong> sensitive blob references (photos,
+            receipts) are stripped from the audit trail. You'll only see field
+            values that are safe to display.
           </p>
         </div>
       ),
@@ -533,24 +300,68 @@ export default function ActivityPage() {
   const { schoolId, userRole, userId } = useSchoolContext();
 
   const [search, setSearch] = useState("");
-  const [dateFrom, setDateFrom] = useState(() => format(subDays(new Date(), 7), "yyyy-MM-dd"));
+  const [dateFrom, setDateFrom] = useState(() =>
+    format(subDays(new Date(), 7), "yyyy-MM-dd"),
+  );
   const [dateTo, setDateTo] = useState("");
-  const [actionFilter, setActionFilter] = useState("all");
-  const [areaFilter, setAreaFilter] = useState("all");
   const [actorFilter, setActorFilter] = useState("all");
+  const [categoryFilter, setCategoryFilter] = useState<ActivityCategory | "all">(
+    "all",
+  );
   const [page, setPage] = useState(0);
 
-  const [logs, setLogs] = useState<AuditLog[]>([]);
+  const [rows, setRows] = useState<FormattedActivity[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [actorNames, setActorNames] = useState<Map<string, string> | null>(null);
 
-  const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null);
+  const [selectedLog, setSelectedLog] = useState<AuditLogRow | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
   const [helpSearch, setHelpSearch] = useState("");
   const [helpExpanded, setHelpExpanded] = useState<Record<string, boolean>>({});
 
   const isAdmin = userRole === "school_admin" || userRole === "super_admin";
+
+  // Resolve staff names for the current school once via the existing
+  // SECURITY DEFINER RPC. school_admin only; the RPC returns 0 rows for any
+  // other caller, so super_admin and unscoped contexts fall back to role labels.
+  // Parents are never returned (RPC restricts to school_admin/teacher) — that
+  // matches expectations: parent actions are rare and parent names should not
+  // surface in a school-internal activity feed without consent.
+  useEffect(() => {
+    if (!isAdmin || userRole !== "school_admin" || !schoolId) {
+      setActorNames(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const supabase = createClient();
+        const { data, error: rpcErr } = await supabase.rpc(
+          "list_school_staff_for_sharing",
+          { p_school_id: schoolId },
+        );
+        if (cancelled) return;
+        if (rpcErr || !data) {
+          setActorNames(null);
+          return;
+        }
+        const map = new Map<string, string>();
+        for (const row of data as Array<{ id: string; full_name: string | null }>) {
+          if (row.full_name && row.full_name.trim()) {
+            map.set(row.id, row.full_name.trim());
+          }
+        }
+        setActorNames(map);
+      } catch {
+        if (!cancelled) setActorNames(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isAdmin, userRole, schoolId]);
 
   const loadLogs = useCallback(async () => {
     if (!isAdmin) return;
@@ -565,34 +376,61 @@ export default function ActivityPage() {
         .order("created_at", { ascending: false })
         .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
 
+      // School scoping. school_admin is also gated by RLS, but we add the
+      // explicit filter as defense in depth and to keep totalCount accurate.
       if (schoolId) query = query.eq("school_id", schoolId);
-      if (actionFilter !== "all") query = query.eq("action", actionFilter);
-      if (areaFilter !== "all") {
-        const tables = AREA_TABLE_MAP[areaFilter] ?? [];
-        if (tables.length > 0) query = query.in("table_name", tables);
+
+      // Category narrows the underlying table set.
+      if (categoryFilter !== "all") {
+        const tables = TABLES_BY_CATEGORY[categoryFilter] ?? [];
+        if (tables.length === 0) {
+          setRows([]);
+          setTotalCount(0);
+          setLoading(false);
+          return;
+        }
+        query = query.in("table_name", tables);
       }
+
       if (actorFilter !== "all") query = query.eq("actor_role", actorFilter);
       if (dateFrom) query = query.gte("created_at", dateFrom + "T00:00:00.000Z");
       if (dateTo) query = query.lte("created_at", dateTo + "T23:59:59.999Z");
 
       const { data, count, error: qErr } = await query;
       if (qErr) throw qErr;
-      setLogs(
-        ((data ?? []) as Array<AuditLog & { old_values: Json | null; new_values: Json | null }>).map(
-          (row) => ({
-            ...row,
-            old_values: row.old_values as Record<string, unknown> | null,
-            new_values: row.new_values as Record<string, unknown> | null,
-          })
-        )
-      );
+
+      const parsed = (
+        (data ?? []) as Array<
+          AuditLogRow & { old_values: Json | null; new_values: Json | null }
+        >
+      ).map((row) => ({
+        ...row,
+        old_values: row.old_values as Record<string, unknown> | null,
+        new_values: row.new_values as Record<string, unknown> | null,
+      }));
+
+      const formatted = parsed
+        .filter((r) => !shouldSuppress(r))
+        .map((r) => formatActivity(r, userId, actorNames));
+
+      setRows(formatted);
       setTotalCount(count ?? 0);
     } catch {
-      setError("Could not load activity log. Please try again.");
+      setError("Could not load activity. Please try again.");
     } finally {
       setLoading(false);
     }
-  }, [isAdmin, schoolId, page, actionFilter, areaFilter, actorFilter, dateFrom, dateTo]);
+  }, [
+    isAdmin,
+    schoolId,
+    page,
+    categoryFilter,
+    actorFilter,
+    dateFrom,
+    dateTo,
+    userId,
+    actorNames,
+  ]);
 
   useEffect(() => {
     loadLogs();
@@ -601,28 +439,27 @@ export default function ActivityPage() {
   // Reset to first page when filters change
   useEffect(() => {
     setPage(0);
-  }, [actionFilter, areaFilter, actorFilter, dateFrom, dateTo]);
+  }, [categoryFilter, actorFilter, dateFrom, dateTo]);
 
-  const filteredLogs = search.trim()
-    ? logs.filter((log) => {
-        const q = search.toLowerCase();
-        return (
-          (ACTOR_LABELS[log.actor_role ?? ""] ?? "").toLowerCase().includes(q) ||
-          (ENTITY_MAP[log.table_name] ?? log.table_name).toLowerCase().includes(q) ||
-          (AREA_MAP[log.table_name] ?? "").toLowerCase().includes(q) ||
-          (ACTION_LABELS[log.action] ?? "").toLowerCase().includes(q) ||
-          getRecordSummary(log).toLowerCase().includes(q)
-        );
-      })
-    : logs;
+  const filteredRows = useMemo(() => {
+    if (!search.trim()) return rows;
+    const q = search.toLowerCase();
+    return rows.filter(
+      (r) =>
+        r.summary.toLowerCase().includes(q) ||
+        r.categoryLabel.toLowerCase().includes(q) ||
+        r.actorLabel.toLowerCase().includes(q),
+    );
+  }, [rows, search]);
 
   const totalPages = Math.ceil(totalCount / PAGE_SIZE);
 
   const helpTopics = buildHelpTopics();
   const visibleTopics = helpSearch.trim()
-    ? helpTopics.filter((t) =>
-        t.searchText.toLowerCase().includes(helpSearch.toLowerCase()) ||
-        t.title.toLowerCase().includes(helpSearch.toLowerCase())
+    ? helpTopics.filter(
+        (t) =>
+          t.searchText.toLowerCase().includes(helpSearch.toLowerCase()) ||
+          t.title.toLowerCase().includes(helpSearch.toLowerCase()),
       )
     : helpTopics;
 
@@ -632,12 +469,20 @@ export default function ActivityPage() {
         <div className="text-center space-y-2">
           <ShieldAlert className="w-8 h-8 text-muted-foreground mx-auto" />
           <p className="text-muted-foreground">
-            You don&apos;t have permission to view the activity log.
+            You don&apos;t have permission to view activity history.
           </p>
         </div>
       </div>
     );
   }
+
+  const defaultFrom = format(subDays(new Date(), 7), "yyyy-MM-dd");
+  const hasFilters =
+    (dateFrom && dateFrom !== defaultFrom) ||
+    dateTo ||
+    categoryFilter !== "all" ||
+    actorFilter !== "all" ||
+    search;
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
@@ -646,9 +491,11 @@ export default function ActivityPage() {
         <div className="flex items-center gap-3">
           <History className="w-6 h-6 text-muted-foreground flex-shrink-0" />
           <div>
-            <h1 className="text-2xl font-semibold text-foreground">Activity Log</h1>
+            <h1 className="text-2xl font-semibold text-foreground">
+              Activity History
+            </h1>
             <p className="text-sm text-muted-foreground mt-0.5">
-              Track changes and actions across your school.
+              A plain-English record of recent changes in your school.
             </p>
           </div>
         </div>
@@ -660,6 +507,23 @@ export default function ActivityPage() {
         >
           <HelpCircle className="w-5 h-5" />
         </button>
+      </div>
+
+      {/* ─── Category chips ──────────────────────────────────────────────── */}
+      <div className="flex flex-wrap items-center gap-2">
+        <CategoryChip
+          active={categoryFilter === "all"}
+          onClick={() => setCategoryFilter("all")}
+          label="All Activity"
+        />
+        {MVP_CATEGORIES.map((cat) => (
+          <CategoryChip
+            key={cat}
+            active={categoryFilter === cat}
+            onClick={() => setCategoryFilter(cat)}
+            label={CATEGORY_LABELS[cat]}
+          />
+        ))}
       </div>
 
       {/* ─── Filters ─────────────────────────────────────────────────────── */}
@@ -677,28 +541,6 @@ export default function ActivityPage() {
           placeholder="To date"
           className="w-36"
         />
-        <Select
-          value={areaFilter}
-          onChange={(e) => setAreaFilter(e.target.value)}
-          className="w-44"
-        >
-          <option value="all">All Areas</option>
-          {UNIQUE_AREAS.map((area) => (
-            <option key={area} value={area}>
-              {area}
-            </option>
-          ))}
-        </Select>
-        <Select
-          value={actionFilter}
-          onChange={(e) => setActionFilter(e.target.value)}
-          className="w-36"
-        >
-          <option value="all">All Actions</option>
-          <option value="INSERT">Created</option>
-          <option value="UPDATE">Updated</option>
-          <option value="DELETE">Deleted</option>
-        </Select>
         <Select
           value={actorFilter}
           onChange={(e) => setActorFilter(e.target.value)}
@@ -721,26 +563,21 @@ export default function ActivityPage() {
             className="pl-9"
           />
         </div>
-        {(() => {
-          const defaultFrom = format(subDays(new Date(), 7), "yyyy-MM-dd");
-          const hasFilters = (dateFrom && dateFrom !== defaultFrom) || dateTo || areaFilter !== "all" || actionFilter !== "all" || actorFilter !== "all" || search;
-          return hasFilters ? (
-            <button
-              type="button"
-              onClick={() => {
-                setDateFrom(defaultFrom);
-                setDateTo("");
-                setAreaFilter("all");
-                setActionFilter("all");
-                setActorFilter("all");
-                setSearch("");
-              }}
-              className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 transition-colors"
-            >
-              Clear filters
-            </button>
-          ) : null;
-        })()}
+        {hasFilters ? (
+          <button
+            type="button"
+            onClick={() => {
+              setDateFrom(defaultFrom);
+              setDateTo("");
+              setCategoryFilter("all");
+              setActorFilter("all");
+              setSearch("");
+            }}
+            className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 transition-colors"
+          >
+            Clear filters
+          </button>
+        ) : null}
       </div>
 
       {/* ─── Results ─────────────────────────────────────────────────────── */}
@@ -748,18 +585,17 @@ export default function ActivityPage() {
         <PageSpinner />
       ) : error ? (
         <ErrorAlert message={error} onRetry={loadLogs} />
-      ) : filteredLogs.length === 0 ? (
+      ) : filteredRows.length === 0 ? (
         <div className="py-16 text-center space-y-2">
           <History className="w-8 h-8 text-muted-foreground mx-auto opacity-40" />
-          <p className="text-muted-foreground">No activity entries found.</p>
-          {(actionFilter !== "all" ||
-            areaFilter !== "all" ||
-            actorFilter !== "all" ||
-            dateFrom ||
-            dateTo ||
-            search) && (
+          <p className="text-muted-foreground">No activity to show yet.</p>
+          {hasFilters ? (
             <p className="text-sm text-muted-foreground">
               Try adjusting or clearing your filters.
+            </p>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Changes made in your school will appear here.
             </p>
           )}
         </div>
@@ -769,8 +605,10 @@ export default function ActivityPage() {
             <p className="text-sm text-muted-foreground">
               {search.trim() ? (
                 <>
-                  <span className="font-medium text-foreground">{filteredLogs.length}</span> of{" "}
-                  {totalCount.toLocaleString()} on this page
+                  <span className="font-medium text-foreground">
+                    {filteredRows.length}
+                  </span>{" "}
+                  of {totalCount.toLocaleString()} on this page
                 </>
               ) : (
                 <>
@@ -783,83 +621,15 @@ export default function ActivityPage() {
             </p>
           </div>
 
-          <div className="rounded-lg border border-border overflow-hidden">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-muted/50 border-b border-border">
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">
-                    When
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                    Who
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                    Action
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide hidden sm:table-cell">
-                    Area
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                    What
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {filteredLogs.map((log) => {
-                  const summary = getRecordSummary(log);
-                  return (
-                    <tr
-                      key={log.id}
-                      className="hover:bg-muted/30 cursor-pointer transition-colors"
-                      onClick={() => setSelectedLog(log)}
-                    >
-                      <td className="px-4 py-3 text-muted-foreground whitespace-nowrap text-xs">
-                        {format(new Date(log.created_at), "MMM d, yyyy")}
-                        <br />
-                        <span className="opacity-70">
-                          {format(new Date(log.created_at), "h:mm a")}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className="text-foreground text-sm">
-                          {ACTOR_LABELS[log.actor_role ?? ""] ??
-                            log.actor_role ??
-                            "System"}
-                        </span>
-                        {log.actor_user_id === userId && (
-                          <span className="ml-1 text-xs text-muted-foreground">
-                            (you)
-                          </span>
-                        )}
-                        {log.actor_role === "super_admin_impersonating" && (
-                          <span className="ml-1 text-xs text-amber-600">
-                            impersonating
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3">
-                        <ActionBadge action={log.action} />
-                      </td>
-                      <td className="px-4 py-3 text-muted-foreground text-sm hidden sm:table-cell">
-                        {AREA_MAP[log.table_name] ?? log.table_name}
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className="text-foreground font-medium text-sm">
-                          {ENTITY_MAP[log.table_name] ?? log.table_name}
-                        </span>
-                        {summary && (
-                          <span className="text-muted-foreground text-sm">
-                            {" · "}
-                            {summary}
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <ul className="rounded-lg border border-border divide-y divide-border overflow-hidden bg-card">
+            {filteredRows.map((row) => (
+              <ActivityFeedRow
+                key={row.id}
+                row={row}
+                onSelect={() => setSelectedLog(row.raw)}
+              />
+            ))}
+          </ul>
 
           {/* Pagination */}
           {totalPages > 1 && (
@@ -896,197 +666,12 @@ export default function ActivityPage() {
 
       {/* ─── Detail drawer ────────────────────────────────────────────────── */}
       {selectedLog && (
-        <>
-          <div
-            className="fixed inset-0 z-40 bg-black/30"
-            onClick={() => setSelectedLog(null)}
-          />
-          <div className="fixed inset-y-0 right-0 z-50 w-full max-w-lg bg-card border-l border-border shadow-xl animate-in slide-in-from-right duration-200 flex flex-col">
-            {/* Detail header */}
-            <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
-              <div className="flex items-center gap-2.5 min-w-0">
-                <ActionBadge action={selectedLog.action} />
-                <span className="font-semibold text-foreground truncate">
-                  {ENTITY_MAP[selectedLog.table_name] ?? selectedLog.table_name}
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSelectedLog(null)}
-                className="p-1.5 rounded-md hover:bg-muted text-muted-foreground transition-colors flex-shrink-0 ml-2"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Detail body */}
-            <div className="flex-1 overflow-y-auto p-5 space-y-6 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full">
-              {/* Meta row */}
-              <div className="space-y-2 text-sm">
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <Clock className="w-4 h-4 flex-shrink-0" />
-                  <span>
-                    {format(
-                      new Date(selectedLog.created_at),
-                      "MMMM d, yyyy 'at' h:mm a"
-                    )}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <User className="w-4 h-4 flex-shrink-0" />
-                  <span>
-                    {ACTOR_LABELS[selectedLog.actor_role ?? ""] ??
-                      selectedLog.actor_role ??
-                      "System"}
-                    {selectedLog.actor_user_id === userId && (
-                      <span className="ml-1 text-xs">(you)</span>
-                    )}
-                    {selectedLog.actor_role === "super_admin_impersonating" && (
-                      <span className="ml-1 text-xs text-amber-600">
-                        · impersonating
-                      </span>
-                    )}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <Info className="w-4 h-4 flex-shrink-0" />
-                  <span>
-                    {AREA_MAP[selectedLog.table_name] ?? selectedLog.table_name}
-                    {selectedLog.record_id && (
-                      <span className="ml-1.5 text-xs font-mono opacity-50">
-                        · {selectedLog.record_id.slice(0, 8)}…
-                      </span>
-                    )}
-                  </span>
-                </div>
-              </div>
-
-              {/* UPDATE: changes table */}
-              {selectedLog.action === "UPDATE" && (() => {
-                const changed = getChangedFields(selectedLog);
-                return changed.length > 0 ? (
-                  <div className="space-y-3">
-                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                      Changes Made
-                    </p>
-                    <div className="rounded-md border border-border overflow-hidden text-sm">
-                      <table className="w-full">
-                        <thead>
-                          <tr className="bg-muted/50 border-b border-border">
-                            <th className="px-3 py-2 text-left text-xs text-muted-foreground font-medium w-1/3">
-                              Field
-                            </th>
-                            <th className="px-3 py-2 text-left text-xs text-muted-foreground font-medium w-1/3">
-                              Before
-                            </th>
-                            <th className="px-3 py-2 text-left text-xs text-muted-foreground font-medium w-1/3">
-                              After
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-border">
-                          {changed.map(({ field, before, after }) => (
-                            <tr key={field}>
-                              <td className="px-3 py-2.5 text-muted-foreground font-medium align-top">
-                                {humanizeField(field)}
-                              </td>
-                              <td className="px-3 py-2.5 text-muted-foreground align-top break-all">
-                                {formatValue(before)}
-                              </td>
-                              <td className="px-3 py-2.5 text-foreground font-medium align-top break-all">
-                                {formatValue(after)}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground italic">
-                    No tracked field changes detected in this update.
-                  </p>
-                );
-              })()}
-
-              {/* INSERT: record fields */}
-              {selectedLog.action === "INSERT" && (() => {
-                const fields = getRecordFields(selectedLog.new_values);
-                return fields.length > 0 ? (
-                  <div className="space-y-3">
-                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                      Record Created
-                    </p>
-                    <div className="rounded-md border border-border overflow-hidden text-sm">
-                      <table className="w-full">
-                        <thead>
-                          <tr className="bg-muted/50 border-b border-border">
-                            <th className="px-3 py-2 text-left text-xs text-muted-foreground font-medium w-2/5">
-                              Field
-                            </th>
-                            <th className="px-3 py-2 text-left text-xs text-muted-foreground font-medium">
-                              Value
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-border">
-                          {fields.map(({ field, value }) => (
-                            <tr key={field}>
-                              <td className="px-3 py-2.5 text-muted-foreground font-medium align-top">
-                                {humanizeField(field)}
-                              </td>
-                              <td className="px-3 py-2.5 text-foreground align-top break-all">
-                                {formatValue(value)}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                ) : null;
-              })()}
-
-              {/* DELETE: deleted record fields */}
-              {selectedLog.action === "DELETE" && (() => {
-                const fields = getRecordFields(selectedLog.old_values);
-                return fields.length > 0 ? (
-                  <div className="space-y-3">
-                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                      Deleted Record
-                    </p>
-                    <div className="rounded-md border border-border/50 overflow-hidden text-sm opacity-80">
-                      <table className="w-full">
-                        <thead>
-                          <tr className="bg-muted/50 border-b border-border">
-                            <th className="px-3 py-2 text-left text-xs text-muted-foreground font-medium w-2/5">
-                              Field
-                            </th>
-                            <th className="px-3 py-2 text-left text-xs text-muted-foreground font-medium">
-                              Value
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-border">
-                          {fields.map(({ field, value }) => (
-                            <tr key={field}>
-                              <td className="px-3 py-2.5 text-muted-foreground font-medium align-top">
-                                {humanizeField(field)}
-                              </td>
-                              <td className="px-3 py-2.5 text-muted-foreground align-top break-all line-through decoration-muted-foreground/40">
-                                {formatValue(value)}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                ) : null;
-              })()}
-            </div>
-          </div>
-        </>
+        <DetailDrawer
+          log={selectedLog}
+          userId={userId}
+          actorNames={actorNames}
+          onClose={() => setSelectedLog(null)}
+        />
       )}
 
       {/* ─── Help drawer ──────────────────────────────────────────────────── */}
@@ -1098,7 +683,7 @@ export default function ActivityPage() {
           />
           <div className="fixed inset-y-0 right-0 z-50 w-80 bg-card border-l border-border shadow-xl animate-in slide-in-from-right duration-200 flex flex-col overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b border-border flex-shrink-0">
-              <p className="font-semibold text-sm">Help · Activity Log</p>
+              <p className="font-semibold text-sm">Help · Activity History</p>
               <button
                 type="button"
                 onClick={() => setHelpOpen(false)}
@@ -1159,5 +744,281 @@ export default function ActivityPage() {
         </>
       )}
     </div>
+  );
+}
+
+// ─── Feed row ─────────────────────────────────────────────────────────────────
+
+function CategoryChip({
+  active,
+  onClick,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${
+        active
+          ? "bg-[var(--theme-accent)] text-white border-[var(--theme-accent)]"
+          : "bg-card text-foreground border-border hover:bg-muted"
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
+
+function ActivityFeedRow({
+  row,
+  onSelect,
+}: {
+  row: FormattedActivity;
+  onSelect: () => void;
+}) {
+  const ts = formatActivityTimestamp(row.createdAt);
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={onSelect}
+        className="w-full text-left px-4 py-3 hover:bg-muted/30 transition-colors flex items-start gap-3"
+      >
+        <div className="flex-shrink-0 mt-0.5">
+          <ActionBadge action={row.action} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm text-foreground leading-snug">
+            {row.summary}
+            {row.actorIsImpersonating && (
+              <span className="ml-1.5 text-xs text-amber-600">
+                · impersonating
+              </span>
+            )}
+          </p>
+          <p className="text-xs text-muted-foreground mt-1">
+            <span>{row.categoryLabel}</span>
+            <span className="opacity-50"> · </span>
+            <span>{ts.date}</span>
+            <span className="opacity-50"> · </span>
+            <span>{ts.time}</span>
+          </p>
+        </div>
+      </button>
+    </li>
+  );
+}
+
+// ─── Detail drawer (power-user view of raw field-level changes) ───────────────
+
+function DetailDrawer({
+  log,
+  userId,
+  actorNames,
+  onClose,
+}: {
+  log: AuditLogRow;
+  userId: string | null;
+  actorNames: Map<string, string> | null;
+  onClose: () => void;
+}) {
+  const ts = formatActivityTimestamp(log.created_at);
+  const formatted = formatActivity(log, userId, actorNames);
+  return (
+    <>
+      <div className="fixed inset-0 z-40 bg-black/30" onClick={onClose} />
+      <div className="fixed inset-y-0 right-0 z-50 w-full max-w-lg bg-card border-l border-border shadow-xl animate-in slide-in-from-right duration-200 flex flex-col">
+        {/* Detail header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <ActionBadge action={log.action} />
+            <span className="font-semibold text-foreground truncate">
+              {ENTITY_MAP[log.table_name] ?? log.table_name}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1.5 rounded-md hover:bg-muted text-muted-foreground transition-colors flex-shrink-0 ml-2"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Detail body */}
+        <div className="flex-1 overflow-y-auto p-5 space-y-6 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full">
+          {/* Summary */}
+          <p className="text-sm text-foreground leading-relaxed">
+            {formatted.summary}
+          </p>
+
+          {/* Meta row */}
+          <div className="space-y-2 text-sm">
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <Clock className="w-4 h-4 flex-shrink-0" />
+              <span>{ts.full}</span>
+            </div>
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <User className="w-4 h-4 flex-shrink-0" />
+              <span>
+                {formatted.actorLabel}
+                {formatted.detail && (
+                  <span className="ml-1.5 text-xs opacity-70">
+                    · {formatted.detail}
+                  </span>
+                )}
+                {formatted.actorIsSelf && (
+                  <span className="ml-1 text-xs">(you)</span>
+                )}
+                {formatted.actorIsImpersonating && (
+                  <span className="ml-1 text-xs text-amber-600">
+                    · impersonating
+                  </span>
+                )}
+              </span>
+            </div>
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <Info className="w-4 h-4 flex-shrink-0" />
+              <span>
+                {formatted.categoryLabel}
+                <span className="opacity-50 mx-1.5">·</span>
+                {AREA_MAP[log.table_name] ?? log.table_name}
+              </span>
+            </div>
+          </div>
+
+          {/* UPDATE: changes table */}
+          {log.action === "UPDATE" &&
+            (() => {
+              const changed = getChangedFields(log);
+              return changed.length > 0 ? (
+                <div className="space-y-3">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                    Changes Made
+                  </p>
+                  <div className="rounded-md border border-border overflow-hidden text-sm">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="bg-muted/50 border-b border-border">
+                          <th className="px-3 py-2 text-left text-xs text-muted-foreground font-medium w-1/3">
+                            Field
+                          </th>
+                          <th className="px-3 py-2 text-left text-xs text-muted-foreground font-medium w-1/3">
+                            Before
+                          </th>
+                          <th className="px-3 py-2 text-left text-xs text-muted-foreground font-medium w-1/3">
+                            After
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border">
+                        {changed.map(({ field, before, after }) => (
+                          <tr key={field}>
+                            <td className="px-3 py-2.5 text-muted-foreground font-medium align-top">
+                              {humanizeField(field)}
+                            </td>
+                            <td className="px-3 py-2.5 text-muted-foreground align-top break-all">
+                              {formatValue(field, before)}
+                            </td>
+                            <td className="px-3 py-2.5 text-foreground font-medium align-top break-all">
+                              {formatValue(field, after)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground italic">
+                  No tracked field changes detected in this update.
+                </p>
+              );
+            })()}
+
+          {/* INSERT: record fields */}
+          {log.action === "INSERT" &&
+            (() => {
+              const fields = getRecordFields(log.new_values);
+              return fields.length > 0 ? (
+                <div className="space-y-3">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                    Record Created
+                  </p>
+                  <div className="rounded-md border border-border overflow-hidden text-sm">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="bg-muted/50 border-b border-border">
+                          <th className="px-3 py-2 text-left text-xs text-muted-foreground font-medium w-2/5">
+                            Field
+                          </th>
+                          <th className="px-3 py-2 text-left text-xs text-muted-foreground font-medium">
+                            Value
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border">
+                        {fields.map(({ field, value }) => (
+                          <tr key={field}>
+                            <td className="px-3 py-2.5 text-muted-foreground font-medium align-top">
+                              {humanizeField(field)}
+                            </td>
+                            <td className="px-3 py-2.5 text-foreground align-top break-all">
+                              {formatValue(field, value)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : null;
+            })()}
+
+          {/* DELETE: deleted record fields */}
+          {log.action === "DELETE" &&
+            (() => {
+              const fields = getRecordFields(log.old_values);
+              return fields.length > 0 ? (
+                <div className="space-y-3">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                    Removed Record
+                  </p>
+                  <div className="rounded-md border border-border/50 overflow-hidden text-sm opacity-80">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="bg-muted/50 border-b border-border">
+                          <th className="px-3 py-2 text-left text-xs text-muted-foreground font-medium w-2/5">
+                            Field
+                          </th>
+                          <th className="px-3 py-2 text-left text-xs text-muted-foreground font-medium">
+                            Value
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border">
+                        {fields.map(({ field, value }) => (
+                          <tr key={field}>
+                            <td className="px-3 py-2.5 text-muted-foreground font-medium align-top">
+                              {humanizeField(field)}
+                            </td>
+                            <td className="px-3 py-2.5 text-muted-foreground align-top break-all line-through decoration-muted-foreground/40">
+                              {formatValue(field, value)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : null;
+            })()}
+        </div>
+      </div>
+    </>
   );
 }

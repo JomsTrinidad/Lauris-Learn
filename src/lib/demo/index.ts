@@ -59,6 +59,20 @@ const LAST_NAMES = [
 const T_FEMALE = ["Maria","Ana","Elena","Rosa","Carmen","Gloria","Patricia","Cecilia","Jennifer","Marilou"];
 const T_MALE   = ["Jose","Juan","Ricardo","Roberto","Antonio","Carlos","Eduardo","Manuel","Fernando","Rafael"];
 
+// Guardian first-name pools — broader than the teacher pools so the per-class
+// guardian list doesn't read as a string of repeated "Maria" / "Gloria" rows.
+// Names are common in Filipino schools but deliberately fictional in pairing.
+const GUARDIAN_FEMALE = [
+  "Maria","Anna","Grace","Michelle","Catherine","Rose","Liza","Angela","Patricia","Joanne",
+  "Beatrice","Karen","Sheila","Lorraine","Camille","Donna","Marites","Jocelyn","Trisha","Yvette",
+];
+const GUARDIAN_MALE = [
+  "Mark","John","Carlo","Joseph","Michael","Daniel","Ryan","Paolo","Anthony","Miguel",
+  "Edgar","Vincent","Arnel","Brian","Christopher","Dennis","Francis","Gerald","Ramon","Victor",
+];
+// Mobile prefixes rotated so guardian phone numbers don't all start with 0917.
+const PHONE_PREFIXES = ["0917","0918","0919","0920","0921","0926","0927"];
+
 // Inquiry child names — completely separate from F_STUDENT / M_STUDENT / T_FEMALE / T_MALE
 // and use last names NOT in the LAST_NAMES pool, so there is zero overlap with enrolled students.
 const INQUIRY_CHILD_NAMES = [
@@ -735,17 +749,50 @@ export async function generateDemoData(
   const studentIds: string[] = (studentData ?? []).map((s: any) => s.id);
 
   // ── 10. Guardians ───────────────────────────────────────────────────────────
+  // Believable-guardian rules:
+  //   • 80% share the student's surname (parent on father's surname).
+  //   • 20% carry a different surname — typical for mother on maiden name,
+  //     aunt/grandparent/guardian, blended families, etc.
+  //   • Relationship aligns with gender so a "Mother" never gets a male first
+  //     name. The existing code was 67% female / 25% Father — visibly off.
+  //   • First names drawn from a 20-name gender-matched pool with a step of 7
+  //     (coprime with 20) so each pool cycles through every name before
+  //     repeating — kills the "Maria / Maria / Maria" visual run.
   const guardianRows: Record<string, unknown>[] = [];
   studentIds.forEach((sid, i) => {
     const pIdx   = i % parentIds.length;
     const pEmail = parentIds[pIdx] ? parentEmail(pIdx) : null;
-    const female   = (i * 3 + 1) % 3 !== 0;
-    const first    = female ? T_FEMALE[(i * 5) % T_FEMALE.length] : T_MALE[(i * 5) % T_MALE.length];
-    const last     = lastName(i + 40);
+
+    const matchStudentSurname = (i % 10) < 8; // ~80% share student's last name
+
+    let relationship: string;
+    let female: boolean;
+    if (matchStudentSurname) {
+      // Matched surname: nuclear family. 25% Father, 75% Mother.
+      if (i % 4 === 0) { relationship = "Father"; female = false; }
+      else             { relationship = "Mother"; female = true;  }
+    } else {
+      // Different surname: maiden-name Mother is the most common real case;
+      // sprinkle in Aunt / Guardian / Stepfather for blended-family realism.
+      const rk = i % 5;
+      if      (rk === 0) { relationship = "Aunt";       female = true;  }
+      else if (rk === 1) { relationship = "Guardian";   female = (i % 2 === 0); }
+      else if (rk === 2) { relationship = "Stepfather"; female = false; }
+      else               { relationship = "Mother";     female = true;  } // maiden
+    }
+
+    const pool  = female ? GUARDIAN_FEMALE : GUARDIAN_MALE;
+    const first = pool[(i * 7) % pool.length];
+    // sIdx (used when seeding students above) maps 1:1 to i in this loop, so
+    // lastName(i + 10) reproduces the student's stored surname exactly.
+    const last  = matchStudentSurname ? lastName(i + 10) : lastName(i + 40);
+    const phonePrefix = PHONE_PREFIXES[(i * 3) % PHONE_PREFIXES.length];
+
     guardianRows.push({
-      student_id: sid, full_name: `${first} ${last}`,
-      relationship: i % 4 === 0 ? "Father" : "Mother",
-      phone: `0917${String((i * 1234567 + 1000000) % 9000000 + 1000000)}`,
+      student_id: sid,
+      full_name: `${first} ${last}`,
+      relationship,
+      phone: `${phonePrefix}${String((i * 1234567 + 1000000) % 9000000 + 1000000)}`,
       email: pEmail,
       is_primary: true,
       is_emergency_contact: true,

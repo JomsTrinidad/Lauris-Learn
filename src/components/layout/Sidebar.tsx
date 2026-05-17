@@ -73,7 +73,7 @@ const navSections: NavSection[] = [
   {
     label: "System",
     items: [
-      { path: "/activity", label: "Activity Log", icon: History, adminOnly: true },
+      { path: "/activity", label: "Activity History", icon: History, adminOnly: true },
       { path: "/settings", label: "Settings", icon: Settings, adminOnly: true },
     ],
   },

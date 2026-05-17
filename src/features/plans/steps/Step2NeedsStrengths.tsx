@@ -100,25 +100,28 @@ export function Step2NeedsStrengths({
         )}
 
         <div className="border-t border-border/40 pt-3 space-y-3">
-          <label className="inline-flex items-center gap-2 text-xs cursor-pointer">
-            <input type="checkbox" checked={hasMedical} disabled={!canEdit}
-              onChange={(e) => setHasMedical(e.target.checked)} />
-            Medical assessment or diagnosis information available
-          </label>
-          {hasMedical && (
-            <Field label="Reported diagnosis / medical details"
-              hint="Medical assessment information as provided by parent or attending specialist.">
-              <Textarea value={medicalDiagnosis} onChange={(e) => setMedicalDiagnosis(e.target.value)}
-                disabled={!canEdit} rows={2}
-                placeholder="Describe the diagnosis or assessment results as reported by the parent or specialist." />
-            </Field>
-          )}
           <Field label="Reported condition (brief summary)"
             hint="Used in reports and older plan views.">
             <Textarea value={diagnosis} onChange={(e) => setDiagnosis(e.target.value)}
               disabled={!canEdit} rows={2}
               placeholder="e.g. Autism Spectrum Disorder, as reported by attending physician." />
           </Field>
+
+          <div className="rounded-lg border border-border/50 bg-card/40 p-3 space-y-2">
+            <label className="inline-flex items-center gap-2 text-xs cursor-pointer">
+              <input type="checkbox" checked={hasMedical} disabled={!canEdit}
+                onChange={(e) => setHasMedical(e.target.checked)} />
+              Medical assessment or diagnosis information available
+            </label>
+            {hasMedical && (
+              <Field label="Medical assessment / diagnosis details"
+                hint="Use only information provided by the parent, physician, or specialist.">
+                <Textarea value={medicalDiagnosis} onChange={(e) => setMedicalDiagnosis(e.target.value)}
+                  disabled={!canEdit} rows={2}
+                  placeholder="Describe the diagnosis or assessment results as reported by the parent, physician, or specialist." />
+              </Field>
+            )}
+          </div>
         </div>
       </div>
 

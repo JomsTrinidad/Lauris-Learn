@@ -1,5 +1,6 @@
 ﻿"use client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Plus, Calendar, Clock, Users, BookOpen, HelpCircle, X, Search, ChevronDown, ChevronRight, AlertTriangle, ListChecks } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,6 +17,53 @@ import { getInitials } from "@/lib/utils";
 type AppliesTo = "all" | "class" | "selected";
 type RsvpStatus = "going" | "maybe" | "not_going";
 type EventTypeFilter = "all" | "school_event" | "class_event" | "holiday" | "deadline" | "meeting" | "online_class";
+type DateRange = "this-month" | "next-month" | "upcoming" | "all";
+
+const DATE_RANGE_OPTIONS: { value: DateRange; label: string }[] = [
+  { value: "this-month", label: "This Month" },
+  { value: "next-month", label: "Next Month" },
+  { value: "upcoming",   label: "Upcoming" },
+  { value: "all",        label: "All Events" },
+];
+
+const EVENT_TYPE_FILTER_OPTIONS: { value: EventTypeFilter; label: string }[] = [
+  { value: "all",          label: "All Types" },
+  { value: "school_event", label: "School Events" },
+  { value: "class_event",  label: "Class Events" },
+  { value: "meeting",      label: "Meetings" },
+  { value: "deadline",     label: "Deadlines" },
+  { value: "holiday",      label: "Holidays" },
+  { value: "online_class", label: "Online Classes" },
+];
+
+function isValidRange(v: string | null): v is DateRange {
+  return v === "this-month" || v === "next-month" || v === "upcoming" || v === "all";
+}
+function isValidTypeFilter(v: string | null): v is EventTypeFilter {
+  return v === "all" || v === "school_event" || v === "class_event" || v === "holiday"
+      || v === "deadline" || v === "meeting" || v === "online_class";
+}
+
+function inDateRange(eventDate: string, range: DateRange): boolean {
+  if (range === "all") return true;
+  if (range === "upcoming") return new Date(eventDate + "T23:59:59") >= new Date();
+  const now = new Date();
+  const d = new Date(eventDate + "T00:00:00");
+  if (range === "this-month") {
+    return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+  }
+  // next-month
+  const nextMonth = (now.getMonth() + 1) % 12;
+  const nextYear = now.getMonth() === 11 ? now.getFullYear() + 1 : now.getFullYear();
+  return d.getFullYear() === nextYear && d.getMonth() === nextMonth;
+}
+
+const EMPTY_STATE_BY_RANGE: Record<DateRange, string> = {
+  "this-month": "No events this month.",
+  "next-month": "No events next month.",
+  "upcoming":   "No upcoming events.",
+  "all":        "No events found.",
+};
 
 const EVENT_TYPE_LABELS: Record<string, string> = {
   school_event: "School Event",
@@ -116,8 +164,11 @@ function isUpcoming(dateStr: string) {
 }
 
 export default function EventsPage() {
-  const { schoolId, activeYear } = useSchoolContext();
+  const { schoolId, activeYear, userRole } = useSchoolContext();
   const supabase = createClient();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const canManageEvents = userRole === "school_admin" || userRole === "super_admin";
 
   const [events, setEvents] = useState<Event[]>([]);
   const [classOptions, setClassOptions] = useState<ClassOption[]>([]);
@@ -127,8 +178,35 @@ export default function EventsPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState<EventForm>(EMPTY_FORM);
-  const [tab, setTab] = useState<"upcoming" | "all">("upcoming");
-  const [typeFilter, setTypeFilter] = useState<EventTypeFilter>("all");
+  const initialRange = useMemo<DateRange>(() => {
+    const r = searchParams.get("range");
+    return isValidRange(r) ? r : "upcoming";
+    // Read once on mount; later changes go through setRange + URL sync.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const initialType = useMemo<EventTypeFilter>(() => {
+    const t = searchParams.get("type");
+    return isValidTypeFilter(t) ? t : "all";
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const [range, setRangeState] = useState<DateRange>(initialRange);
+  const [typeFilter, setTypeFilterState] = useState<EventTypeFilter>(initialType);
+
+  function syncUrl(nextRange: DateRange, nextType: EventTypeFilter) {
+    const params = new URLSearchParams();
+    if (nextRange !== "upcoming") params.set("range", nextRange);
+    if (nextType !== "all") params.set("type", nextType);
+    const qs = params.toString();
+    router.replace(qs ? `/events?${qs}` : "/events", { scroll: false });
+  }
+  function setRange(next: DateRange) {
+    setRangeState(next);
+    syncUrl(next, typeFilter);
+  }
+  function setTypeFilter(next: EventTypeFilter) {
+    setTypeFilterState(next);
+    syncUrl(range, next);
+  }
 
   // RSVP list modal
   const [rsvpViewEvent, setRsvpViewEvent] = useState<Event | null>(null);
@@ -323,13 +401,14 @@ export default function EventsPage() {
     await loadEvents();
   }
 
-  const tabFiltered = tab === "upcoming"
-    ? events.filter((e) => isUpcoming(e.eventDate)).sort((a, b) => a.eventDate.localeCompare(b.eventDate))
-    : [...events].sort((a, b) => b.eventDate.localeCompare(a.eventDate));
+  const rangeFiltered = events.filter((e) => inDateRange(e.eventDate, range));
+  const sortedRangeFiltered = range === "all"
+    ? [...rangeFiltered].sort((a, b) => b.eventDate.localeCompare(a.eventDate))
+    : [...rangeFiltered].sort((a, b) => a.eventDate.localeCompare(b.eventDate));
 
   const displayed = typeFilter === "all"
-    ? tabFiltered
-    : tabFiltered.filter((e) => e.eventType === typeFilter);
+    ? sortedRangeFiltered
+    : sortedRangeFiltered.filter((e) => e.eventType === typeFilter);
 
   const filteredRsvpRows = rsvpFilter === "all" ? rsvpRows : rsvpRows.filter((r) => r.status === rsvpFilter);
 
@@ -347,64 +426,60 @@ export default function EventsPage() {
             className="flex items-center gap-1.5 px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors border border-border">
             <HelpCircle className="w-4 h-4" /> Help Topics
           </button>
-          <Button onClick={() => { setForm(EMPTY_FORM); setFormError(null); setModalOpen(true); }}>
-            <Plus className="w-4 h-4" /> Add Event
-          </Button>
+          {canManageEvents && (
+            <Button onClick={() => { setForm(EMPTY_FORM); setFormError(null); setModalOpen(true); }}>
+              <Plus className="w-4 h-4" /> Add Event
+            </Button>
+          )}
         </div>
       </div>
 
       {error && <ErrorAlert message={error} />}
 
-      {/* Tabs */}
-      <div className="flex gap-1 bg-muted p-1 rounded-lg w-fit">
-        {(["upcoming", "all"] as const).map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors capitalize ${
-              tab === t ? "bg-card shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            {t === "upcoming" ? "Upcoming" : "All Events"}
-          </button>
-        ))}
-      </div>
-
-      {/* Event type filter chips */}
-      <div className="flex flex-wrap gap-2">
-        {([
-          { value: "all",          label: "All Types" },
-          { value: "school_event", label: "School Events" },
-          { value: "class_event",  label: "Class Events" },
-          { value: "meeting",      label: "Meetings" },
-          { value: "deadline",     label: "Deadlines" },
-          { value: "holiday",      label: "Holidays" },
-          { value: "online_class", label: "Online Classes" },
-        ] as { value: EventTypeFilter; label: string }[]).map((chip) => {
-          const count = chip.value === "all" ? tabFiltered.length : tabFiltered.filter((e) => e.eventType === chip.value).length;
-          if (count === 0 && chip.value !== "all") return null;
-          return (
+      {/* Primary date-range segmented control + secondary type filter */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex gap-1 bg-muted p-1 rounded-lg w-fit">
+          {DATE_RANGE_OPTIONS.map((opt) => (
             <button
-              key={chip.value}
-              onClick={() => setTypeFilter(chip.value)}
-              className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                typeFilter === chip.value
-                  ? "bg-primary text-primary-foreground border-primary"
-                  : "border-border text-muted-foreground hover:text-foreground hover:border-foreground/30"
+              key={opt.value}
+              onClick={() => setRange(opt.value)}
+              className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                range === opt.value ? "bg-card shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"
               }`}
             >
-              {chip.label}
-              {chip.value !== "all" && <span className="ml-1 opacity-70">{count}</span>}
+              {opt.label}
             </button>
-          );
-        })}
+          ))}
+        </div>
+        <div className="flex items-center gap-2 text-sm">
+          <label htmlFor="event-type-filter" className="text-muted-foreground">Type</label>
+          <div className="w-44">
+            <Select
+              id="event-type-filter"
+              value={typeFilter}
+              onChange={(e) => setTypeFilter(e.target.value as EventTypeFilter)}
+            >
+              {EVENT_TYPE_FILTER_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </Select>
+          </div>
+        </div>
       </div>
 
       {/* Event list */}
       {displayed.length === 0 ? (
         <Card>
           <CardContent className="text-center py-10 text-muted-foreground">
-            No events to show.
+            <p>{EMPTY_STATE_BY_RANGE[range]}</p>
+            {typeFilter !== "all" && rangeFiltered.length > 0 && (
+              <button
+                onClick={() => setTypeFilter("all")}
+                className="mt-2 text-xs text-primary hover:underline"
+              >
+                Clear type filter
+              </button>
+            )}
           </CardContent>
         </Card>
       ) : (
@@ -741,23 +816,27 @@ export default function EventsPage() {
                     ),
                   },
                   {
-                    id: "tabs",
+                    id: "date-range",
                     icon: Clock,
-                    title: "Upcoming vs All Events tabs",
-                    searchText: "upcoming past all events tab view filter historical",
+                    title: "Filtering events by date range",
+                    searchText: "date range this month next upcoming all events filter view historical past",
                     body: (
                       <div className="space-y-2">
-                        <div className="space-y-2.5 mt-1">
+                        <p>The primary filter at the top controls which events appear. Combine it with the <strong>Type</strong> dropdown to narrow further.</p>
+                        <div className="space-y-2.5 mt-2">
                           {[
-                            { label: "Upcoming", desc: "Shows only events with a future date (today or later), sorted soonest first. Default view for day-to-day planning." },
-                            { label: "All Events", desc: "Shows all events including past ones, sorted newest first. Use this to check RSVP totals for a past event." },
+                            { label: "This Month",  desc: "Events in the current calendar month, including ones earlier this month. Useful for at-a-glance planning." },
+                            { label: "Next Month",  desc: "Events in the next calendar month. Great for previewing what&apos;s ahead." },
+                            { label: "Upcoming",    desc: "Every event from today onward, sorted soonest first. Default view for day-to-day planning." },
+                            { label: "All Events",  desc: "Every event including past ones, sorted newest first. Use this to check RSVP totals for a past event." },
                           ].map(({ label, desc }) => (
                             <div key={label} className="flex gap-2.5 items-start">
-                              <span className="font-semibold text-xs w-20 flex-shrink-0 mt-0.5 text-foreground">{label}</span>
+                              <span className="font-semibold text-xs w-24 flex-shrink-0 mt-0.5 text-foreground">{label}</span>
                               <span className="text-xs">{desc}</span>
                             </div>
                           ))}
                         </div>
+                        <Note>Your current filter is reflected in the URL — share the link to land someone on the same view.</Note>
                       </div>
                     ),
                   },
