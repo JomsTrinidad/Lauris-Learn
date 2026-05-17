@@ -1,5 +1,7 @@
 ﻿"use client";
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useEffect, useState, useMemo, useCallback, useRef } from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import {
   Plus, BookOpen, Eye, EyeOff, Search, HelpCircle, X,
   ChevronDown, ChevronRight, AlertTriangle, TrendingUp,
@@ -14,6 +16,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { PageSpinner, ErrorAlert } from "@/components/ui/spinner";
 import { createClient } from "@/lib/supabase/client";
 import { useSchoolContext } from "@/contexts/SchoolContext";
+import { fetchTeacherProfileId, fetchTeacherClassIdsForYear } from "@/lib/teacher-scope";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -163,8 +166,31 @@ function getRatingDescription(rating: string, scaleItemId: string | null, itemBy
 // ── Page component ─────────────────────────────────────────────────────────────
 
 export default function ProgressPage() {
-  const { schoolId, activeYear, userId } = useSchoolContext();
+  const { schoolId, activeYear, viewingYear, userId, userRole } = useSchoolContext();
   const supabase = createClient();
+  const searchParams = useSearchParams();
+
+  const isTeacher = userRole === "teacher";
+  const effectiveYearId = viewingYear?.id ?? activeYear?.id ?? null;
+  // Teacher historical mode: instructional review only — no new observations.
+  const teacherHistorical = isTeacher && !!activeYear?.id && !!viewingYear?.id && viewingYear.id !== activeYear.id;
+  // Teachers default to "my"; admins always see everyone. Historical view forces "my".
+  const scopeParam = searchParams.get("scope");
+  const scope: "my" | "all" = isTeacher
+    ? teacherHistorical || scopeParam !== "all"
+      ? "my"
+      : "all"
+    : "all";
+  // Set of student_ids the teacher is allowed to edit (assigned-class enrollees).
+  // Always populated for teachers regardless of scope so save-guards work in "all" mode too.
+  const [allowedStudentIds, setAllowedStudentIds] = useState<Set<string> | null>(null);
+
+  // Cache teacher scope chain so toggling My/All Students doesn't re-run the
+  // teacher_profiles → class_teachers lookup. Keyed by (userId, schoolId, activeYearId).
+  const teacherClassIdsCacheRef = useRef<{ key: string; classIds: string[] | null } | null>(null);
+  // Skip PageSpinner on scope-change reloads — keep current rows visible.
+  const hasLoadedRef = useRef(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [students, setStudents] = useState<StudentOption[]>([]);
@@ -212,17 +238,21 @@ export default function ProgressPage() {
     if (!schoolId) { setLoading(false); return; }
     loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [schoolId, activeYear?.id]);
+  }, [schoolId, effectiveYearId, scope, userId]);
 
   async function loadAll() {
-    setLoading(true);
+    const isFirstLoad = !hasLoadedRef.current;
+    if (isFirstLoad) setLoading(true);
+    else setRefreshing(true);
     setError(null);
     await Promise.all([
       loadCategories(),
       loadStudents(),
       loadScaleData(),
     ]);
-    setLoading(false);
+    if (isFirstLoad) setLoading(false);
+    else setRefreshing(false);
+    hasLoadedRef.current = true;
   }
 
   async function loadCategories() {
@@ -235,16 +265,61 @@ export default function ProgressPage() {
     setCategories(data ?? []);
   }
 
+  /**
+   * For teachers, resolve the set of class_ids assigned via
+   * teacher_profiles.auth_user_id → class_teachers.teacher_id.
+   * Returns null when not a teacher (no filtering needed) or when teacher has
+   * no profile link / no class assignments (caller treats as empty).
+   */
+  async function resolveMyClassIds(): Promise<string[] | null | undefined> {
+    if (!isTeacher) return undefined;
+    if (!schoolId || !userId || !effectiveYearId) return null;
+
+    const cacheKey = `${userId}|${schoolId}|${effectiveYearId}`;
+    const cached = teacherClassIdsCacheRef.current;
+    if (cached && cached.key === cacheKey) {
+      return cached.classIds;
+    }
+
+    const tpId = await fetchTeacherProfileId(supabase, userId, schoolId);
+    if (!tpId) {
+      teacherClassIdsCacheRef.current = { key: cacheKey, classIds: null };
+      return null;
+    }
+    const ids = await fetchTeacherClassIdsForYear(supabase, tpId, schoolId, effectiveYearId);
+    const resolved = ids.length > 0 ? ids : null;
+    teacherClassIdsCacheRef.current = { key: cacheKey, classIds: resolved };
+    return resolved;
+  }
+
   async function loadStudents() {
-    if (!activeYear?.id) { setStudents([]); return; }
-    const { data } = await supabase
+    if (!effectiveYearId) { setStudents([]); setAllowedStudentIds(isTeacher ? new Set() : null); return; }
+
+    const myClassIds = await resolveMyClassIds();
+
+    let query = supabase
       .from("enrollments")
       .select("student_id, class_id, students(first_name, last_name), classes(name, level_id)")
-      .eq("school_year_id", activeYear.id)
+      .eq("school_year_id", effectiveYearId)
       .eq("status", "enrolled");
 
+    // In "my" mode, narrow at the DB level.
+    if (isTeacher && scope === "my") {
+      if (myClassIds === null) {
+        // No assignments → nothing to show
+        setStudents([]);
+        setAllowedStudentIds(new Set());
+        return;
+      }
+      if (myClassIds) query = query.in("class_id", myClassIds);
+    }
+
+    const { data } = await query;
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const opts: StudentOption[] = ((data ?? []) as any[]).map((e: any) => ({
+    const rows = (data ?? []) as any[];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const opts: StudentOption[] = rows.map((e: any) => ({
       id: e.student_id,
       name: e.students ? `${e.students.first_name} ${e.students.last_name}` : e.student_id,
       classId: e.class_id ?? "",
@@ -253,6 +328,34 @@ export default function ProgressPage() {
     })).sort((a: StudentOption, b: StudentOption) => a.name.localeCompare(b.name));
 
     setStudents(opts);
+
+    // Always compute the teacher's editable set, regardless of scope, for save-guards.
+    if (isTeacher) {
+      if (myClassIds === null) {
+        setAllowedStudentIds(new Set());
+      } else if (scope === "my") {
+        // Already filtered by myClassIds — every loaded student is editable.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        setAllowedStudentIds(new Set(rows.map((e: any) => e.student_id as string)));
+      } else {
+        // "all" mode — re-query just the assigned-class enrollees for the editable set.
+        const myClassIdsArr = myClassIds ?? [];
+        if (myClassIdsArr.length === 0) {
+          setAllowedStudentIds(new Set());
+        } else {
+          const { data: mine } = await supabase
+            .from("enrollments")
+            .select("student_id")
+            .eq("school_year_id", effectiveYearId)
+            .eq("status", "enrolled")
+            .in("class_id", myClassIdsArr);
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          setAllowedStudentIds(new Set(((mine ?? []) as any[]).map((e: any) => e.student_id as string)));
+        }
+      }
+    } else {
+      setAllowedStudentIds(null);
+    }
   }
 
   async function loadScaleData() {
@@ -430,6 +533,17 @@ export default function ProgressPage() {
   async function handleSave() {
     if (!form.studentId) { setFormError("Select a student."); return; }
     if (!form.categoryId) { setFormError("Select a domain."); return; }
+    // Historical years are read-only — no retroactive observation editing.
+    if (teacherHistorical) {
+      setFormError("Historical school years are read-only. Switch to the active year to record observations.");
+      return;
+    }
+    // Teachers may only record observations for students in their assigned classes.
+    // Defense-in-depth: RLS remains the ultimate guard.
+    if (isTeacher && (!allowedStudentIds || !allowedStudentIds.has(form.studentId))) {
+      setFormError("You can only record observations for students in your assigned classes.");
+      return;
+    }
     if (modalResolvedScale === null) {
       setFormError("No grading scale is assigned for this student/domain. Ask an admin to assign one in Settings → Grading.");
       return;
@@ -552,28 +666,80 @@ export default function ProgressPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-[var(--theme-accent)]">Progress Tracking</h1>
-          <p className="text-muted-foreground text-sm mt-1">Track student growth across developmental domains</p>
+          <p className="text-muted-foreground text-sm mt-1">
+            {teacherHistorical
+              ? `Viewing ${viewingYear?.name ?? "prior year"} · read-only`
+              : isTeacher && scope === "my"
+                ? "Growth observations for your students"
+                : "Track student growth across developmental domains"}
+          </p>
         </div>
         <div className="flex items-center gap-2">
+          {isTeacher && !teacherHistorical && (
+            <div
+              role="tablist"
+              aria-label="Student scope"
+              className="inline-flex items-center rounded-md border border-border bg-background text-xs overflow-hidden"
+            >
+              <Link
+                href="/progress?scope=my"
+                role="tab"
+                aria-selected={scope === "my"}
+                scroll={false}
+                className={`px-3 py-1.5 transition-colors ${
+                  scope === "my"
+                    ? "bg-primary/10 text-primary font-medium"
+                    : "text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                My Students
+              </Link>
+              <Link
+                href="/progress?scope=all"
+                role="tab"
+                aria-selected={scope === "all"}
+                scroll={false}
+                className={`px-3 py-1.5 transition-colors border-l border-border ${
+                  scope === "all"
+                    ? "bg-primary/10 text-primary font-medium"
+                    : "text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                All Students
+              </Link>
+            </div>
+          )}
           <button
             onClick={() => { setHelpOpen(true); setHelpSearch(""); }}
             className="flex items-center gap-1.5 px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors border border-border"
           >
             <HelpCircle className="w-4 h-4" /> Help Topics
           </button>
-          <Button onClick={() => openModal()} disabled={students.length === 0}>
-            <Plus className="w-4 h-4" /> Record Observation
-          </Button>
+          {!teacherHistorical && (
+            <Button
+              onClick={() => openModal()}
+              disabled={
+                students.length === 0 ||
+                (isTeacher && (!allowedStudentIds || allowedStudentIds.size === 0))
+              }
+            >
+              <Plus className="w-4 h-4" /> Record Observation
+            </Button>
+          )}
         </div>
       </div>
 
       {error && <ErrorAlert message={error} />}
 
       {students.length === 0 ? (
-        <p className="text-sm text-muted-foreground text-center py-12">No enrolled students. Add students first.</p>
+        <p className="text-sm text-muted-foreground text-center py-12">
+          {isTeacher && scope === "my"
+            ? "No students enrolled in your assigned classes yet."
+            : "No enrolled students. Add students first."}
+        </p>
       ) : (
         <>
           {/* Student selector */}
@@ -1140,8 +1306,17 @@ export default function ProgressPage() {
             <label className="block text-sm font-medium mb-1">Student</label>
             <Select value={form.studentId} onChange={(e) => setForm({ ...form, studentId: e.target.value })}>
               <option value="">— Select student —</option>
-              {students.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              {students
+                .filter((s) =>
+                  !isTeacher || (allowedStudentIds ? allowedStudentIds.has(s.id) : false)
+                )
+                .map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </Select>
+            {isTeacher && (
+              <p className="text-xs text-muted-foreground mt-1">
+                You can record observations for students in your assigned classes.
+              </p>
+            )}
           </div>
 
           <div>

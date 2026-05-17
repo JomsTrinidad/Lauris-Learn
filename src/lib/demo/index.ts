@@ -249,6 +249,10 @@ interface ScenarioDef {
   label:           string;
   description:     string;
   classes:         ClassDef[];
+  // Per-class enrollment counts. Should target ~80% of each class's capacity
+  // (Math.floor(capacity * 0.8)) so demo schools feel populated like real schools.
+  // A small number of overrides can deviate (e.g. one class near capacity) to
+  // surface realistic edge cases.
   studentsPerClass: number[];
   parentCount:     number;
   billingMonths:   string[];   // YYYY-MM (first of month stored as YYYY-MM-01)
@@ -260,32 +264,44 @@ interface ScenarioDef {
   uploadedFilesCount: number;
   tuitionAmount:   number;
   trialNewMode?:   boolean;   // Scenario C: fewer payments, partial setup
+  // Optional override: how many teacher auth users to mint. Defaults to
+  // classes.length (one teacher per class). Setting this BELOW classes.length
+  // forces round-robin assignment so some teachers cover multiple classes —
+  // useful for testing teacher-role views with multi-class coverage.
+  teacherCount?: number;
+  // Optional override: archived-year class indices that get NO row in
+  // class_teachers. Lets the demo include a "class with no assigned teacher"
+  // edge case. Active-year mirror classes are skipped at the same indices.
+  unassignedClassIndices?: number[];
 }
 
 const SCENARIOS: Record<DemoScenario, ScenarioDef> = {
   small_preschool: {
     label: "Small Preschool",
-    description: "General walkthrough — 4 classes, ~38 students, complete setup",
+    description: "General walkthrough — 4 classes at ~80% fill, ~47 students, complete setup",
     classes: [
       { name: "Toddler Playgroup",   level: "Toddler",    nextLevel: "Pre-Kinder", startTime: "08:00", endTime: "10:30", capacity: 12 },
       { name: "Pre-Kinder A",        level: "Pre-Kinder", nextLevel: "Kinder",     startTime: "08:00", endTime: "11:00", capacity: 15 },
       { name: "Kinder A",            level: "Kinder",     nextLevel: "GRADUATE",   startTime: "08:00", endTime: "11:30", capacity: 15 },
       { name: "Kinder B",            level: "Kinder",     nextLevel: "GRADUATE",   startTime: "13:00", endTime: "16:00", capacity: 15 },
     ],
-    studentsPerClass: [9, 10, 10, 9],
-    parentCount: 10,
+    // ~80% fill via Math.floor(capacity * 0.8): 9 / 12 / 12 / 12.
+    // Override: Kinder A bumped to 14/15 (~93%) — one class near capacity as
+    // a realistic edge case for testing capacity-warning UI.
+    studentsPerClass: [9, 12, 14, 12],
+    parentCount: 13,
     billingMonths: ["2025-11-01","2025-12-01","2026-01-01","2026-02-01"],
     attendStart: "2025-09-01",
     attendEnd:   "2025-10-17",
     updateCount:     8,
-    proudCount:      15,
+    proudCount:      22,
     observeFraction: 0.7,
     uploadedFilesCount: 6,
     tuitionAmount: 3500,
   },
   compliance_heavy: {
     label: "Compliance-Heavy School",
-    description: "Media-heavy documentation and reporting — 8 classes, ~80 students",
+    description: "Media-heavy documentation and reporting — 8 classes at ~80% fill, ~103 students",
     classes: [
       { name: "Nursery A",     level: "Nursery",    nextLevel: "Pre-Kinder", startTime: "08:00", endTime: "10:30", capacity: 15 },
       { name: "Nursery B",     level: "Nursery",    nextLevel: "Pre-Kinder", startTime: "08:00", endTime: "10:30", capacity: 15 },
@@ -296,26 +312,35 @@ const SCENARIOS: Record<DemoScenario, ScenarioDef> = {
       { name: "Grade 1 A",     level: "Grade 1",    nextLevel: "GRADUATE",   startTime: "07:30", endTime: "12:00", capacity: 18 },
       { name: "Grade 1 B",     level: "Grade 1",    nextLevel: "GRADUATE",   startTime: "07:30", endTime: "12:00", capacity: 18 },
     ],
-    studentsPerClass: [10, 9, 10, 10, 10, 10, 11, 10],
-    parentCount: 15,
+    // ~80% fill via Math.floor(capacity * 0.8): 12 × 6 then 14, 14.
+    // Override: Grade 1 B bumped to 17/18 (~94%) — one class near capacity.
+    studentsPerClass: [12, 12, 12, 12, 12, 12, 14, 17],
+    parentCount: 20,
     billingMonths: ["2025-09-01","2025-10-01","2025-11-01","2025-12-01","2026-01-01","2026-02-01"],
     attendStart: "2025-09-01",
     attendEnd:   "2025-09-30",
     updateCount:     20,
-    proudCount:      40,
+    proudCount:      60,
     observeFraction: 0.9,
     uploadedFilesCount: 25,
     tuitionAmount: 4200,
+    // 6 teachers for 8 classes → round-robin gives 2 teachers with 2 classes
+    // each. Combined with unassignedClassIndices=[3], one teacher (the one
+    // who would otherwise have only had class 3) ends up with no classes,
+    // and class index 3 (Pre-Kinder B) has no assigned teacher.
+    teacherCount: 6,
+    unassignedClassIndices: [3],
   },
   trial_new: {
     label: "New Trial School",
-    description: "Onboarding & incomplete setup — 2 classes, 15 students, minimal data",
+    description: "Onboarding & incomplete setup — 2 classes at ~80% fill, ~24 students, minimal data",
     classes: [
       { name: "Playgroup",  level: "Playgroup",  nextLevel: "Pre-Kinder", startTime: "08:00", endTime: "10:30", capacity: 15 },
       { name: "Pre-Kinder", level: "Pre-Kinder", nextLevel: "GRADUATE",   startTime: "08:00", endTime: "11:00", capacity: 15 },
     ],
-    studentsPerClass: [8, 7],
-    parentCount: 5,
+    // ~80% fill via Math.floor(capacity * 0.8): 12 / 12.
+    studentsPerClass: [12, 12],
+    parentCount: 8,
     billingMonths: ["2026-01-01","2026-02-01"],
     attendStart: "2025-09-01",
     attendEnd:   "2025-09-19",
@@ -387,7 +412,10 @@ export async function generateDemoData(
   demoUserIds.push(adminUid);
 
   // ── 1. Create teacher auth users ────────────────────────────────────────────
-  const teacherCount = cfg.classes.length; // 1 teacher per class
+  // Default: one teacher per class. Scenarios can set teacherCount lower than
+  // classes.length to force round-robin coverage (some teachers run multiple
+  // classes — realistic for compliance_heavy demos).
+  const teacherCount = cfg.teacherCount ?? cfg.classes.length;
   for (let i = 0; i < teacherCount; i++) {
     const fullName = `${teacherFirst(i)} ${lastName(i * 2)}`;
     const uid = await createOrReuseUser(teacherEmail(i), fullName);
@@ -671,11 +699,18 @@ export async function generateDemoData(
     teacherProfileIds.push(...(tpData ?? []).map((t: any) => t.id as string));
   }
 
+  // Optional per-scenario skip list — classes that should ship without an
+  // assigned teacher (demo edge case for the "needs a teacher" warning).
+  const skipTeacherIdx = new Set<number>(cfg.unassignedClassIndices ?? []);
   const ctRows = [
-    ...classIds.map((cid, i) => ({ class_id: cid, teacher_id: teacherProfileIds[i % teacherProfileIds.length] })),
-    ...nextClassIds.map((cid, i) => ({ class_id: cid, teacher_id: teacherProfileIds[i % teacherProfileIds.length] })),
+    ...classIds.flatMap((cid, i) => skipTeacherIdx.has(i)
+      ? []
+      : [{ class_id: cid, teacher_id: teacherProfileIds[i % teacherProfileIds.length] }]),
+    ...nextClassIds.flatMap((cid, i) => skipTeacherIdx.has(i)
+      ? []
+      : [{ class_id: cid, teacher_id: teacherProfileIds[i % teacherProfileIds.length] }]),
   ];
-  await batchInsert(admin, "class_teachers", ctRows);
+  if (ctRows.length) await batchInsert(admin, "class_teachers", ctRows);
 
   // ── 9. Students ─────────────────────────────────────────────────────────────
   const studentRows: Record<string, unknown>[] = [];

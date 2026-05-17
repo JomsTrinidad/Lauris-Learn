@@ -18,6 +18,7 @@ import { GetStartedGuide } from "@/components/GetStartedGuide";
 import { useGetStartedDisplay } from "@/lib/hooks/useGetStartedDisplay";
 import { useIepAttentionItems } from "@/features/attention/useAttentionItems";
 import type { AttentionItem } from "@/features/attention/types";
+import TeacherDashboard from "./TeacherDashboard";
 
 interface DashboardStats {
   presentToday: number;
@@ -87,6 +88,15 @@ function getClassTimeStatus(startTime: string, endTime: string): "upcoming" | "i
 }
 
 export default function DashboardPage() {
+  const { userRole } = useSchoolContext();
+  // Teachers get a focused day-of-work view. Admin/super-admin keep the full dashboard.
+  if (userRole === "teacher") {
+    return <TeacherDashboard />;
+  }
+  return <AdminDashboard />;
+}
+
+function AdminDashboard() {
   const { schoolId, activeYear, userRole, userId, iepWorkflowMode } = useSchoolContext();
   const supabase = createClient();
   const { day, date } = useTodayLabel();

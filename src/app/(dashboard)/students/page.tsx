@@ -1,7 +1,7 @@
 ﻿"use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -34,6 +34,7 @@ import { loadStudentSupportHistory } from "@/features/plans/timeline";
 import type { StudentHistoryEvent } from "@/features/plans/timeline";
 import { getSchoolOrganizationId } from "@/features/clinic-sharing/queries";
 import { useStudentsList, useStudentsClasses } from "@/lib/hooks";
+import { fetchTeacherProfileId, fetchTeacherClassIdsForYear } from "@/lib/teacher-scope";
 import { reportError, generateRequestId } from "@/lib/monitoring";
 import { insertEnrollmentTransitionClient } from "@/lib/enrollment-transitions";
 
@@ -381,12 +382,14 @@ function RowMenu({
   onShare,
   onGraduate,
   onSupportHistory,
+  editLabel = "Edit Student",
 }: {
   student: Student;
-  onEdit: () => void;
+  onEdit: (() => void) | null;
   onShare: (() => void) | null;
   onGraduate: (() => void) | null;
   onSupportHistory: () => void;
+  editLabel?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
@@ -455,14 +458,16 @@ function RowMenu({
             <History className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
             Support History
           </button>
-          <button
-            type="button"
-            onClick={() => { setOpen(false); onEdit(); }}
-            className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-muted transition-colors text-foreground text-left"
-          >
-            <Pencil className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
-            Edit Student
-          </button>
+          {onEdit && (
+            <button
+              type="button"
+              onClick={() => { setOpen(false); onEdit(); }}
+              className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-muted transition-colors text-foreground text-left"
+            >
+              <Pencil className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+              {editLabel}
+            </button>
+          )}
           {onGraduate && (
             <>
               <div className="my-1 border-t border-border" />
@@ -574,9 +579,15 @@ function SupportHistoryProfileCard({
 
 export default function StudentsPage() {
   const { schoolId, schoolName, activeYear, viewingYear: ctxViewingYear, userId, userRole, isReadOnly, allSchoolYears: schoolYearList } = useSchoolContext();
+  const isTeacher = userRole === "teacher";
   const supabase = createClient();
   const queryClient = useQueryClient();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  // Teacher My/All scope toggle (consistent with Classes / Progress / Proud Moments).
+  // Resolved here; historical-view enforcement happens after `isHistoricalView` is
+  // derived further below — see `teacherScope` near the filter block.
+  const scopeParam = searchParams.get("scope");
   const [pendingEditStudentId, setPendingEditStudentId] = useState<string | null>(null);
   const [returnToPath, setReturnToPath] = useState<string | null>(null);
   const [pendingEditLoading, setPendingEditLoading] = useState(false);
@@ -629,6 +640,10 @@ export default function StudentsPage() {
   const [returningFilter, setReturningFilter] = useState(false);
   // Year selector: which school year's enrollment data to display (default = activeYear)
   const [viewingYearId, setViewingYearId] = useState<string>("");
+  // Teacher's class-IDs for the currently-viewed year. null = "no scope" (admin or
+  // teacher with no assignments resolved yet). Used to filter the student list and
+  // gate edit actions for teachers.
+  const [teacherScopedClassIds, setTeacherScopedClassIds] = useState<Set<string> | null>(null);
 
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [addModalOpen, setAddModalOpen] = useState(false);
@@ -713,7 +728,7 @@ export default function StudentsPage() {
     const returnTo = params.get("returnTo");
     const tab = params.get("tab");
     window.history.replaceState(null, "", window.location.pathname);
-    if (tab === "promote") {
+    if (tab === "promote" && userRole !== "teacher") {
       setActiveTab("promote");
     }
     if (editId) {
@@ -753,6 +768,26 @@ export default function StudentsPage() {
   useEffect(() => {
     if (ctxViewingYear?.id) setViewingYearId(ctxViewingYear.id);
   }, [ctxViewingYear?.id]);
+
+  // For teachers, resolve the class IDs they were assigned to in the currently-viewed
+  // year. Used to scope the student list (visibility) and gate Teacher Notes edits.
+  useEffect(() => {
+    if (!isTeacher) { setTeacherScopedClassIds(null); return; }
+    if (!schoolId || !userId) { setTeacherScopedClassIds(new Set()); return; }
+    const yearId = viewingYearId || activeYear?.id || null;
+    if (!yearId) { setTeacherScopedClassIds(new Set()); return; }
+    let cancelled = false;
+    (async () => {
+      const tpId = await fetchTeacherProfileId(supabase, userId, schoolId);
+      if (cancelled) return;
+      if (!tpId) { setTeacherScopedClassIds(new Set()); return; }
+      const ids = await fetchTeacherClassIdsForYear(supabase, tpId, schoolId, yearId);
+      if (cancelled) return;
+      setTeacherScopedClassIds(new Set(ids));
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isTeacher, schoolId, userId, viewingYearId, activeYear?.id]);
 
   // Load year-end completion snapshots when viewing a historical year.
   // Clears when returning to the active year.
@@ -972,6 +1007,7 @@ export default function StudentsPage() {
 
 
   async function handleAdd() {
+    if (isTeacher) { setFormError("Only school admins can create student records."); return; }
     if (!form.firstName.trim() || !form.lastName.trim()) { setFormError("First and last name are required."); return; }
     if (!form.parentName.trim()) { setFormError("Parent/guardian name is required."); return; }
     if (!activeYear?.id) { setFormError("No active school year. Set one in Settings."); return; }
@@ -1118,6 +1154,8 @@ export default function StudentsPage() {
   }
 
   function openEdit(student: Student) {
+    // Teachers viewing a historical year cannot edit — Teacher Notes are current-year only.
+    if (teacherHistorical) return;
     setEditingStudent(student);
     setEditForm({
       firstName: student.firstName, lastName: student.lastName,
@@ -1149,6 +1187,28 @@ export default function StudentsPage() {
 
   async function handleEdit() {
     if (!editingStudent) return;
+
+    // Teachers may only update teacher_notes. Skip name/guardian/identifier/photo/progression
+    // updates entirely — RLS is the ultimate guard, this is defense-in-depth at the client.
+    if (isTeacher) {
+      if (teacherHistorical) {
+        setEditFormError("Historical school years are read-only.");
+        return;
+      }
+      setSaving(true);
+      setEditFormError(null);
+      const { error: tnErr } = await supabase
+        .from("students")
+        .update({ teacher_notes: editForm.teacherNotes.trim() || null } as any) // eslint-disable-line @typescript-eslint/no-explicit-any
+        .eq("id", editingStudent.id);
+      if (tnErr) { setEditFormError(tnErr.message); setSaving(false); return; }
+      setSaving(false);
+      setEditModalOpen(false);
+      setEditingStudent(null);
+      invalidateAll();
+      return;
+    }
+
     if (!editForm.firstName.trim() || !editForm.lastName.trim()) { setEditFormError("First and last name are required."); return; }
     if (!editForm.parentName.trim()) { setEditFormError("Parent/guardian name is required."); return; }
 
@@ -1686,10 +1746,18 @@ export default function StudentsPage() {
 
   // ─── Derived values ────────────────────────────────────────────────────────
 
-  // True when the admin has selected a school year that is not the currently-active one.
+  // True when the user has selected a school year that is not the currently-active one.
   // Used to drive the historical banner, filter defaults, and row-level "current status" hints.
   const isHistoricalView = !!viewingYearId && viewingYearId !== activeYear?.id;
   const viewingYear = schoolYearList.find((y) => y.id === viewingYearId) ?? null;
+  // Teacher historical mode: instructional continuity only, no edits.
+  const teacherHistorical = isTeacher && isHistoricalView;
+  // Teacher My/All scope. Default to "my"; historical view forces "my".
+  const teacherScope: "my" | "all" = isTeacher
+    ? teacherHistorical || scopeParam !== "all"
+      ? "my"
+      : "all"
+    : "all";
 
   // Resolve which enrollment to display for a student given the viewing year.
   // For the active year, fall back to a "pending" state for students who were
@@ -1799,6 +1867,14 @@ export default function StudentsPage() {
     const matchClass = !levelFilter || disp.classLevel === levelFilter;
     const matchClassFilter = !classFilter || (classFilter === "__unassigned__" ? !disp.classId : disp.classId === classFilter);
     const matchReturning = !returningFilter || returningEnrolledIds.has(s.id);
+    // Teacher scope: limit to students whose displayed enrollment (for the viewed year)
+    // is in one of the teacher's assigned classes. Honors historical assignments.
+    // When teacher selects "All Students" (current year only), the clamp is dropped.
+    const matchTeacherScope =
+      !isTeacher ||
+      teacherScope === "all" ||
+      teacherScopedClassIds === null ||
+      (disp.classId !== null && teacherScopedClassIds.has(disp.classId));
 
     // Active-year default ("Active Students"): hide completed and withdrawn enrollments
     // so graduated/inactive records don't pollute the operational list.
@@ -1810,11 +1886,11 @@ export default function StudentsPage() {
           disp.enrollmentStatus !== null &&
           disp.enrollmentStatus !== "completed" &&
           disp.enrollmentStatus !== "withdrawn");
-      return matchSearch && isActiveParticipant && matchClass && matchClassFilter && matchReturning;
+      return matchSearch && isActiveParticipant && matchClass && matchClassFilter && matchReturning && matchTeacherScope;
     }
 
     const matchStatus = !statusFilter || disp.enrollmentStatus === statusFilter;
-    return matchSearch && matchYear && matchClass && matchClassFilter && matchStatus && matchReturning;
+    return matchSearch && matchYear && matchClass && matchClassFilter && matchStatus && matchReturning && matchTeacherScope;
   });
 
   function printRoster() {
@@ -1975,9 +2051,49 @@ export default function StudentsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-[var(--theme-accent)]">Students</h1>
-          <p className="text-muted-foreground text-sm mt-1">Manage student information and enrollment</p>
+          <p className="text-muted-foreground text-sm mt-1">
+            {teacherHistorical
+              ? `Viewing ${viewingYear?.name ?? "prior year"} · read-only`
+              : isTeacher && teacherScope === "my"
+                ? "Students in your assigned classes"
+                : "Manage student information and enrollment"}
+          </p>
         </div>
         <div className="flex items-center gap-2">
+          {isTeacher && activeTab === "students" && !teacherHistorical && (
+            <div
+              role="tablist"
+              aria-label="Student scope"
+              className="inline-flex items-center rounded-md border border-border bg-background text-xs overflow-hidden"
+            >
+              <Link
+                href="/students?scope=my"
+                role="tab"
+                aria-selected={teacherScope === "my"}
+                scroll={false}
+                className={`px-3 py-1.5 transition-colors ${
+                  teacherScope === "my"
+                    ? "bg-primary/10 text-primary font-medium"
+                    : "text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                My Students
+              </Link>
+              <Link
+                href="/students?scope=all"
+                role="tab"
+                aria-selected={teacherScope === "all"}
+                scroll={false}
+                className={`px-3 py-1.5 transition-colors border-l border-border ${
+                  teacherScope === "all"
+                    ? "bg-primary/10 text-primary font-medium"
+                    : "text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                All Students
+              </Link>
+            </div>
+          )}
           <button
             onClick={() => { setHelpOpen(true); setHelpSearch(""); }}
             className="flex items-center gap-1.5 px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors border border-border"
@@ -1995,13 +2111,15 @@ export default function StudentsPage() {
                 <Printer className="w-4 h-4" />
                 Print Roster
               </button>
-              <Button
-                disabled={isHistoricalView}
-                title={isHistoricalView ? "Switch to the active school year to add students." : undefined}
-                onClick={() => { setForm(EMPTY_FORM); setFormError(null); setAddModalOpen(true); }}
-              >
-                <Plus className="w-4 h-4" /> Add Student
-              </Button>
+              {!isTeacher && (
+                <Button
+                  disabled={isHistoricalView}
+                  title={isHistoricalView ? "Switch to the active school year to add students." : undefined}
+                  onClick={() => { setForm(EMPTY_FORM); setFormError(null); setAddModalOpen(true); }}
+                >
+                  <Plus className="w-4 h-4" /> Add Student
+                </Button>
+              )}
             </>
           )}
         </div>
@@ -2021,18 +2139,20 @@ export default function StudentsPage() {
           <Users className="w-4 h-4" />
           Students
         </button>
-        <button
-          onClick={() => setActiveTab("promote")}
-          className={cn(
-            "flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors",
-            activeTab === "promote"
-              ? "border-primary text-primary"
-              : "border-transparent text-muted-foreground hover:text-foreground"
-          )}
-        >
-          <GraduationCap className="w-4 h-4" />
-          Year-End Classification
-        </button>
+        {!isTeacher && (
+          <button
+            onClick={() => setActiveTab("promote")}
+            className={cn(
+              "flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors",
+              activeTab === "promote"
+                ? "border-primary text-primary"
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <GraduationCap className="w-4 h-4" />
+            Year-End Classification
+          </button>
+        )}
       </div>
 
       {/* ── Students tab ─────────────────────────────────────────────────── */}
@@ -2045,27 +2165,29 @@ export default function StudentsPage() {
             />
           )}
 
-          {/* Summary metrics */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <Card>
-              <CardContent className="p-4">
-                <p className="text-xs text-muted-foreground">Enrolled ({activeYear?.name ?? "—"})</p>
-                <p className="text-2xl font-bold mt-1">{totalEnrolled}</p>
-              </CardContent>
-            </Card>
-            <Card
-              className={`cursor-pointer transition-all hover:shadow-md ${returningFilter ? "ring-2 ring-primary" : ""}`}
-              onClick={() => setReturningFilter((v) => !v)}
-            >
-              <CardContent className="p-4">
-                <p className="text-xs text-muted-foreground">Enrolled Returning</p>
-                <p className="text-2xl font-bold mt-1">{returningEnrolledCount}</p>
-                <p className={`text-xs mt-0.5 font-medium ${returningFilter ? "text-primary" : "text-muted-foreground"}`}>
-                  {returningFilter ? "Filtering — click to clear" : "Click to filter"}
-                </p>
-              </CardContent>
-            </Card>
-          </div>
+          {/* Summary metrics — admin-only (teachers don't need school-wide enrollment counts) */}
+          {!isTeacher && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <Card>
+                <CardContent className="p-4">
+                  <p className="text-xs text-muted-foreground">Enrolled ({activeYear?.name ?? "—"})</p>
+                  <p className="text-2xl font-bold mt-1">{totalEnrolled}</p>
+                </CardContent>
+              </Card>
+              <Card
+                className={`cursor-pointer transition-all hover:shadow-md ${returningFilter ? "ring-2 ring-primary" : ""}`}
+                onClick={() => setReturningFilter((v) => !v)}
+              >
+                <CardContent className="p-4">
+                  <p className="text-xs text-muted-foreground">Enrolled Returning</p>
+                  <p className="text-2xl font-bold mt-1">{returningEnrolledCount}</p>
+                  <p className={`text-xs mt-0.5 font-medium ${returningFilter ? "text-primary" : "text-muted-foreground"}`}>
+                    {returningFilter ? "Filtering — click to clear" : "Click to filter"}
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
+          )}
 
           {/* Mixed-year data warning */}
           {mixedYearStudentCount > 0 && (
@@ -2328,7 +2450,8 @@ export default function StudentsPage() {
                           <div className="flex items-center justify-end gap-2">
                             <RowMenu
                               student={student}
-                              onEdit={() => openEdit(student)}
+                              onEdit={teacherHistorical ? null : () => openEdit(student)}
+                              editLabel={isTeacher ? "Teacher Notes" : "Edit Student"}
                               onSupportHistory={() => setSupportHistoryStudent(student)}
                               onGraduate={
                                 userRole === "school_admin" &&
@@ -3090,18 +3213,20 @@ export default function StudentsPage() {
                         : <p className="text-muted-foreground italic text-xs">No teacher notes recorded.</p>
                       }
                     </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-1.5">Admin Notes <span className="normal-case font-normal">(internal)</span></p>
-                      {selectedStudent.adminNotes
-                        ? <p className="bg-muted border border-border rounded-lg px-3 py-2">{selectedStudent.adminNotes}</p>
-                        : <p className="text-muted-foreground italic text-xs">No admin notes recorded.</p>
-                      }
-                    </div>
+                    {!isTeacher && (
+                      <div>
+                        <p className="text-xs text-muted-foreground mb-1.5">Admin Notes <span className="normal-case font-normal">(internal)</span></p>
+                        {selectedStudent.adminNotes
+                          ? <p className="bg-muted border border-border rounded-lg px-3 py-2">{selectedStudent.adminNotes}</p>
+                          : <p className="text-muted-foreground italic text-xs">No admin notes recorded.</p>
+                        }
+                      </div>
+                    )}
                   </div>
                 </div>
 
-                {/* Year-End Classification (conditional) */}
-                {selectedStudent.progressionStatus && (() => {
+                {/* Year-End Classification (conditional, admin-only) */}
+                {!isTeacher && selectedStudent.progressionStatus && (() => {
                   const ps = selectedStudent.progressionStatus;
                   const color =
                     ps === "eligible"              ? "bg-green-100 text-green-700" :
@@ -3147,7 +3272,7 @@ export default function StudentsPage() {
                   );
                 })()}
                 {/* No progression_status but a snapshot exists: unclassified at close */}
-                {!selectedStudent.progressionStatus && isHistoricalView && yearCompletions[selectedStudent.id]?.completionStatus === "enrolled_at_close" && (
+                {!isTeacher && !selectedStudent.progressionStatus && isHistoricalView && yearCompletions[selectedStudent.id]?.completionStatus === "enrolled_at_close" && (
                   <div className="rounded-xl border border-border bg-card shadow-sm">
                     <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border">
                       <div className="w-7 h-7 rounded-lg bg-sky-100 flex items-center justify-center shrink-0">
@@ -3179,9 +3304,11 @@ export default function StudentsPage() {
             {/* Footer */}
             <div className="flex justify-end gap-2 px-6 py-4">
               <Button variant="outline" onClick={() => setSelectedStudent(null)}>Close</Button>
-              <Button onClick={() => openEdit(selectedStudent)}>
-                <Pencil className="w-4 h-4" /> Edit Student
-              </Button>
+              {!teacherHistorical && (
+                <Button onClick={() => openEdit(selectedStudent)}>
+                  <Pencil className="w-4 h-4" /> {isTeacher ? "Edit Teacher Notes" : "Edit Student"}
+                </Button>
+              )}
             </div>
           </div>
           );
@@ -3192,7 +3319,7 @@ export default function StudentsPage() {
       <Modal
         open={editModalOpen}
         onClose={() => { setEditModalOpen(false); setEditingStudent(null); setPendingEditLoading(false); if (returnToPath) { const p = returnToPath; setReturnToPath(null); openEditCalledRef.current = false; router.push(p); } }}
-        title="Edit Student"
+        title={isTeacher ? "Teacher Notes" : "Edit Student"}
         className="max-w-3xl"
       >
         {pendingEditLoading ? (
@@ -3211,8 +3338,9 @@ export default function StudentsPage() {
                     currentUrl={editPhotoFile ? URL.createObjectURL(editPhotoFile) : (editForm.photoUrl || null)}
                     name={`${editForm.firstName} ${editForm.lastName}`}
                     size="lg"
-                    onFileSelect={(file) => setEditPhotoFile(file)}
-                    onValidationError={(msg) => setEditFormError(msg)}
+                    onFileSelect={isTeacher ? undefined : (file) => setEditPhotoFile(file)}
+                    onValidationError={isTeacher ? undefined : (msg) => setEditFormError(msg)}
+                    readonly={isTeacher}
                   />
                   <div>
                     <p className="text-sm font-semibold leading-snug">
@@ -3297,7 +3425,14 @@ export default function StudentsPage() {
               <div className="flex-1 px-5 pt-5 pb-5 overflow-y-auto space-y-3 max-h-[65vh] [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-thumb]:rounded-full">
                 {editFormError && <ErrorAlert message={editFormError} />}
 
-                {/* Personal Information */}
+                {isTeacher && (
+                  <div className="rounded-lg border border-border bg-muted/40 px-4 py-3 text-xs text-muted-foreground">
+                    You can only edit Teacher Notes. Other fields are managed by school admins.
+                  </div>
+                )}
+
+                {/* Personal Information + Parent/Guardian + Govt + Health + Emergency — admin-only */}
+                {!isTeacher && (<>
                 <div className="rounded-xl border border-border bg-card shadow-sm">
                   <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border">
                     <div className="w-7 h-7 rounded-lg bg-[var(--theme-accent-muted)] flex items-center justify-center shrink-0">
@@ -3457,6 +3592,7 @@ export default function StudentsPage() {
                     </div>
                   </div>
                 </div>
+                </>)}
 
                 {/* Notes */}
                 <div className="rounded-xl border border-border bg-card shadow-sm">
@@ -3469,16 +3605,19 @@ export default function StudentsPage() {
                   <div className="px-4 py-3 space-y-3">
                     <div>
                       <label className="block text-xs font-medium text-muted-foreground mb-1">Teacher Notes</label>
-                      <Textarea value={editForm.teacherNotes} onChange={(e) => setEditForm({ ...editForm, teacherNotes: e.target.value })} rows={2} placeholder="Visible to class teachers" />
+                      <Textarea value={editForm.teacherNotes} onChange={(e) => setEditForm({ ...editForm, teacherNotes: e.target.value })} rows={isTeacher ? 6 : 2} placeholder="Visible to class teachers" />
                     </div>
-                    <div>
-                      <label className="block text-xs font-medium text-muted-foreground mb-1">Admin Notes (Internal)</label>
-                      <Textarea value={editForm.adminNotes} onChange={(e) => setEditForm({ ...editForm, adminNotes: e.target.value })} rows={2} placeholder="Internal notes — not shared with parents" />
-                    </div>
+                    {!isTeacher && (
+                      <div>
+                        <label className="block text-xs font-medium text-muted-foreground mb-1">Admin Notes (Internal)</label>
+                        <Textarea value={editForm.adminNotes} onChange={(e) => setEditForm({ ...editForm, adminNotes: e.target.value })} rows={2} placeholder="Internal notes — not shared with parents" />
+                      </div>
+                    )}
                   </div>
                 </div>
 
                 {/* Year-End Classification — admin-toned, visually distinct */}
+                {!isTeacher && (
                 <div className="rounded-xl border border-border bg-muted/40 shadow-sm">
                   <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border">
                     <div className="w-7 h-7 rounded-lg bg-[var(--theme-accent-muted)] flex items-center justify-center shrink-0">
@@ -3510,6 +3649,7 @@ export default function StudentsPage() {
                     </div>
                   </div>
                 </div>
+                )}
 
               </div>
             </div>
@@ -3517,8 +3657,16 @@ export default function StudentsPage() {
             {/* Footer */}
             <div className="flex justify-end gap-2 px-6 py-4">
               <ModalCancelButton />
-              <Button onClick={handleEdit} disabled={saving || !editForm.firstName || !editForm.lastName || !editForm.parentName}>
-                {saving ? "Saving…" : "Save Changes"}
+              <Button
+                onClick={handleEdit}
+                disabled={
+                  saving ||
+                  (isTeacher
+                    ? false
+                    : !editForm.firstName || !editForm.lastName || !editForm.parentName)
+                }
+              >
+                {saving ? "Saving…" : isTeacher ? "Save Teacher Notes" : "Save Changes"}
               </Button>
             </div>
           </div>
@@ -4116,13 +4264,29 @@ export default function StudentsPage() {
                   },
                 ];
 
+                // Topics teachers should NOT see (admin actions / school admin context).
+                const ADMIN_ONLY_HELP_IDS = new Set([
+                  "enrollment-vs-profile",
+                  "add-student-profile",
+                  "edit-student",
+                  "guardian",
+                  "invite-parent",
+                  "enrollment",
+                  "photo",
+                  "promote",
+                  "lrn",
+                ]);
+                const visibleTopics = isTeacher
+                  ? topics.filter((t) => !ADMIN_ONLY_HELP_IDS.has(t.id))
+                  : topics;
+
                 const q = helpSearch.trim().toLowerCase();
                 const filtered = q
-                  ? topics.filter((t) =>
+                  ? visibleTopics.filter((t) =>
                       t.title.toLowerCase().includes(q) ||
                       t.searchText.toLowerCase().includes(q)
                     )
-                  : topics;
+                  : visibleTopics;
 
                 if (filtered.length === 0) {
                   return (

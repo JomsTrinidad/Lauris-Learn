@@ -8,6 +8,7 @@ import { createClient } from "@/lib/supabase/client";
 import { Spinner } from "@/components/ui/spinner";
 import { getInitials } from "@/lib/utils";
 import { cn } from "@/lib/utils";
+import { getSidebarFooterLabel } from "@/components/layout/sidebar-footer";
 
 interface AdminUser {
   id: string;
@@ -113,7 +114,9 @@ export default function SuperAdminLayout({ children }: { children: React.ReactNo
         </nav>
 
         <div className="p-4 border-t border-sidebar-border">
-          <p className="text-xs text-muted-foreground text-center">Lauris Learn v0.2</p>
+          <p className="text-xs text-muted-foreground text-center truncate">
+            {getSidebarFooterLabel({ userRole: "super_admin" })}
+          </p>
         </div>
       </aside>
 

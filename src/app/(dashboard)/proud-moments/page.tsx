@@ -1,5 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import {
   Star, Plus, Trash2, Search, BookOpen, HelpCircle, X,
   ChevronDown, ChevronRight, AlertTriangle,
@@ -13,6 +15,11 @@ import { Card, CardContent } from "@/components/ui/card";
 import { PageSpinner, ErrorAlert } from "@/components/ui/spinner";
 import { createClient } from "@/lib/supabase/client";
 import { useSchoolContext } from "@/contexts/SchoolContext";
+import {
+  fetchTeacherProfileId,
+  fetchTeacherClassIdsForYear,
+  fetchTeacherStudentIdsForYear,
+} from "@/lib/teacher-scope";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -180,8 +187,21 @@ function GroupHeader({ label, count }: { label: string; count: number }) {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function ProudMomentsPage() {
-  const { schoolId, userId, userRole } = useSchoolContext();
+  const { schoolId, userId, userRole, activeYear, viewingYear } = useSchoolContext();
   const supabase = createClient();
+  const searchParams = useSearchParams();
+
+  const isTeacher = userRole === "teacher";
+  const effectiveYearId = viewingYear?.id ?? activeYear?.id ?? null;
+  // Teacher historical mode: read prior moments, no add / no delete.
+  const teacherHistorical = isTeacher && !!activeYear?.id && !!viewingYear?.id && viewingYear.id !== activeYear.id;
+  // Teachers default to "my"; admins always see everyone. Historical view forces "my".
+  const scopeParam = searchParams.get("scope");
+  const scope: "my" | "all" = isTeacher
+    ? teacherHistorical || scopeParam !== "all"
+      ? "my"
+      : "all"
+    : "all";
 
   const [moments, setMoments]   = useState<ProudMoment[]>([]);
   const [students, setStudents] = useState<StudentOption[]>([]);
@@ -195,6 +215,15 @@ export default function ProudMomentsPage() {
   const [studentSearch, setStudentSearch]     = useState("");
   const [showStudentDrop, setShowStudentDrop] = useState(false);
   const studentComboRef = useRef<HTMLDivElement>(null);
+
+  // Cache teacher scope chain so toggling My/All Students doesn't re-run the
+  // teacher_profiles → class_teachers → enrollments lookup. Keyed by
+  // (userId, schoolId, activeYearId) so the cache invalidates when those change.
+  const teacherScopeCacheRef = useRef<{ key: string; ids: string[] | null } | null>(null);
+  // Track whether we've completed the first page load so subsequent reloads
+  // (scope toggle, etc.) don't blank the page with PageSpinner.
+  const hasLoadedRef = useRef(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -216,22 +245,63 @@ export default function ProudMomentsPage() {
     if (!schoolId) { setLoading(false); return; }
     loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [schoolId]);
+  }, [schoolId, effectiveYearId, scope, userId]);
 
-  async function loadAll() {
-    setLoading(true);
-    await Promise.all([loadStudents(), loadMoments()]);
-    setLoading(false);
+  /**
+   * For teacher "My Students" scope, resolve the set of student_ids enrolled
+   * in classes assigned to the signed-in teacher via
+   * teacher_profiles.auth_user_id → class_teachers → enrollments.student_id.
+   * Returns null when the teacher has no assignments (caller treats as empty),
+   * or undefined when scope is not "my" (no filtering needed).
+   */
+  async function resolveMyStudentIds(): Promise<string[] | null | undefined> {
+    if (!(isTeacher && scope === "my")) return undefined;
+    if (!schoolId || !userId || !effectiveYearId) return null;
+
+    const cacheKey = `${userId}|${schoolId}|${effectiveYearId}`;
+    const cached = teacherScopeCacheRef.current;
+    if (cached && cached.key === cacheKey) {
+      return cached.ids;
+    }
+
+    const tpId = await fetchTeacherProfileId(supabase, userId, schoolId);
+    if (!tpId) {
+      teacherScopeCacheRef.current = { key: cacheKey, ids: null };
+      return null;
+    }
+    const classIds = await fetchTeacherClassIdsForYear(supabase, tpId, schoolId, effectiveYearId);
+    if (classIds.length === 0) {
+      teacherScopeCacheRef.current = { key: cacheKey, ids: null };
+      return null;
+    }
+    const studentIds = await fetchTeacherStudentIdsForYear(supabase, classIds, effectiveYearId);
+    const resolved = studentIds.length > 0 ? studentIds : null;
+    teacherScopeCacheRef.current = { key: cacheKey, ids: resolved };
+    return resolved;
   }
 
-  async function loadStudents() {
+  async function loadAll() {
+    const isFirstLoad = !hasLoadedRef.current;
+    if (isFirstLoad) setLoading(true);
+    else setRefreshing(true);
+    const myStudentIds = await resolveMyStudentIds();
+    await Promise.all([loadStudents(myStudentIds), loadMoments(myStudentIds)]);
+    if (isFirstLoad) setLoading(false);
+    else setRefreshing(false);
+    hasLoadedRef.current = true;
+  }
+
+  async function loadStudents(myStudentIds: string[] | null | undefined) {
     if (!schoolId) return;
+    if (myStudentIds === null) { setStudents([]); return; }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data } = await (supabase as any)
+    let query = (supabase as any)
       .from("students")
       .select("id, first_name, last_name, enrollments(classes(name))")
       .eq("school_id", schoolId)
       .order("first_name");
+    if (myStudentIds) query = query.in("id", myStudentIds);
+    const { data } = await query;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     setStudents(((data ?? []) as any[]).map((s: any) => ({
       id: s.id,
@@ -240,10 +310,11 @@ export default function ProudMomentsPage() {
     })));
   }
 
-  async function loadMoments() {
+  async function loadMoments(myStudentIds: string[] | null | undefined) {
     if (!schoolId) return;
+    if (myStudentIds === null) { setMoments([]); return; }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error: err } = await (supabase as any)
+    let query = (supabase as any)
       .from("proud_moments")
       .select(`
         id, student_id, category, note, created_at, created_by,
@@ -255,6 +326,8 @@ export default function ProudMomentsPage() {
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
       .limit(100);
+    if (myStudentIds) query = query.in("student_id", myStudentIds);
+    const { data, error: err } = await query;
     if (err) { setError("Could not load proud moments."); return; }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -280,6 +353,10 @@ export default function ProudMomentsPage() {
 
   async function handleSave() {
     if (!form.studentId) { setFormError("Please select a student."); return; }
+    if (teacherHistorical) {
+      setFormError("Historical school years are read-only. Switch to the active year to add moments.");
+      return;
+    }
     if (!schoolId || !userId) return;
     setSaving(true);
     setFormError(null);
@@ -298,10 +375,13 @@ export default function ProudMomentsPage() {
     setShowModal(false);
     setForm({ studentId: "", category: "Kindness", note: "" });
     setStudentSearch("");
-    loadMoments();
+    const myStudentIds = await resolveMyStudentIds();
+    loadMoments(myStudentIds);
   }
 
   async function handleDelete(momentId: string) {
+    // Historical years are read-only — no retroactive edits.
+    if (teacherHistorical) return;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error: err } = await (supabase as any)
       .from("proud_moments")
@@ -324,24 +404,64 @@ export default function ProudMomentsPage() {
     <div className="space-y-6">
 
       {/* ── Page header ───────────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold text-[var(--theme-accent)]">Proud Moments</h1>
           <p className="text-muted-foreground text-sm mt-1">
-            Every moment of growth, recognised and shared.
+            {teacherHistorical
+              ? `Viewing ${viewingYear?.name ?? "prior year"} · read-only`
+              : isTeacher && scope === "my"
+                ? "Growth moments for your students."
+                : "Every moment of growth, recognised and shared."}
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {isTeacher && !teacherHistorical && (
+            <div
+              role="tablist"
+              aria-label="Student scope"
+              className="inline-flex items-center rounded-md border border-border bg-background text-xs overflow-hidden"
+            >
+              <Link
+                href="/proud-moments?scope=my"
+                role="tab"
+                aria-selected={scope === "my"}
+                scroll={false}
+                className={`px-3 py-1.5 transition-colors ${
+                  scope === "my"
+                    ? "bg-primary/10 text-primary font-medium"
+                    : "text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                My Students
+              </Link>
+              <Link
+                href="/proud-moments?scope=all"
+                role="tab"
+                aria-selected={scope === "all"}
+                scroll={false}
+                className={`px-3 py-1.5 transition-colors border-l border-border ${
+                  scope === "all"
+                    ? "bg-primary/10 text-primary font-medium"
+                    : "text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                All Students
+              </Link>
+            </div>
+          )}
           <button
             onClick={() => { setHelpOpen(true); setHelpSearch(""); }}
             className="flex items-center gap-1.5 px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors border border-border"
           >
             <HelpCircle className="w-4 h-4" /> Help Topics
           </button>
-          <Button onClick={() => setShowModal(true)}>
-            <Plus className="w-4 h-4 mr-2" />
-            Add Moment
-          </Button>
+          {!teacherHistorical && (
+            <Button onClick={() => setShowModal(true)}>
+              <Plus className="w-4 h-4 mr-2" />
+              Add Moment
+            </Button>
+          )}
         </div>
       </div>
 
@@ -362,7 +482,11 @@ export default function ProudMomentsPage() {
           <CardContent className="py-16 text-center text-muted-foreground">
             <Star className="w-10 h-10 mx-auto mb-3 opacity-30" />
             <p className="font-medium">
-              {search ? "No moments match your search." : "No proud moments yet."}
+              {search
+                ? "No moments match your search."
+                : isTeacher && scope === "my"
+                  ? "No proud moments for your students yet."
+                  : "No proud moments yet."}
             </p>
             {!search && (
               <p className="text-sm mt-1">
@@ -382,7 +506,9 @@ export default function ProudMomentsPage() {
                 {group.moments.map((m, localIdx) => {
                   // First item in a group + every 5th within a group get featured treatment
                   const isFeatured = localIdx === 0 || localIdx % 5 === 0;
-                  const canDelete  = m.createdBy === userId || userRole === "school_admin" || userRole === "super_admin";
+                  const canDelete =
+                    !teacherHistorical &&
+                    (m.createdBy === userId || userRole === "school_admin" || userRole === "super_admin");
 
                   if (isFeatured) {
                     return (

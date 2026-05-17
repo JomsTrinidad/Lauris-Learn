@@ -21,6 +21,7 @@ import {
   Activity,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { getSidebarFooterLabel } from "./sidebar-footer";
 
 type Role = "super_admin" | "school_admin" | "teacher" | "parent" | null;
 
@@ -85,6 +86,7 @@ interface SidebarProps {
   schoolYear?: string;
   userRole?: Role;
   logoUrl?: string | null;
+  isDemo?: boolean;
 }
 
 export function Sidebar({
@@ -94,8 +96,10 @@ export function Sidebar({
   schoolYear = "SY 2025–2026",
   userRole,
   logoUrl,
+  isDemo,
 }: SidebarProps) {
   const pathname = usePathname();
+  const footerLabel = getSidebarFooterLabel({ userRole, isDemo, schoolYear });
 
   const isAdmin = userRole === "school_admin" || userRole === "super_admin";
 
@@ -234,7 +238,12 @@ export function Sidebar({
 
         {/* Footer */}
         <div className="p-4 border-t border-sidebar-border">
-          <p className="text-xs text-muted-foreground text-center">Lauris Learn v0.2</p>
+          <p
+            className="text-xs text-muted-foreground text-center truncate"
+            title={footerLabel}
+          >
+            {footerLabel}
+          </p>
         </div>
       </div>
       </aside>

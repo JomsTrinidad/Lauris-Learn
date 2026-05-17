@@ -194,7 +194,7 @@ function ImpersonationBanner() {
 
 function Shell({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const { schoolName, activeYear, userName, userRole, userId, userAvatar, loading, isReadOnly, isImpersonating, subscriptionStatus, branding, allSchoolYears, viewingYear, setViewingYear } = useSchoolContext();
+  const { schoolName, activeYear, userName, userRole, userId, userAvatar, loading, isReadOnly, isImpersonating, subscriptionStatus, branding, allSchoolYears, viewingYear, setViewingYear, isDemo } = useSchoolContext();
   const router = useRouter();
   const pathname = usePathname();
   const mainRef = useRef<HTMLElement>(null);
@@ -263,6 +263,7 @@ function Shell({ children }: { children: React.ReactNode }) {
           schoolYear={yearLabel}
           userRole={userRole}
           logoUrl={branding.logoUrl}
+          isDemo={isDemo}
         />
 
         <div className="flex-1 flex flex-col overflow-hidden min-w-0">

@@ -1,5 +1,7 @@
 ﻿"use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { Plus, ExternalLink, BookOpen, HelpCircle, AlertTriangle, ChevronDown, ChevronRight, Search, X, Users, Clock, Link2, GraduationCap, List } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +13,7 @@ import { PageSpinner, ErrorAlert } from "@/components/ui/spinner";
 import { formatTime } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { useSchoolContext } from "@/contexts/SchoolContext";
+import { fetchTeacherProfileId, fetchTeacherClassIdsForYear } from "@/lib/teacher-scope";
 
 function parseTime24(t: string): { h12: number; min: number; ampm: "AM" | "PM" } {
   const [hStr, mStr] = (t ?? "08:00").split(":");
@@ -125,8 +128,25 @@ const EMPTY_FORM: ClassForm = {
 };
 
 export default function ClassesPage() {
-  const { schoolId, activeYear } = useSchoolContext();
+  const { schoolId, activeYear, viewingYear, userId, userRole } = useSchoolContext();
   const supabase = createClient();
+  const searchParams = useSearchParams();
+
+  const isAdmin = userRole === "school_admin" || userRole === "super_admin";
+  const isTeacher = userRole === "teacher";
+  // Use whichever year the user is viewing; fall back to active when no selection.
+  const effectiveYearId = viewingYear?.id ?? activeYear?.id ?? null;
+  // Teacher historical mode: when teacher is viewing a non-active year, the page
+  // is instructional context only — no edits, no add, my-classes only.
+  const teacherHistorical = isTeacher && !!activeYear?.id && !!viewingYear?.id && viewingYear.id !== activeYear.id;
+  // Teachers default to "my"; admins always see all classes. In historical view
+  // teachers are forced to "my" — instructional continuity, not school-wide audit.
+  const scopeParam = searchParams.get("scope");
+  const scope: "my" | "all" = isTeacher
+    ? teacherHistorical || scopeParam !== "all"
+      ? "my"
+      : "all"
+    : "all";
 
   const [classes, setClasses] = useState<ClassRecord[]>([]);
   const [teachers, setTeachers] = useState<TeacherOption[]>([]);
@@ -153,17 +173,51 @@ export default function ClassesPage() {
   const [reassignLoading, setReassignLoading] = useState(false);
   const [reassignableClasses, setReassignableClasses] = useState<ClassRecord[]>([]);
 
+  // Cache teacher's class assignments so scope toggle doesn't re-run the
+  // teacher_profiles + class_teachers lookup. Keyed by (userId, schoolId, activeYearId).
+  const teacherClassIdsCacheRef = useRef<{ key: string; classIds: string[] | null } | null>(null);
+  // Avoid blanking the page on scope toggle.
+  const hasLoadedRef = useRef(false);
+  const [refreshing, setRefreshing] = useState(false);
+
   useEffect(() => {
     if (!schoolId) { setLoading(false); return; }
     loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [schoolId, activeYear?.id]);
+  }, [schoolId, effectiveYearId, scope, userId]);
 
   async function loadAll() {
-    setLoading(true);
+    const isFirstLoad = !hasLoadedRef.current;
+    if (isFirstLoad) setLoading(true);
+    else setRefreshing(true);
     setError(null);
-    await Promise.all([loadClasses(), loadTeachers(), loadClassLevels()]);
-    setLoading(false);
+    // Static lookups (teachers, class levels) only need to load once per page lifetime.
+    if (isFirstLoad) {
+      await Promise.all([loadClasses(), loadTeachers(), loadClassLevels()]);
+    } else {
+      await loadClasses();
+    }
+    if (isFirstLoad) setLoading(false);
+    else setRefreshing(false);
+    hasLoadedRef.current = true;
+  }
+
+  async function resolveMyClassIds(): Promise<string[] | null> {
+    if (!isTeacher || !schoolId || !userId) return null;
+    // Key by the year being viewed — a teacher's class set is year-specific.
+    const cacheKey = `${userId}|${schoolId}|${effectiveYearId ?? ""}`;
+    const cached = teacherClassIdsCacheRef.current;
+    if (cached && cached.key === cacheKey) return cached.classIds;
+
+    const tpId = await fetchTeacherProfileId(supabase, userId, schoolId);
+    if (!tpId || !effectiveYearId) {
+      teacherClassIdsCacheRef.current = { key: cacheKey, classIds: null };
+      return null;
+    }
+    const ids = await fetchTeacherClassIdsForYear(supabase, tpId, schoolId, effectiveYearId);
+    const resolved = ids.length > 0 ? ids : null;
+    teacherClassIdsCacheRef.current = { key: cacheKey, classIds: resolved };
+    return resolved;
   }
 
   async function loadClassLevels() {
@@ -183,11 +237,20 @@ export default function ClassesPage() {
   }
 
   async function loadClasses() {
-    const yearId = activeYear?.id;
+    const yearId = effectiveYearId;
     if (!yearId) { setClasses([]); return; }
 
+    // Teacher "My Classes" scope: limit to classes assigned to the signed-in teacher
+    // FOR THIS YEAR. The helper joins class_teachers ↔ classes by school_year_id, so
+    // historical assignments are honored.
+    let myClassIds: string[] | null = null;
+    if (isTeacher && scope === "my") {
+      myClassIds = await resolveMyClassIds();
+      if (myClassIds === null || myClassIds.length === 0) { setClasses([]); return; }
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: classRows, error: classErr } = await (supabase as any)
+    let query = (supabase as any)
       .from("classes")
       .select(`id, name, level_id, start_time, end_time, capacity, is_active, meeting_link, messenger_link, next_level,
         class_levels(name),
@@ -195,7 +258,12 @@ export default function ClassesPage() {
       .eq("school_id", schoolId!)
       .eq("school_year_id", yearId)
       .eq("is_system", false)
-      .order("start_time") as { data: any[] | null; error: any };
+      .order("start_time");
+
+    if (myClassIds) query = query.in("id", myClassIds);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: classRows, error: classErr } = (await query) as { data: any[] | null; error: any };
 
     if (classErr) { setError(classErr.message); return; }
 
@@ -332,13 +400,38 @@ export default function ClassesPage() {
   }
 
   function openAdd() {
+    if (!isAdmin) return; // teachers cannot create classes
     setEditingClass(null);
     setForm(EMPTY_FORM);
     setFormError(null);
     setModalOpen(true);
   }
 
+  // URL guard rails for teacher-editable link fields.
+  // Empty string is allowed (clears the link). Otherwise the URL must point at the
+  // canonical Google Meet or Messenger host.
+  const MEET_LINK_RE = /^https:\/\/meet\.google\.com\/.+/i;
+  const MESSENGER_LINK_RE = /^https:\/\/(m\.me|(www\.)?messenger\.com)\/.+/i;
+
+  function validateMeetingLink(raw: string): string | null {
+    const v = raw.trim();
+    if (!v) return null;
+    return MEET_LINK_RE.test(v)
+      ? null
+      : "Google Meet link must start with https://meet.google.com/";
+  }
+
+  function validateMessengerLink(raw: string): string | null {
+    const v = raw.trim();
+    if (!v) return null;
+    return MESSENGER_LINK_RE.test(v)
+      ? null
+      : "Messenger link must start with https://m.me/ or https://messenger.com/";
+  }
+
   function openEdit(cls: ClassRecord) {
+    // Teachers viewing a historical year cannot edit anything — instructional context only.
+    if (teacherHistorical) return;
     setEditingClass(cls);
     setForm({
       name: cls.name,
@@ -357,6 +450,41 @@ export default function ClassesPage() {
   }
 
   async function handleSave() {
+    // Teachers may ONLY update meeting_link / messenger_link on an existing class
+    // FOR THE CURRENT YEAR. Historical years are read-only.
+    if (isTeacher) {
+      if (teacherHistorical) {
+        setFormError("Historical school years are read-only.");
+        return;
+      }
+      if (!editingClass) {
+        setFormError("Only school admins can create new classes.");
+        return;
+      }
+      const meetErr = validateMeetingLink(form.meetingLink);
+      const msgrErr = validateMessengerLink(form.messengerLink);
+      if (meetErr || msgrErr) { setFormError(meetErr ?? msgrErr); return; }
+
+      setSaving(true);
+      setFormError(null);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const sbT = supabase as any;
+      const linksPayload = {
+        meeting_link: form.meetingLink.trim() || null,
+        messenger_link: form.messengerLink.trim() || null,
+      };
+      const r = await sbT.from("classes").update(linksPayload).eq("id", editingClass.id);
+      if (r.error) { setFormError(r.error.message); setSaving(false); return; }
+      setSaving(false);
+      setModalOpen(false);
+      await loadClasses();
+      return;
+    }
+
+    if (!isAdmin) {
+      setFormError("You don't have permission to save these changes.");
+      return;
+    }
     if (!form.name.trim()) { setFormError("Class name is required."); return; }
     if (form.name.trim().startsWith("[Unassigned]")) { setFormError('Class names starting with "[Unassigned]" are reserved by the system.'); return; }
     if (form.startTime >= form.endTime) { setFormError("Start time must be before end time."); return; }
@@ -428,12 +556,54 @@ export default function ClassesPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-[var(--theme-accent)]">Classes</h1>
-          <p className="text-muted-foreground text-sm mt-1">Configure class schedules and assignments</p>
+          <p className="text-muted-foreground text-sm mt-1">
+            {teacherHistorical
+              ? `Viewing ${viewingYear?.name ?? "prior year"} · read-only`
+              : isTeacher
+                ? scope === "my"
+                  ? "Classes assigned to you"
+                  : "All classes in your school"
+                : "Configure class schedules and assignments"}
+          </p>
         </div>
         <div className="flex items-center gap-2">
+          {isTeacher && !teacherHistorical && (
+            <div
+              role="tablist"
+              aria-label="Class scope"
+              className="inline-flex items-center rounded-md border border-border bg-background text-xs overflow-hidden"
+            >
+              <Link
+                href="/classes?scope=my"
+                role="tab"
+                aria-selected={scope === "my"}
+                scroll={false}
+                className={`px-3 py-1.5 transition-colors ${
+                  scope === "my"
+                    ? "bg-primary/10 text-primary font-medium"
+                    : "text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                My Classes
+              </Link>
+              <Link
+                href="/classes?scope=all"
+                role="tab"
+                aria-selected={scope === "all"}
+                scroll={false}
+                className={`px-3 py-1.5 transition-colors border-l border-border ${
+                  scope === "all"
+                    ? "bg-primary/10 text-primary font-medium"
+                    : "text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                All Classes
+              </Link>
+            </div>
+          )}
           <button
             onClick={() => { setHelpOpen(true); setHelpSearch(""); }}
             className="flex items-center gap-1.5 px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors border border-border"
@@ -441,9 +611,11 @@ export default function ClassesPage() {
             <HelpCircle className="w-4 h-4" />
             Help Topics
           </button>
-          <Button onClick={openAdd} disabled={!activeYear}>
-            <Plus className="w-4 h-4" /> Add Class
-          </Button>
+          {isAdmin && (
+            <Button onClick={openAdd} disabled={!activeYear}>
+              <Plus className="w-4 h-4" /> Add Class
+            </Button>
+          )}
         </div>
       </div>
 
@@ -466,7 +638,15 @@ export default function ClassesPage() {
       )}
 
       {classes.length === 0 && activeYear && (
-        <p className="text-sm text-muted-foreground text-center py-12">No classes yet. Click "Add Class" to get started.</p>
+        <p className="text-sm text-muted-foreground text-center py-12">
+          {teacherHistorical
+            ? "You were not assigned to any classes during this school year."
+            : isTeacher && scope === "my"
+              ? "No classes assigned to you yet."
+              : isTeacher
+                ? "No classes in your school yet."
+                : 'No classes yet. Click "Add Class" to get started.'}
+        </p>
       )}
 
       {/* Class cards */}
@@ -554,12 +734,16 @@ export default function ClassesPage() {
                     </a>
                   )}
                   <div className="flex items-center justify-between">
-                    <button
-                      onClick={() => openEdit(cls)}
-                      className="text-sm text-primary hover:underline text-left"
-                    >
-                      Edit class →
-                    </button>
+                    {teacherHistorical ? (
+                      <span className="text-xs text-muted-foreground">Read-only · prior year</span>
+                    ) : (
+                      <button
+                        onClick={() => openEdit(cls)}
+                        className="text-sm text-primary hover:underline text-left"
+                      >
+                        {isAdmin ? "Edit class →" : "Edit links →"}
+                      </button>
+                    )}
                     <button
                       onClick={() => loadRoster(cls)}
                       className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground border border-border rounded-md px-2.5 py-1.5 hover:bg-muted transition-colors"
@@ -578,7 +762,7 @@ export default function ClassesPage() {
       {classes.length > 0 && (
         <Card className="overflow-hidden">
           <div className="p-5 border-b border-border">
-            <h2>All Classes — {activeYear?.name}</h2>
+            <h2>{isTeacher && scope === "my" ? "My Classes" : "All Classes"} — {activeYear?.name}</h2>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -612,7 +796,11 @@ export default function ClassesPage() {
                         <button onClick={() => loadRoster(cls)} className="text-muted-foreground text-sm hover:text-foreground flex items-center gap-1">
                           <List className="w-3.5 h-3.5" /> Roster
                         </button>
-                        <button onClick={() => openEdit(cls)} className="text-primary text-sm hover:underline">Edit</button>
+                        {!teacherHistorical && (
+                          <button onClick={() => openEdit(cls)} className="text-primary text-sm hover:underline">
+                            {isAdmin ? "Edit" : "Links"}
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -850,13 +1038,26 @@ export default function ClassesPage() {
                   },
                 ];
 
+                // Topics teachers should NOT see (admin actions / school admin context).
+                const ADMIN_ONLY_HELP_IDS = new Set([
+                  "add-class",
+                  "edit-class",
+                  "deactivate",
+                  "promotion-path",
+                  "school-year",
+                  "no-teacher",
+                ]);
+                const visibleTopics = isAdmin
+                  ? topics
+                  : topics.filter((t) => !ADMIN_ONLY_HELP_IDS.has(t.id));
+
                 const q = helpSearch.trim().toLowerCase();
                 const filtered = q
-                  ? topics.filter((t) =>
+                  ? visibleTopics.filter((t) =>
                       t.title.toLowerCase().includes(q) ||
                       t.searchText.toLowerCase().includes(q)
                     )
-                  : topics;
+                  : visibleTopics;
 
                 if (filtered.length === 0) {
                   return (
@@ -1042,19 +1243,42 @@ export default function ClassesPage() {
       <Modal
         open={modalOpen}
         onClose={() => setModalOpen(false)}
-        title={editingClass ? "Edit Class" : "Add Class"}
+        title={
+          isTeacher
+            ? "Edit Class Links"
+            : editingClass
+              ? "Edit Class"
+              : "Add Class"
+        }
       >
         <div className="space-y-4">
           {formError && <ErrorAlert message={formError} />}
 
+          {isTeacher && (
+            <div className="rounded-lg border border-border bg-muted/40 px-4 py-3 text-xs text-muted-foreground">
+              You can update the Google Meet and Messenger links for this class. Other class details are managed by school admins.
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium mb-1">Class Name *</label>
-              <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Toddlers" />
+              <Input
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                placeholder="e.g. Toddlers"
+                disabled={isTeacher}
+                className={isTeacher ? "opacity-60 cursor-not-allowed" : ""}
+              />
             </div>
             <div>
               <label className="block text-sm font-medium mb-1">Level / Age Group</label>
-              <Select value={form.levelId} onChange={(e) => setForm({ ...form, levelId: e.target.value })}>
+              <Select
+                value={form.levelId}
+                onChange={(e) => setForm({ ...form, levelId: e.target.value })}
+                disabled={isTeacher}
+                className={isTeacher ? "opacity-60 cursor-not-allowed" : ""}
+              >
                 <option value="">— None —</option>
                 {(() => {
                   const grouped: Record<ClassLevelKind, ClassLevelOption[]> = {
@@ -1077,7 +1301,7 @@ export default function ClassesPage() {
                     ));
                 })()}
               </Select>
-              {classLevels.filter((l) => !l.archived).length === 0 && (
+              {!isTeacher && classLevels.filter((l) => !l.archived).length === 0 && (
                 <p className="text-xs text-amber-600 mt-1">
                   No levels configured. Add some in <strong>Settings → Class Levels</strong> first.
                 </p>
@@ -1085,37 +1309,43 @@ export default function ClassesPage() {
             </div>
           </div>
 
-          <div className="space-y-3">
-            <div>
-              <label className="block text-sm font-medium mb-1">Start Time *</label>
-              <TimePicker value={form.startTime} onChange={(v) => setForm({ ...form, startTime: v })} />
+          {!isTeacher && (
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm font-medium mb-1">Start Time *</label>
+                <TimePicker value={form.startTime} onChange={(v) => setForm({ ...form, startTime: v })} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">End Time *</label>
+                <TimePicker value={form.endTime} onChange={(v) => setForm({ ...form, endTime: v })} />
+              </div>
             </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">End Time *</label>
-              <TimePicker value={form.endTime} onChange={(v) => setForm({ ...form, endTime: v })} />
-            </div>
-          </div>
+          )}
 
-          <div>
-            <label className="block text-sm font-medium mb-1">Assigned Teacher</label>
-            <Select value={form.teacherId} onChange={(e) => setForm({ ...form, teacherId: e.target.value })}>
-              <option value="">— None —</option>
-              {teachers.map((t) => (
-                <option key={t.id} value={t.id}>{t.fullName}</option>
-              ))}
-            </Select>
-          </div>
+          {!isTeacher && (
+            <div>
+              <label className="block text-sm font-medium mb-1">Assigned Teacher</label>
+              <Select value={form.teacherId} onChange={(e) => setForm({ ...form, teacherId: e.target.value })}>
+                <option value="">— None —</option>
+                {teachers.map((t) => (
+                  <option key={t.id} value={t.id}>{t.fullName}</option>
+                ))}
+              </Select>
+            </div>
+          )}
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium mb-1">Capacity *</label>
-              <Input type="number" min={1} value={form.capacity} onChange={(e) => setForm({ ...form, capacity: e.target.value })} />
+          {!isTeacher && (
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">Capacity *</label>
+                <Input type="number" min={1} value={form.capacity} onChange={(e) => setForm({ ...form, capacity: e.target.value })} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">School Year</label>
+                <Input value={activeYear?.name ?? "No active year"} disabled className="opacity-60 cursor-not-allowed" />
+              </div>
             </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">School Year</label>
-              <Input value={activeYear?.name ?? "No active year"} disabled className="opacity-60 cursor-not-allowed" />
-            </div>
-          </div>
+          )}
 
           <div>
             <label className="block text-sm font-medium mb-1">Google Meet Link</label>
@@ -1124,6 +1354,9 @@ export default function ClassesPage() {
               onChange={(e) => setForm({ ...form, meetingLink: e.target.value })}
               placeholder="https://meet.google.com/..."
             />
+            <p className="text-xs text-muted-foreground mt-1">
+              Must start with <code>https://meet.google.com/</code>. Leave blank to clear.
+            </p>
           </div>
 
           <div>
@@ -1133,59 +1366,68 @@ export default function ClassesPage() {
               onChange={(e) => setForm({ ...form, messengerLink: e.target.value })}
               placeholder="https://m.me/g/..."
             />
-            <p className="text-xs text-muted-foreground mt-1">Parents will see a "Join Class Chat" button linking here.</p>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-1">Promotion Path *</label>
-            <Select value={form.nextLevel} onChange={(e) => setForm({ ...form, nextLevel: e.target.value })}>
-              <option value="">— Select next level —</option>
-              <optgroup label="Next Level">
-                {(() => {
-                  // Source from class_levels catalog so promotion targets exist as configured
-                  // levels even if no class currently uses them. Include archived levels only
-                  // when they're already the saved next_level value, so the existing pick stays
-                  // visible during edit.
-                  const names = classLevels
-                    .filter((l) => !l.archived || l.name === form.nextLevel)
-                    .map((l) => l.name);
-                  // Preserve any custom next_level value not in the catalog (legacy classes)
-                  if (form.nextLevel
-                    && form.nextLevel !== "GRADUATE"
-                    && form.nextLevel !== "NON_PROMOTIONAL"
-                    && !names.includes(form.nextLevel)) {
-                    names.push(form.nextLevel);
-                  }
-                  return [...new Set(names)]
-                    .sort()
-                    .map((l) => <option key={l} value={l}>{l}</option>);
-                })()}
-              </optgroup>
-              <optgroup label="Special Cases">
-                <option value="GRADUATE">Graduate / Moving Up</option>
-                <option value="NON_PROMOTIONAL">Non-promotional</option>
-              </optgroup>
-            </Select>
             <p className="text-xs text-muted-foreground mt-1">
-              Use <strong>Non-promotional</strong> for summer, bridge, enrichment, mixed-age, or after-school classes that should not determine next school-year placement.
+              Must start with <code>https://m.me/</code> or <code>https://messenger.com/</code>. Parents will see a "Join Class Chat" button linking here.
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="isActive"
-              checked={form.isActive}
-              onChange={(e) => setForm({ ...form, isActive: e.target.checked })}
-              className="w-4 h-4 rounded border-border"
-            />
-            <label htmlFor="isActive" className="text-sm">Active class</label>
-          </div>
+          {!isTeacher && (
+            <div>
+              <label className="block text-sm font-medium mb-1">Promotion Path *</label>
+              <Select value={form.nextLevel} onChange={(e) => setForm({ ...form, nextLevel: e.target.value })}>
+                <option value="">— Select next level —</option>
+                <optgroup label="Next Level">
+                  {(() => {
+                    // Source from class_levels catalog so promotion targets exist as configured
+                    // levels even if no class currently uses them. Include archived levels only
+                    // when they're already the saved next_level value, so the existing pick stays
+                    // visible during edit.
+                    const names = classLevels
+                      .filter((l) => !l.archived || l.name === form.nextLevel)
+                      .map((l) => l.name);
+                    // Preserve any custom next_level value not in the catalog (legacy classes)
+                    if (form.nextLevel
+                      && form.nextLevel !== "GRADUATE"
+                      && form.nextLevel !== "NON_PROMOTIONAL"
+                      && !names.includes(form.nextLevel)) {
+                      names.push(form.nextLevel);
+                    }
+                    return [...new Set(names)]
+                      .sort()
+                      .map((l) => <option key={l} value={l}>{l}</option>);
+                  })()}
+                </optgroup>
+                <optgroup label="Special Cases">
+                  <option value="GRADUATE">Graduate / Moving Up</option>
+                  <option value="NON_PROMOTIONAL">Non-promotional</option>
+                </optgroup>
+              </Select>
+              <p className="text-xs text-muted-foreground mt-1">
+                Use <strong>Non-promotional</strong> for summer, bridge, enrichment, mixed-age, or after-school classes that should not determine next school-year placement.
+              </p>
+            </div>
+          )}
+
+          {!isTeacher && (
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="isActive"
+                checked={form.isActive}
+                onChange={(e) => setForm({ ...form, isActive: e.target.checked })}
+                className="w-4 h-4 rounded border-border"
+              />
+              <label htmlFor="isActive" className="text-sm">Active class</label>
+            </div>
+          )}
 
           <div className="flex justify-end gap-2 pt-2">
             <ModalCancelButton />
-            <Button onClick={handleSave} disabled={saving || !form.name}>
-              {saving ? "Saving…" : "Save Class"}
+            <Button
+              onClick={handleSave}
+              disabled={saving || (!isTeacher && !form.name)}
+            >
+              {saving ? "Saving…" : isTeacher ? "Save Links" : "Save Class"}
             </Button>
           </div>
         </div>
