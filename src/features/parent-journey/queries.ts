@@ -17,13 +17,25 @@ interface JourneyFeedParams {
   childId: string;
   classId: string | null;
   schoolName: string;
+  /**
+   * The shared `child_profiles.id` for this student (when set). Used only to
+   * compose a Care deep-link on therapy rows. When null, therapy rows render
+   * without an `actionHref` and degrade gracefully.
+   */
+  childProfileId?: string | null;
 }
+
+// Phase 2 Unified Parent Hub — Care deep-link base URL. Read once at module
+// load. When unset, therapy rows simply don't carry an `actionHref`.
+const CARE_BASE_URL: string | null =
+  (process.env.NEXT_PUBLIC_CARE_BASE_URL ?? "").trim() || null;
 
 export async function fetchJourneyFeed({
   supabase,
   childId,
   classId,
   schoolName,
+  childProfileId,
 }: JourneyFeedParams): Promise<ParentJourneyItem[]> {
   const items: ParentJourneyItem[] = [];
 
@@ -115,7 +127,10 @@ export async function fetchJourneyFeed({
   }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   for (const ts of (therapyData ?? []) as any[]) {
-    items.push(therapySessionToJourney(ts, childId));
+    items.push(therapySessionToJourney(ts, childId, {
+      careBaseUrl:    CARE_BASE_URL,
+      childProfileId: childProfileId ?? null,
+    }));
   }
 
   // Sort merged feed newest first.
@@ -133,10 +148,14 @@ export async function fetchAttendanceToday(supabase: SupabaseClient<any>, childI
     .eq("student_id", childId)
     .eq("date", today)
     .maybeSingle();
-  if (!data) return { status: null, checkedInAt: null };
+  if (!data) return { status: null, checkedInAt: null, checkedInAtIso: null };
   return {
     status: data.status,
+    // Localized human-readable time for display.
     checkedInAt: new Date(data.created_at).toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" }),
+    // Raw ISO timestamp so the Phase-3 hero priority chain can compute
+    // freshness (Tier C cutoff) without re-parsing the localized string.
+    checkedInAtIso: data.created_at,
   };
 }
 
@@ -317,6 +336,72 @@ export async function fetchFallbackHighlight({ supabase, childId }: FallbackHigh
     summary: (data.notes as string | null) ?? `Doing well in ${category.toLowerCase()} — rated ${ratingLabel.toLowerCase()}.`,
     occurredAt: data.observed_at as string,
   };
+}
+
+// ── Phase 10 — Continuity memory (recurring proud_moment categories) ──────────
+// Returns the set of proud_moment categories that have RECURRED for this
+// child within the last RECURRENCE_WINDOW_DAYS days. "Recurred" = appeared
+// at least RECURRENCE_THRESHOLD times.
+//
+// Voice contract: this surface reflects OBSERVATIONS, not CONCLUSIONS.
+// We do not return counts, ranks, percentages, deltas, or any quantification
+// — only the category names themselves. Two moments of "Kindness" surface
+// the same chip as eight moments of "Kindness". The label IS the message.
+//
+// Order: by max(created_at) per category, descending — so chips show in
+// "most-recently-active first" order, which reads as memory ("what's been
+// showing up lately"), not ranking ("most frequent").
+//
+// Cap: top CATEGORY_LIMIT categories. Single-source for v1 — we deliberately
+// do NOT mix proud_moments with progress_observations or therapy_sessions
+// because their category taxonomies don't align cleanly, and the evaluative
+// rating dimension on observations (consistent/advanced) would leak progress
+// language into a memory layer that should stay purely observational.
+
+const RECURRENCE_WINDOW_DAYS = 14;
+const RECURRENCE_THRESHOLD = 2;
+const CATEGORY_LIMIT = 3;
+
+export async function fetchRecurringMomentCategories(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: SupabaseClient<any>,
+  childId: string,
+): Promise<string[]> {
+  const cutoff = new Date(Date.now() - RECURRENCE_WINDOW_DAYS * 86_400_000).toISOString();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data } = await (supabase as any)
+    .from("proud_moments")
+    .select("category, created_at")
+    .eq("student_id", childId)
+    .is("deleted_at", null)
+    .gte("created_at", cutoff);
+
+  // Aggregate client-side. For each category, track count + most-recent
+  // timestamp. We never return either of these — they're discarded after
+  // filtering and sorting. Only the category name reaches the UI.
+  type Stat = { count: number; mostRecent: string };
+  const stats = new Map<string, Stat>();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  for (const row of ((data ?? []) as any[])) {
+    const cat = (row.category as string | undefined)?.trim();
+    const ts = row.created_at as string | undefined;
+    if (!cat || !ts) continue;
+    const existing = stats.get(cat);
+    if (existing) {
+      existing.count += 1;
+      if (ts > existing.mostRecent) existing.mostRecent = ts;
+    } else {
+      stats.set(cat, { count: 1, mostRecent: ts });
+    }
+  }
+
+  return Array.from(stats.entries())
+    .filter(([, s]) => s.count >= RECURRENCE_THRESHOLD)
+    // Sort by max(created_at) descending — recency-of-most-recent-occurrence.
+    // NOT by count — that would be ranking / scoring, which the directive forbids.
+    .sort((a, b) => b[1].mostRecent.localeCompare(a[1].mostRecent))
+    .slice(0, CATEGORY_LIMIT)
+    .map(([cat]) => cat);
 }
 
 // ── Service presence ──────────────────────────────────────────────────────────

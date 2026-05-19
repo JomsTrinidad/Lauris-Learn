@@ -48,7 +48,11 @@ export interface UpcomingItem {
 
 export interface AttendanceTodayResult {
   status: "present" | "late" | "absent" | "excused" | null;
+  /** Localized human-readable check-in time, e.g. "8:32 AM". */
   checkedInAt: string | null;
+  /** Raw ISO timestamp of the check-in row. Used by the hero priority chain
+   *  to compute freshness (Phase 3 Tier C cutoff). Null when not present. */
+  checkedInAtIso: string | null;
 }
 
 export interface NeedsAttentionCounts {

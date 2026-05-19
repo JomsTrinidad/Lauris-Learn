@@ -160,13 +160,13 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
             <GraduationCap className="w-4 h-4 text-primary-foreground" />
           </div>
           <div className="min-w-0">
+            {/* Brand identity is "Lauris Parent" — school/clinic appear as in-page
+                metadata, never as the emotional anchor of the parent experience.
+                See Phase 2 (Unified Parent Hub) session-log entry. */}
             <p className="text-sm font-semibold leading-none truncate">Lauris Parent</p>
             {selectedChild ? (
               <p className="text-xs text-muted-foreground mt-0.5 truncate">
                 {selectedChild.firstName} {selectedChild.lastName}
-                {schoolName && (
-                  <span className="ml-1">· {schoolName}</span>
-                )}
               </p>
             ) : (
               schoolName && (

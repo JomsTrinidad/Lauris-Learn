@@ -9,7 +9,7 @@ import {
   Link as LinkIcon, Copy, Check, BookOpen,
   ArrowRight, RefreshCw, Users, GraduationCap,
   HelpCircle, AlertTriangle, ChevronRight, X, UserPlus, UserCheck, FileText,
-  Share2, MoreHorizontal, Printer, Heart, Hash, History,
+  Share2, MoreHorizontal, Printer, Heart, Hash, History, Sparkles,
 } from "lucide-react";
 import { DatePicker } from "@/components/ui/datepicker";
 import { AvatarUpload } from "@/components/ui/avatar-upload";
@@ -28,6 +28,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useSchoolContext } from "@/contexts/SchoolContext";
 import { queryKeys } from "@/lib/query-client";
 import { ShareIdentityWithClinicModal } from "@/features/clinic-sharing/ShareIdentityWithClinicModal";
+import { QuickMomentSheet } from "@/features/proud-moments/QuickMomentSheet";
 import { StudentSupportHistoryModal } from "@/features/plans/StudentSupportHistoryModal";
 import { SupportTimeline } from "@/features/plans/SupportTimeline";
 import { loadStudentSupportHistory } from "@/features/plans/timeline";
@@ -382,6 +383,7 @@ function RowMenu({
   onShare,
   onGraduate,
   onSupportHistory,
+  onQuickMoment,
   editLabel = "Edit Student",
 }: {
   student: Student;
@@ -389,6 +391,9 @@ function RowMenu({
   onShare: (() => void) | null;
   onGraduate: (() => void) | null;
   onSupportHistory: () => void;
+  /** Phase 6 — opens the Quick Moment sheet with this student pre-selected.
+   *  Null when the viewer can't capture moments (e.g. historical year). */
+  onQuickMoment: (() => void) | null;
   editLabel?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -399,8 +404,8 @@ function RowMenu({
   const openMenu = () => {
     if (!btnRef.current) return;
     const rect = btnRef.current.getBoundingClientRect();
-    const extraItems = (onShare ? 1 : 0) + (onGraduate ? 1 : 0);
-    const menuH = 108 + extraItems * 40; // +40 for Support History item
+    const extraItems = (onQuickMoment ? 1 : 0) + (onShare ? 1 : 0) + (onGraduate ? 1 : 0);
+    const menuH = 108 + extraItems * 40; // +40 per optional item
     const spaceBelow = window.innerHeight - rect.bottom;
     const top = spaceBelow > menuH ? rect.bottom + 4 : rect.top - menuH - 4;
     setPos({ top, left: rect.right - 192 });
@@ -442,6 +447,19 @@ function RowMenu({
           style={{ position: "fixed", top: pos.top, left: pos.left, zIndex: 9999, width: 192 }}
           className="bg-card border border-border rounded-lg shadow-lg py-1 text-sm"
         >
+          {/* Phase 6 — Quick Moment is positioned FIRST in the menu because
+              "I'm looking at this student and want to capture a moment" is
+              the most likely workflow trigger for opening this menu. */}
+          {onQuickMoment && (
+            <button
+              type="button"
+              onClick={() => { setOpen(false); onQuickMoment(); }}
+              className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-muted transition-colors text-foreground text-left"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+              Quick Moment
+            </button>
+          )}
           <Link
             href={`/documents?student=${student.id}`}
             className="flex items-center gap-2.5 px-3 py-2 hover:bg-muted transition-colors text-foreground"
@@ -673,6 +691,11 @@ export default function StudentsPage() {
 
   // Support History modal
   const [supportHistoryStudent, setSupportHistoryStudent] = useState<Student | null>(null);
+
+  // Phase 6 — Quick Moment sheet target. Holds the student a teacher selected
+  // via the per-row More menu. Pre-fills the sheet so no search step is
+  // needed in this in-workflow capture path.
+  const [quickMomentStudent, setQuickMomentStudent] = useState<Student | null>(null);
 
   // Graduate workflow state
   const [graduateTarget, setGraduateTarget] = useState<Student | null>(null);
@@ -2457,6 +2480,11 @@ export default function StudentsPage() {
                               onEdit={teacherHistorical ? null : () => openEdit(student)}
                               editLabel={isTeacher ? "Teacher Notes" : "Edit Student"}
                               onSupportHistory={() => setSupportHistoryStudent(student)}
+                              onQuickMoment={
+                                // Disable in historical mode — proud_moments
+                                // are written against the current active year.
+                                isHistoricalView ? null : () => setQuickMomentStudent(student)
+                              }
                               onGraduate={
                                 userRole === "school_admin" &&
                                 !isHistoricalView &&
@@ -4362,6 +4390,18 @@ export default function StudentsPage() {
           studentId={supportHistoryStudent.id}
           studentName={`${supportHistoryStudent.firstName} ${supportHistoryStudent.lastName}`.trim()}
           onClose={() => setSupportHistoryStudent(null)}
+        />
+      )}
+
+      {/* Phase 6 — Quick Moment sheet (pre-selected student). Silent on save. */}
+      {quickMomentStudent && schoolId && userId && (
+        <QuickMomentSheet
+          open={!!quickMomentStudent}
+          onClose={() => setQuickMomentStudent(null)}
+          studentId={quickMomentStudent.id}
+          studentName={`${quickMomentStudent.firstName} ${quickMomentStudent.lastName}`.trim()}
+          schoolId={schoolId}
+          userId={userId}
         />
       )}
 

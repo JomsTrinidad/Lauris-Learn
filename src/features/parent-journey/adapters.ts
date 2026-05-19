@@ -19,9 +19,25 @@ export function therapySessionToJourney(
     parent_visible_summary: string;
     therapist_name: string | null;
   },
-  childId: string
+  childId: string,
+  /**
+   * Cross-app deep-link parameters. Both must be present for the row to emit
+   * an `actionHref` into Care. When either is missing the row degrades
+   * gracefully — no link, no broken navigation.
+   *
+   *   careBaseUrl    — typically `process.env.NEXT_PUBLIC_CARE_BASE_URL`
+   *                    (e.g. https://care.lauris.app). Trailing slashes are
+   *                    stripped.
+   *   childProfileId — the shared `child_profiles.id` for this child. Care
+   *                    routes by child_profile_id, not by the school's
+   *                    `students.id`.
+   */
+  opts?: { careBaseUrl?: string | null; childProfileId?: string | null }
 ): ParentJourneyItem {
   const typeLabel = THERAPY_TYPE_LABELS[ts.therapy_type] ?? "Therapy Session";
+  const base = opts?.careBaseUrl?.replace(/\/+$/, "") || null;
+  const cpid = opts?.childProfileId || null;
+  const actionHref = base && cpid ? `${base}/parent/${cpid}` : undefined;
   return {
     id: `therapy-${ts.id}`,
     childId,
@@ -33,6 +49,8 @@ export function therapySessionToJourney(
     summary: ts.parent_visible_summary,
     occurredAt: ts.scheduled_at,
     sentiment: "informational",
+    actionHref,
+    actionLabel: actionHref ? "Open in Lauris Care" : undefined,
   };
 }
 
@@ -52,7 +70,22 @@ export function updateToJourney(
     organizationName: orgLabel,
     providerName: u.author?.full_name ?? "Teacher",
     itemType: "update",
-    title: "Class update",
+    // Phase 9 — Title intentionally empty for school updates.
+    //
+    // Every parent_updates row used to render in the parent feed as
+    // "Class update" (the hardcoded label), with the teacher's actual
+    // content shrunk to the muted summary line below. Result: every
+    // post a teacher wrote — "Music day", "Reminder about photos",
+    // "Field trip recap" — surfaced identically to parents.
+    //
+    // By emitting an empty title, JourneyRow promotes the summary
+    // (the teacher's actual words) to the row's prominent line —
+    // calm semantic weight, not headline weight. The teacher's
+    // observation becomes the semantic anchor of the row.
+    //
+    // Other adapters (therapy, observation) still emit meaningful
+    // titles like "Speech Therapy" / "Kindness — Consistent".
+    title: "",
     summary: u.content,
     occurredAt: u.created_at,
     sentiment: "informational",

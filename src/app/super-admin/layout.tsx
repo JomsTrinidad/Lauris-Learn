@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter, usePathname } from "next/navigation";
@@ -31,6 +31,18 @@ export default function SuperAdminLayout({ children }: { children: React.ReactNo
   const [loading, setLoading] = useState(true);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const userMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!userMenuOpen) return;
+    function onPointerDown(e: PointerEvent) {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+        setUserMenuOpen(false);
+      }
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [userMenuOpen]);
 
   useEffect(() => {
     const supabase = createClient();
@@ -159,7 +171,7 @@ export default function SuperAdminLayout({ children }: { children: React.ReactNo
             <span className="text-sm font-medium text-muted-foreground">Super Admin Panel</span>
           </div>
 
-          <div className="relative" onMouseLeave={() => setUserMenuOpen(false)}>
+          <div className="relative" ref={userMenuRef}>
             <button
               onClick={() => setUserMenuOpen(!userMenuOpen)}
               className="flex items-center gap-2.5 px-3 py-1.5 bg-muted rounded-lg hover:bg-accent transition-colors"
