@@ -5,8 +5,9 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   Home, MessageSquare, User, CreditCard, LogOut,
   GraduationCap, TrendingUp, CalendarDays, FileText, ClipboardList,
-  ChevronRight, X as XIcon, Sparkles, Menu,
+  ChevronRight, X as XIcon, Sparkles, Menu, UserMinus, Check,
 } from "lucide-react";
+import { fetchAttendanceToday } from "@/features/parent-journey/queries";
 import { createClient } from "@/lib/supabase/client";
 import { BrandingApplier } from "@/components/BrandingApplier";
 import { Spinner } from "@/components/ui/spinner";
@@ -363,7 +364,8 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
           parentFirstName={parentFirstName}
           parentEmail={parentEmail}
           schoolName={schoolName}
-          children={children_}
+          schoolId={schoolId}
+          family={children_}
           selectedChildId={selectedChildId}
           signals={familySignals}
           pathname={pathname}
@@ -382,7 +384,10 @@ interface FamilyDrawerProps {
   parentFirstName: string;
   parentEmail: string;
   schoolName: string;
-  children: ChildInfo[];
+  schoolId: string | null;
+  // Phase 20 — renamed from `children` (React reserved prop name; ESLint
+  // react/no-children-prop). Same payload: the family of ChildInfo records.
+  family: ChildInfo[];
   selectedChildId: string | null;
   signals: Map<string, FamilySignal> | null;
   pathname: string;
@@ -395,7 +400,8 @@ function FamilyDrawer({
   parentFirstName,
   parentEmail,
   schoolName,
-  children,
+  schoolId,
+  family,
   selectedChildId,
   signals,
   pathname,
@@ -403,7 +409,7 @@ function FamilyDrawer({
   onSwitchChild,
   onSignOut,
 }: FamilyDrawerProps) {
-  const activeChild = children.find((c) => c.id === selectedChildId) ?? children[0];
+  const activeChild = family.find((c) => c.id === selectedChildId) ?? family[0];
   return (
     <>
       {/* Backdrop — tap to close. Slightly softer than the old More sheet's
@@ -468,10 +474,10 @@ function FamilyDrawer({
           {/* ── Family section ──────────────────────────────────────────── */}
           <section>
             <h3 className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70 px-2 mb-2">
-              {children.length > 1 ? "Your children" : "Your child"}
+              {family.length > 1 ? "Your children" : "Your child"}
             </h3>
             <div className="space-y-1">
-              {children.map((child) => {
+              {family.map((child) => {
                 const isActive = child.id === selectedChildId;
                 const signal = signals?.get(child.id);
                 const pulse: FamilyPulse = deriveFamilyPulse(signal);
@@ -489,6 +495,19 @@ function FamilyDrawer({
               })}
             </div>
           </section>
+
+          {/* ── Today for [Child] section (Phase 20 — operations hub) ───────
+              Daily operational actions for the active child. Lives between
+              "Your children" (family scan) and "More about X" (long-term
+              records). The whole section hides when no operational rows
+              are visible — calm by absence. Mounted only when there's an
+              active child. */}
+          {activeChild && (
+            <TodayForChildSection
+              child={activeChild}
+              schoolId={schoolId}
+            />
+          )}
 
           {/* ── "More about {active child}" section ─────────────────────── */}
           {activeChild && (
@@ -534,6 +553,178 @@ function FamilyDrawer({
         </div>
       </div>
     </>
+  );
+}
+
+// ── Today for [Child] section (drawer-internal operations hub) ───────────────
+// Phase 20 — operational actions live here instead of on the homepage.
+// Self-contained:
+//   • Queries attendance_records + absence_notifications on mount and on
+//     childId change (cheap; runs only while the drawer is open).
+//   • Owns the absence form state — no lifting required.
+//   • Hides entirely when there's nothing actionable (calm by absence).
+//
+// The section is the natural home for future Care/Medical operations:
+// "Running late," "Cancel therapy session," "Reschedule," etc. Each future
+// row is a calm link with an inline expand pattern matching this one. The
+// section header doesn't change as actions multiply.
+
+interface TodayActionState {
+  loading: boolean;
+  attendanceMarked: boolean;
+  absenceReported: boolean;
+}
+
+function TodayForChildSection({
+  child,
+  schoolId,
+}: {
+  child: ChildInfo;
+  schoolId: string | null;
+}) {
+  const supabase = createClient();
+  const [state, setState] = useState<TodayActionState>({
+    loading: true,
+    attendanceMarked: false,
+    absenceReported: false,
+  });
+  const [formOpen, setFormOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Re-query whenever the active child changes (parent switched kids from
+  // the drawer-above section without closing the drawer — although in our
+  // flow that path also closes the drawer; this is defensive).
+  useEffect(() => {
+    let cancelled = false;
+    async function loadTodayState() {
+      setState({ loading: true, attendanceMarked: false, absenceReported: false });
+      setFormOpen(false);
+      setReason("");
+      setError(null);
+      const today = new Date().toISOString().split("T")[0];
+      const [att, absRow] = await Promise.all([
+        fetchAttendanceToday(supabase, child.id),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (supabase as any)
+          .from("absence_notifications")
+          .select("id")
+          .eq("student_id", child.id)
+          .eq("date", today)
+          .maybeSingle(),
+      ]);
+      if (cancelled) return;
+      setState({
+        loading: false,
+        attendanceMarked: att.status !== null,
+        absenceReported: !!absRow.data,
+      });
+    }
+    loadTodayState();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [child.id]);
+
+  async function submitAbsence() {
+    if (!schoolId) return;
+    setSubmitting(true);
+    setError(null);
+    const today = new Date().toISOString().split("T")[0];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error: err } = await (supabase as any)
+      .from("absence_notifications")
+      .insert({
+        school_id: schoolId,
+        student_id: child.id,
+        class_id: child.classId,
+        date: today,
+        reason: reason.trim() || null,
+      });
+    setSubmitting(false);
+    if (err) {
+      // 23505 = unique violation; treat as already-reported (idempotent).
+      if (err.code === "23505") {
+        setState((s) => ({ ...s, absenceReported: true }));
+        setFormOpen(false);
+      } else {
+        setError("Could not send notification. Please try again.");
+      }
+    } else {
+      setState((s) => ({ ...s, absenceReported: true }));
+      setFormOpen(false);
+      setReason("");
+    }
+  }
+
+  // Section hides entirely when nothing is actionable.
+  //   • loading → render the section frame but no rows (avoids flash)
+  //   • attendance already marked by the school → no absence row needed
+  //   • absence reported & nothing else → still show the calm confirmation
+  if (state.loading) return null;
+  if (state.attendanceMarked && !state.absenceReported) return null;
+
+  return (
+    <section>
+      <h3 className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70 px-2 mb-2">
+        Today for {child.firstName}
+      </h3>
+      {state.absenceReported ? (
+        // Calm confirmation row — same shape as the action rows so the
+        // section reads as "the action you took today" rather than as a
+        // status banner.
+        <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm">
+          <Check className="w-4 h-4 flex-shrink-0 text-green-600" aria-hidden />
+          <span className="flex-1 text-muted-foreground">Absence sent to school today.</span>
+        </div>
+      ) : formOpen ? (
+        // Inline form. Fits the drawer width (max ~360px usable). The
+        // submit button keeps the amber accent at commit-time only — that's
+        // earned color, not chrome.
+        <div className="px-2 pb-1 space-y-2">
+          <p className="text-xs text-muted-foreground">
+            Let the school know {child.firstName} won&apos;t be in today.
+          </p>
+          <input
+            type="text"
+            placeholder="Reason (optional) — e.g. Sick"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            className="w-full text-sm border border-border rounded-lg px-3 py-2 bg-background focus:outline-none focus:ring-2 focus:ring-primary"
+          />
+          {error && <p className="text-xs text-red-600">{error}</p>}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={submitAbsence}
+              disabled={submitting}
+              className="flex-1 text-sm font-medium bg-amber-500 text-white rounded-lg py-2 hover:bg-amber-600 transition-colors disabled:opacity-50"
+            >
+              {submitting ? "Sending…" : "Notify school"}
+            </button>
+            <button
+              type="button"
+              onClick={() => { setFormOpen(false); setReason(""); setError(null); }}
+              className="px-3 text-sm text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        // Idle row. Visually matches the "More about X" row pattern below
+        // (icon + label + chevron) for drawer consistency.
+        <button
+          type="button"
+          onClick={() => setFormOpen(true)}
+          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors text-sm font-medium hover:bg-accent/60 text-foreground"
+        >
+          <UserMinus className="w-4 h-4 flex-shrink-0 text-muted-foreground/70" />
+          <span className="flex-1 text-left">Mark absent today</span>
+          <ChevronRight className="w-4 h-4 text-muted-foreground/30 flex-shrink-0" />
+        </button>
+      )}
+    </section>
   );
 }
 

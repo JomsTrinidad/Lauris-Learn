@@ -3,7 +3,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import {
   CheckCircle, XCircle, Clock, CalendarDays,
-  Bell, CreditCard, ChevronRight, AlertTriangle,
+  Bell, CreditCard, ChevronRight,
   Star, BookOpen, TrendingUp, ShieldCheck, Inbox, Camera, Sparkles,
   StickyNote, X as XIcon,
 } from "lucide-react";
@@ -12,6 +12,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { createClient } from "@/lib/supabase/client";
 import { useParentContext } from "../layout";
 import { useResonance, buildResonancePhrases } from "@/features/proud-moments/resonance";
+import { useContinuityEcho, buildContinuityEchoPhrases } from "@/features/parent-reflection/continuity-echo";
 import {
   fetchJourneyFeed,
   fetchAttendanceToday,
@@ -27,7 +28,11 @@ import {
   getChildStatusHeadline,
   getFeaturedParentCards,
   getServiceContextLine,
+  getContinuitySignals,
+  groupFeedByRecency,
+  getTimeOfDayGreeting,
 } from "@/features/parent-journey/helpers";
+import type { FeedGroupKey } from "@/features/parent-journey/helpers";
 import type {
   ParentJourneyItem,
   AttendanceTodayResult,
@@ -483,6 +488,19 @@ function getMomentHeading(firstName: string, category: string): string {
 // The StickyNote icon is inward-facing (personal note-to-self metaphor),
 // deliberately not a heart, paper plane, or chat bubble.
 
+// Phase A V2 — Journey Memory. A saved reflection becomes "memory" once it
+// has stood for more than this threshold; before that, rendering "· just
+// now" right after the tap reads as overzealous. The 5-minute gate lets
+// the pill mature into a remembered note rather than echoing the user's
+// last action back at them.
+const REFLECTION_MEMORY_THRESHOLD_MS = 5 * 60 * 1000;
+
+function shouldShowReflectionMemory(savedAt: string | null): boolean {
+  if (!savedAt) return false;
+  const age = Date.now() - new Date(savedAt).getTime();
+  return age >= REFLECTION_MEMORY_THRESHOLD_MS;
+}
+
 function ResonancePicker({
   childId, momentId, firstName,
 }: {
@@ -490,7 +508,7 @@ function ResonancePicker({
   momentId: string;
   firstName: string;
 }) {
-  const { phrase, setPhrase, hydrated } = useResonance(childId, momentId);
+  const { phrase, savedAt, setPhrase, hydrated } = useResonance(childId, momentId);
   const [isOpen, setIsOpen] = useState(false);
 
   // Don't render anything until localStorage has been read — avoids the
@@ -498,16 +516,25 @@ function ResonancePicker({
   if (!hydrated) return null;
 
   const phrases = buildResonancePhrases(firstName);
+  const showMemoryAnchor = shouldShowReflectionMemory(savedAt);
 
   // Saved state — single small chip with × to clear. No "shared" label,
-  // no celebration, no animation.
+  // no celebration, no animation. Phase A V2: when the save has been
+  // standing long enough to feel like memory (≥ 5 min), append a quiet
+  // "· {timeAgo}" anchor so the pill reads as a past reflection rather
+  // than a present action.
   if (phrase) {
     return (
-      <div className="flex items-center gap-1.5 mt-2">
+      <div className="flex items-center gap-1.5 mt-2 flex-wrap">
         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs bg-amber-50/70 text-amber-900 border border-amber-100">
           <StickyNote className="w-3 h-3 flex-shrink-0 opacity-70" />
           {phrase}
         </span>
+        {showMemoryAnchor && savedAt && (
+          <span className="text-[10px] text-muted-foreground/60">
+            · {timeAgo(savedAt)}
+          </span>
+        )}
         <button
           type="button"
           onClick={() => setPhrase(null)}
@@ -561,6 +588,171 @@ function ResonancePicker({
   );
 }
 
+// ── Phase 16 — Parent continuity echo picker ──────────────────────────────────
+// Sibling of ResonancePicker, attached to the school support context line.
+// SAME visual grammar (collapsed link → open chips → saved chip with ×),
+// DIFFERENT voice ("we're seeing this too" reflection on a broader ongoing
+// situation, vs Phase 11's "this stayed with us" reaction to a single
+// celebrated moment). Storage is local-only (`useContinuityEcho`), private
+// to the parent device. Teachers do not see echoes in v1 — privacy by
+// architecture.
+//
+// `anchorId` is the support context's `updatedAt` ISO timestamp. When the
+// school re-writes the context, anchorId changes, and the previous echo
+// goes dormant (its localStorage row stays but is invisible until/unless
+// the same context is restored). This is the cleanest invalidation rule
+// for v1: a NEW situation deserves a NEW echo decision; the old echo
+// referred to a different "this".
+//
+// Color register matches the support context line above (muted/neutral)
+// rather than the amber resonance picker (warmer, proud-moment-attached).
+// Echo is reflective neutrality; resonance is warmth. The two MUST read
+// distinctly so the parent never confuses the surfaces.
+/**
+ * Phase A V2 + Phase B V2 — controlled echo picker.
+ *
+ * Refactored to accept echo state as props so the dashboard can also read
+ * it (for the Phase B resonance line) without keeping a separate
+ * useContinuityEcho copy. The single source of truth lives in the
+ * dashboard's hook call; this picker only renders and dispatches.
+ *
+ * Phase A V2: when savedAt is older than the memory threshold, append
+ * `· {timeAgo}` so the pill reads as a remembered note.
+ */
+function ContinuityEchoPicker({
+  phrase, savedAt, setPhrase, hydrated, firstName,
+}: {
+  phrase: string | null;
+  savedAt: string | null;
+  setPhrase: (next: string | null) => void;
+  hydrated: boolean;
+  firstName: string;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+
+  if (!hydrated) return null;
+
+  const phrases = buildContinuityEchoPhrases(firstName);
+  const showMemoryAnchor = shouldShowReflectionMemory(savedAt);
+
+  if (phrase) {
+    return (
+      <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs bg-muted/50 text-foreground/80 border border-border/60">
+          <StickyNote className="w-3 h-3 flex-shrink-0 opacity-60" />
+          {phrase}
+        </span>
+        {showMemoryAnchor && savedAt && (
+          <span className="text-[10px] text-muted-foreground/60">
+            · {timeAgo(savedAt)}
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={() => setPhrase(null)}
+          className="text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+          aria-label="Remove note"
+        >
+          <XIcon className="w-3 h-3" />
+        </button>
+      </div>
+    );
+  }
+
+  if (isOpen) {
+    return (
+      <div className="mt-2 space-y-1.5">
+        <div className="flex flex-wrap gap-1.5">
+          {phrases.map((p) => (
+            <button
+              key={p}
+              type="button"
+              onClick={() => { setPhrase(p); setIsOpen(false); }}
+              className="px-2.5 py-1 rounded-full text-xs border border-border/60 text-foreground/80 hover:bg-muted/40 transition-colors"
+            >
+              {p}
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={() => setIsOpen(false)}
+          className="text-[11px] text-muted-foreground/60 hover:text-muted-foreground transition-colors"
+        >
+          Never mind
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => setIsOpen(true)}
+      className="mt-2 text-[11px] text-muted-foreground/60 hover:text-muted-foreground transition-colors"
+    >
+      + Note from home
+    </button>
+  );
+}
+
+// ── Phase B V2 — Home/school resonance block ──────────────────────────────────
+// Wraps the support context line + its echo picker + the new resonance line
+// in a single component that owns the useContinuityEcho hook. Single source
+// of truth — the picker mutates state, the resonance line reads state, both
+// stay in sync.
+//
+// Resonance line emits when BOTH conditions hold:
+//   (a) school has set a support context (the whole block is conditional
+//       on this — `supportContext != null`),
+//   (b) parent has saved an echo phrase for THIS anchor.
+//
+// Wording is one observational sentence, present perfect, no actor. The
+// line is information, not invitation — there is no link, no CTA, no
+// notification, no thread. The school does NOT see this line (the parent's
+// echo lives in localStorage). The line is a private resonance reflection
+// the page shows back to the parent, not a message the school receives.
+function SupportContextBlock({
+  supportContext, childId, firstName,
+}: {
+  supportContext: SchoolSupportContext;
+  childId: string | null;
+  firstName: string;
+}) {
+  const { phrase, savedAt, setPhrase, hydrated } = useContinuityEcho(
+    childId,
+    supportContext.updatedAt,
+  );
+  // Don't render the resonance line until echo state has hydrated — avoids
+  // a one-frame flicker between "nothing here" and "echo present, show
+  // resonance".
+  const showResonanceLine = hydrated && phrase !== null;
+  return (
+    <div className="px-1">
+      <p className="text-sm text-foreground/80 leading-relaxed">
+        {supportContext.focusText}
+      </p>
+      {showResonanceLine && (
+        <p className="text-[11px] italic text-muted-foreground/75 mt-1.5 leading-relaxed">
+          Home and school have both noticed this lately.
+        </p>
+      )}
+      <p className="text-[11px] text-muted-foreground/60 mt-1">
+        {supportContext.setByName
+          ? `From ${supportContext.setByName.split(" ")[0]} · updated ${timeAgo(supportContext.updatedAt)}`
+          : `Updated ${timeAgo(supportContext.updatedAt)}`}
+      </p>
+      <ContinuityEchoPicker
+        phrase={phrase}
+        savedAt={savedAt}
+        setPhrase={setPhrase}
+        hydrated={hydrated}
+        firstName={firstName}
+      />
+    </div>
+  );
+}
+
 // ── filter config ─────────────────────────────────────────────────────────────
 
 const JOURNEY_FILTERS: JourneyFilter[] = ["all", "school", "therapy", "medical"];
@@ -571,6 +763,17 @@ const FILTER_LABELS: Record<JourneyFilter, string> = {
   therapy: "Therapy",
   medical: "Medical",
 };
+
+// Phase 14 — Timeline group labels. Quiet section separators inside the
+// Journey feed. Rendered only when ≥2 groups have items (see render block);
+// a lone group reads better as a flat list under the existing section
+// header ("{firstName}'s journey") than under a redundant "Today" label.
+const FEED_GROUP_LABELS: Record<FeedGroupKey, string> = {
+  today:    "Today",
+  thisWeek: "Earlier this week",
+  older:    "Older",
+};
+const FEED_GROUP_ORDER: FeedGroupKey[] = ["today", "thisWeek", "older"];
 
 // Empty-state copy — calm, source-aware, never implies failure. The "all"
 // state lands on parents who haven't built up activity in any source yet;
@@ -644,12 +847,10 @@ export default function ParentDashboard() {
   const [parentUserId, setParentUserId] = useState<string | null>(null);
   const [reactSaving, setReactSaving] = useState(false);
 
-  // Absence reporting
-  const [absenceReported, setAbsenceReported] = useState(false);
-  const [showAbsenceForm, setShowAbsenceForm] = useState(false);
-  const [absenceReason, setAbsenceReason] = useState("");
-  const [submittingAbsence, setSubmittingAbsence] = useState(false);
-  const [absenceError, setAbsenceError] = useState<string | null>(null);
+  // Phase 20 — Absence-related state lifted out of the dashboard entirely.
+  // Operational actions now live in the family drawer's "Today for X"
+  // section, which manages its own state internally. The homepage is
+  // continuity-only.
 
   // Phase 7 — Gentle freshness cues. `freshItemIds` is the snapshot of
   // journey items that have arrived since the parent's previous visit
@@ -669,16 +870,6 @@ export default function ParentDashboard() {
 
     const rawName = ((user?.user_metadata?.full_name ?? user?.user_metadata?.name ?? "") as string).trim();
     setParentName(rawName ? rawName.split(" ")[0] : null);
-
-    const today = new Date().toISOString().split("T")[0];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: absRow } = await (supabase as any)
-      .from("absence_notifications")
-      .select("id")
-      .eq("student_id", childId)
-      .eq("date", today)
-      .maybeSingle();
-    setAbsenceReported(!!absRow);
 
     const resolvedSchool = schoolName || "School";
     const resolvedClass = child?.className ?? "";
@@ -781,35 +972,8 @@ export default function ParentDashboard() {
     setReactSaving(false);
   }
 
-  async function submitAbsence() {
-    if (!childId || !schoolId) return;
-    setSubmittingAbsence(true);
-    setAbsenceError(null);
-    const today = new Date().toISOString().split("T")[0];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await (supabase as any)
-      .from("absence_notifications")
-      .insert({
-        school_id: schoolId,
-        student_id: childId,
-        class_id: classId,
-        date: today,
-        reason: absenceReason.trim() || null,
-      });
-    setSubmittingAbsence(false);
-    if (error) {
-      if (error.code === "23505") {
-        setAbsenceReported(true);
-        setShowAbsenceForm(false);
-      } else {
-        setAbsenceError("Could not send notification. Please try again.");
-      }
-    } else {
-      setAbsenceReported(true);
-      setShowAbsenceForm(false);
-      setAbsenceReason("");
-    }
-  }
+  // Phase 20 — submitAbsence relocated to TodayForChildSection in the
+  // family drawer. Dashboard no longer touches absence_notifications.
 
   if (loading) return <PageSpinner />;
 
@@ -859,6 +1023,12 @@ export default function ParentDashboard() {
   // ── Derived: priority cards ──────────────────────────────────────────────
   const priorityCards = getFeaturedParentCards({ events, needs });
 
+  // ── Derived: continuity signals (Phase 13 — observable patterns) ─────────
+  // Merges the Phase 10 recurring-category strip with new domain freshness
+  // signals into one "What's showing up" cluster. Returns up to 3 chips, or
+  // empty array (caller hides the section). Pure helper, no extra fetches.
+  const continuitySignals = getContinuitySignals(feed, recurringCategories, servicePresence);
+
   // ── Derived: highlight state ─────────────────────────────────────────────
   const showFeaturedHighlight = highlight !== null && highlight.isFeatured;
   // Phase 3 — when the hero already carried the proud-moment headline, the
@@ -876,6 +1046,14 @@ export default function ParentDashboard() {
   const filteredFeed = activeFilter === "all"
     ? feed
     : feed.filter((i) => i.sourceCategory === activeFilter);
+
+  // Phase 14 — Timeline compression. Bucket the (already-filtered) feed
+  // into today / earlier-this-week / older. Group labels render only when
+  // ≥2 groups have items — a single "Today" label above a flat list is
+  // redundant chrome under the existing "{name}'s journey" header.
+  const feedGroups = groupFeedByRecency(filteredFeed);
+  const nonEmptyFeedGroups = FEED_GROUP_ORDER.filter((k) => feedGroups[k].length > 0);
+  const showFeedGroupLabels = nonEmptyFeedGroups.length >= 2;
 
   const sp = servicePresence;
 
@@ -941,8 +1119,13 @@ export default function ParentDashboard() {
 
       {/* ── Greeting + Status Headline ────────────────────────────────────── */}
       <div className="pt-1">
+        {/* Phase 18 — Rhythm adaptation V1. Time-of-day variant on the
+            existing greeting. Pure, computed at render time. Geometry of
+            the rest of the page is intentionally untouched — the only
+            adaptation is the head word ("Good morning" / "Good afternoon"
+            / "Good evening" / "Hi" late-night). */}
         <p className="text-sm text-muted-foreground">
-          {parentName ? `Hi, ${parentName}!` : "Hi there!"}
+          {getTimeOfDayGreeting(new Date().getHours(), parentName)}
         </p>
         <h1 className="text-2xl font-bold leading-tight mt-0.5">
           {statusHeadline.heading}
@@ -1082,16 +1265,11 @@ export default function ParentDashboard() {
           child's current rhythm without presenting it as a status surface.
           Renders only when school staff have actually set a context. */}
       {supportContext && (
-        <div className="px-1">
-          <p className="text-sm text-foreground/80 leading-relaxed">
-            {supportContext.focusText}
-          </p>
-          <p className="text-[11px] text-muted-foreground/60 mt-1">
-            {supportContext.setByName
-              ? `From ${supportContext.setByName.split(" ")[0]} · updated ${timeAgo(supportContext.updatedAt)}`
-              : `Updated ${timeAgo(supportContext.updatedAt)}`}
-          </p>
-        </div>
+        <SupportContextBlock
+          supportContext={supportContext}
+          childId={childId}
+          firstName={firstName}
+        />
       )}
 
       {/* ── Phase 13 — Signal cluster (Lately + Today's Pulse) ────────────────
@@ -1106,31 +1284,40 @@ export default function ParentDashboard() {
           present for parents who want details, but no longer required
           reading for the basic scan. */}
 
-      {/* Lately strip — recurring proud-moment categories ≥2× in 14d.
-          De-saturated chips so the strip reads as quiet memory texture. */}
-      {recurringCategories.length > 0 && (
+      {/* Phase 13 — "What's showing up" continuity signal strip.
+          Unified Phase-10 "Lately" + new domain freshness/volume signals
+          into ONE compact row of up to 3 short observable chips. Hides
+          entirely when getContinuitySignals returns an empty array
+          (calm by absence — no "nothing to report" filler).
+          Voice: factual recurrence + freshness, never interpretation.
+          Recurring-category chips keep the de-saturated CATEGORY_COLORS_MEMORY
+          palette so memory chips retain their visual identity; domain
+          signals use neutral muted styling so they don't compete for
+          color attention. */}
+      {continuitySignals.length > 0 && (
         <div className="flex items-center gap-2 flex-wrap px-1">
           <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/50">
-            Lately
+            What&apos;s showing up
           </span>
-          {recurringCategories.map((cat) => (
-            <span
-              key={cat}
-              className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${
-                CATEGORY_COLORS_MEMORY[cat] ?? "bg-muted/30 text-muted-foreground"
-              }`}
-            >
-              {cat}
-            </span>
-          ))}
+          {continuitySignals.map((sig, i) => {
+            const cls =
+              sig.kind === "recurring_category" && sig.category
+                ? CATEGORY_COLORS_MEMORY[sig.category] ?? "bg-muted/40 text-muted-foreground"
+                : "bg-muted/40 text-muted-foreground";
+            const key = sig.kind === "recurring_category"
+              ? `cat:${sig.category}`
+              : `${sig.kind}:${sig.domain ?? i}`;
+            return (
+              <span
+                key={key}
+                className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${cls}`}
+              >
+                {sig.label}
+              </span>
+            );
+          })}
         </div>
       )}
-
-      {/* Phase 15 — Today's Pulse signal removed. It said "1 new from
-          school today" — the same fact the count badges in the top
-          filter strip now communicate visually with stronger scan
-          gravity. Keeping both would have been redundant compression
-          stacked on compression. */}
 
       {/* ── Phase 4 — standalone Positive Highlight ─────────────────────────── */}
       {/* Renders only when the hero did NOT consume the proud moment (i.e. hero
@@ -1236,17 +1423,15 @@ export default function ParentDashboard() {
 
       </section>
 
-      {/* ── ZONE 3 — Coming up card (white, parallel to Today) ────────────────
-          Phase 15 — Holds the operational items previously squeezed
-          into Today: upcoming meetings, school events, balance due,
-          consent pending.
-          Phase 17 — Also hosts the absence-reporting action (moved out
-          of the Today emotional zone). The card now renders when EITHER
-          (a) there are operational priority cards, OR (b) the parent
-          hasn't yet marked attendance / reported absence for today.
-          Both branches keep the card "calm by absence" — when there's
-          truly nothing to act on, the card stays hidden. */}
-      {(priorityCards.length > 0 || attendance.status === null) && (
+      {/* ── ZONE 3 — Coming up card (pure event list) ─────────────────────────
+          Phase 20 — Coming up card is now strictly informational. The
+          previous "Can't make it?" header utility moved into the family
+          drawer's "Today for X" section because parents read the utility
+          as semantically attached to the events below it ("can't make
+          *this* conference?"). With the utility gone, the card is calm
+          by absence — it renders only when there are real upcoming
+          events to surface. */}
+      {priorityCards.length > 0 && (
         <section className="bg-card rounded-2xl p-5 shadow-sm space-y-3">
           <div className="flex items-center gap-2">
             <CalendarDays className="w-4 h-4 text-muted-foreground/70 flex-shrink-0" />
@@ -1254,56 +1439,7 @@ export default function ParentDashboard() {
               Coming up
             </h2>
           </div>
-          {/* Absence action — appears here so it joins other operational
-              items in the same scan zone. Three states: reported (confirmation),
-              form open (input + submit), idle (link). The block is plain on
-              this card's surface — not a styled row — so it reads as
-              utility, not as another event. */}
-          {attendance.status === null && (
-            absenceReported ? (
-              <div className="flex items-center gap-1.5 text-xs text-amber-700 pl-1">
-                <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-                <span>Absence reported to school for today.</span>
-              </div>
-            ) : showAbsenceForm ? (
-              <div className="space-y-2">
-                <input
-                  type="text"
-                  placeholder="Reason (optional) — e.g. Sick, family emergency…"
-                  value={absenceReason}
-                  onChange={(e) => setAbsenceReason(e.target.value)}
-                  className="w-full text-sm border border-border rounded-lg px-3 py-2 bg-background focus:outline-none focus:ring-2 focus:ring-primary"
-                />
-                {absenceError && <p className="text-xs text-red-600">{absenceError}</p>}
-                <div className="flex gap-2">
-                  <button
-                    onClick={submitAbsence}
-                    disabled={submittingAbsence}
-                    className="flex-1 text-sm font-medium bg-amber-500 text-white rounded-lg py-2 hover:bg-amber-600 transition-colors disabled:opacity-50"
-                  >
-                    {submittingAbsence ? "Sending…" : "Notify School"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setShowAbsenceForm(false); setAbsenceReason(""); setAbsenceError(null); }}
-                    className="px-4 text-sm text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setShowAbsenceForm(true)}
-                className="text-xs text-amber-700 hover:text-amber-800 font-medium flex items-center gap-1.5 transition-colors pl-1"
-              >
-                <AlertTriangle className="w-3.5 h-3.5" />
-                Report {firstName} absent today
-              </button>
-            )
-          )}
-          {priorityCards.length > 0 && <OperationalSection cards={priorityCards} />}
+          <OperationalSection cards={priorityCards} />
         </section>
       )}
 
@@ -1377,15 +1513,41 @@ export default function ParentDashboard() {
           </div>
         ) : (
           <>
+            {/* Phase 14 — Timeline Compression V1.
+                Quiet temporal section labels interleaved at the same DOM
+                level as the cards, so `space-y-2` keeps natural rhythm
+                between every item. Group labels are themselves flow items;
+                each non-first label adds `pt-3` to widen the gap above it,
+                creating a small visual break between groups without
+                drawing a divider, a box, or an accordion.
+                Labels only render when ≥2 groups have items — a lone
+                "Today" header above a single-group feed adds redundant
+                chrome under the existing section title. */}
             <div className="space-y-2">
-              {filteredFeed.map((item) => (
-                <JourneyRow
-                  key={item.id}
-                  item={item}
-                  isFresh={freshItemIds.has(item.id)}
-                  showSourceBadge={showSourceBadge}
-                />
-              ))}
+              {nonEmptyFeedGroups.flatMap((g, idx) => {
+                const elements: React.ReactNode[] = [];
+                if (showFeedGroupLabels) {
+                  elements.push(
+                    <div
+                      key={`label-${g}`}
+                      className={`text-[11px] font-medium uppercase tracking-wide text-muted-foreground/55 px-1 ${idx > 0 ? "pt-3" : ""}`}
+                    >
+                      {FEED_GROUP_LABELS[g]}
+                    </div>
+                  );
+                }
+                for (const item of feedGroups[g]) {
+                  elements.push(
+                    <JourneyRow
+                      key={item.id}
+                      item={item}
+                      isFresh={freshItemIds.has(item.id)}
+                      showSourceBadge={showSourceBadge}
+                    />
+                  );
+                }
+                return elements;
+              })}
             </div>
             <div className="pt-1 text-center">
               <Link

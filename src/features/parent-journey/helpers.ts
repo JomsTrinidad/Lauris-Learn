@@ -280,6 +280,39 @@ function relativeDay(iso: string): string {
   return new Date(iso).toLocaleDateString("en-PH", { month: "short", day: "numeric" });
 }
 
+// ── Phase 18 — Parent Rhythm Adaptation V1 ────────────────────────────────────
+// Smallest meaningful rhythm signal: a time-of-day greeting variant on the
+// existing "Hi, X!" line. Acknowledges the parent's daypart without
+// restructuring anything below — no card reordering, no emphasis shifts,
+// no density changes (the homepage's existing auto-hide-when-empty rules
+// already deliver density adaptation by themselves).
+//
+// Buckets are chosen to read NATURALLY in conversation:
+//   05:00–11:59  "Good morning"   — start of the school day, breakfast routine
+//   12:00–17:59  "Good afternoon" — pickup window, after-school checkins
+//   18:00–21:59  "Good evening"   — dinner / reflection window
+//   22:00–04:59  "Hi"             — late-night fallback. Deliberately NOT
+//                                    "Good evening" or "Good night" —
+//                                    a parent checking the app at 23:30
+//                                    doesn't want emotional framing for
+//                                    that hour; "Hi" is neutral and
+//                                    respectful of the time.
+//
+// Pure function — caller passes `hour` so the helper stays trivially
+// testable. The dashboard reads `new Date().getHours()` at render time.
+// No hydration concern because the parent dashboard is "use client" and
+// renders only after the loading spinner exits, so SSR/CSR diverge cleanly.
+
+export function getTimeOfDayGreeting(hour: number, name: string | null): string {
+  let head: string;
+  if      (hour >= 5  && hour < 12) head = "Good morning";
+  else if (hour >= 12 && hour < 18) head = "Good afternoon";
+  else if (hour >= 18 && hour < 22) head = "Good evening";
+  else                              head = "Hi";
+  const trimmed = name?.trim();
+  return trimmed ? `${head}, ${trimmed}!` : `${head} there!`;
+}
+
 /**
  * Phase-3 proud-moment hero map. Mirrors the dashboard-side MOMENT_HEADINGS
  * verbatim BUT drops the trailing "today" — the hero may surface a moment
@@ -593,6 +626,363 @@ export function getTodayPulseSignal(feed: ParentJourneyItem[]): string | null {
   const label = PULSE_CATEGORY_LABEL[cat] ?? cat;
   if (tooMany) return `Several new from ${label} today`;
   return `${count} new from ${label} today`;
+}
+
+// ── Phase 13 — Continuity Intelligence Layer V1 ──────────────────────────────
+// A unified "What's showing up" signal cluster surfaced as a compact strip
+// inside the Today card. Synthesises three existing data sources into at most
+// THREE short, observable signal chips. Returns an empty array when nothing
+// meaningful is happening — the caller hides the section entirely (calm by
+// absence). No "no signals yet" / "nothing to report" filler.
+//
+// Voice contract (mirrors Phase 10 and Today's-Pulse precedents):
+//   • Observable patterns, NEVER conclusions. The system reflects RECURRENCE
+//     and FRESHNESS — it does not interpret the child.
+//   • Counts compress to "Several" past PULSE_HIGH_THRESHOLD so volume stays
+//     calm (never notification-feed energy).
+//   • Source names are CATEGORICAL ("from school", "from therapy") not
+//     operational (no "Sunshine Learning Center · Toddler A").
+//   • Recurring-category signals say "X appeared again" — present-perfect,
+//     factual, no quantification.
+//   • Domain-recency signals say "{Domain} has a recent update" — no
+//     interpretation of what that update means.
+//
+// Signal kinds (priority descending, per directive §13):
+//   1. recurring_category — proud_moment category recurred ≥2× in 14d
+//   2. domain_recent       — therapy/medical has feed item in last 3d but
+//                             NOT today (warmth signal without count)
+//   3. domain_today        — at least one feed item from today; compresses
+//                             count to "Several" past PULSE_HIGH_THRESHOLD
+//
+// Cross-domain ordering inside `domain_recent` and `domain_today`:
+//   therapy → medical → school. Less-frequent domains read as more
+//   meaningful when they show activity; school baseline gets the lowest
+//   slot because it's the parent's daily expectation.
+//
+// Cap: 3 signals total. Recurring categories take at most 2 slots so a
+// domain signal can always squeeze in when one exists. The 3rd recurring
+// category is dropped (Phase 10's array already arrives capped at 3, so
+// this trims to 2 inside the merge step).
+//
+// Out of scope for V1 (per directive):
+//   • Cross-domain "school+therapy both active" signals → Phase 15 territory
+//   • AI summaries, dashboards, charts, scoring → explicitly forbidden
+//   • Inbox / unread / notification-center semantics → forbidden
+//   • Urgent-action / fresh proud-moment signals → already in Coming up card
+//     and hero respectively; surfacing here would triple-up
+
+export type ContinuitySignalKind =
+  | "recurring_category"
+  | "cross_domain"
+  | "domain_today"
+  | "domain_recent"
+  | "domain_quiet";
+
+export interface ContinuitySignal {
+  kind: ContinuitySignalKind;
+  /** Short observable phrase displayed in the chip. e.g. "Focus appeared
+   *  again", "Therapy has a recent update", "2 new from school today". */
+  label: string;
+  /** Present only for `recurring_category` — lets the caller look up the
+   *  same de-saturated CATEGORY_COLORS_MEMORY palette Phase 10 already
+   *  uses so memory chips keep their visual identity inside the merged
+   *  strip. Other kinds intentionally render neutral so they don't
+   *  compete with category chips for color attention. */
+  category?: string;
+  /** Present for domain signals — used as a stable React key so React
+   *  doesn't recycle a school chip into a therapy chip when state shifts. */
+  domain?: "school" | "therapy" | "medical";
+}
+
+const SIGNAL_CAP = 3;
+const RECURRING_CATEGORY_CAP = 2;
+const DOMAIN_RECENT_WINDOW_DAYS = 3;
+// Phase 15 — Cross-domain window. 7-day rolling matches the directive's
+// "this week / recently" voice ("School and therapy both have recent
+// updates"). Broader than the per-domain 3-day window because cross-domain
+// presence is a higher-level signal — it should tolerate slightly older
+// activity before going dark.
+const CROSS_DOMAIN_WINDOW_DAYS = 7;
+
+const DOMAIN_LABEL: Record<"school" | "therapy" | "medical", string> = {
+  school: "school",
+  therapy: "therapy",
+  medical: "medical care",
+};
+
+const DOMAIN_LABEL_CAPITAL: Record<"school" | "therapy" | "medical", string> = {
+  school: "School",
+  therapy: "Therapy",
+  medical: "Medical care",
+};
+
+// Phase 15 — Cross-domain label builder.
+//
+// Voice contract (strict — re-read directive §15 before touching this):
+//   • Factual PRESENCE only. "Both have recent updates" / "all have recent
+//     updates" — never "growing", "improving", "carrying over", "generalizing".
+//   • No clinical synthesis. The signal says "school and therapy are both
+//     active" — it does NOT say "therapy work is showing up at school" or
+//     "communication is improving across domains".
+//   • Quantifier varies (both/all) but predicate stays constant: "have
+//     recent updates". Symmetric across 2-vs-3 domain cases.
+//   • Reading order is the natural school → therapy → medical sequence,
+//     not the priority order used for per-domain slot allocation, because
+//     parents read sentences left-to-right and expect the more common
+//     domain first.
+function buildCrossDomainLabel(
+  activeDomains: Array<"school" | "therapy" | "medical">,
+): string {
+  const labels = activeDomains.map((d) => DOMAIN_LABEL[d]);
+  // Sentence-case the first domain only — others stay lowercase to read
+  // as continuation, not enumeration headers.
+  const head = labels[0].charAt(0).toUpperCase() + labels[0].slice(1);
+  if (labels.length === 2) {
+    return `${head} and ${labels[1]} both have recent updates`;
+  }
+  // 3 domains — Oxford comma + "all" quantifier.
+  const middle = labels.slice(1, -1).join(", ");
+  const tail = labels[labels.length - 1];
+  return `${head}, ${middle}, and ${tail} all have recent updates`;
+}
+
+export function getContinuitySignals(
+  feed: ParentJourneyItem[],
+  recurringCategories: string[],
+  presence: ServicePresence,
+): ContinuitySignal[] {
+  const out: ContinuitySignal[] = [];
+
+  // 1. Recurring proud-moment categories — highest priority continuity signal.
+  // Phase 10's query already sorted by most-recent-occurrence and capped at 3;
+  // we trim to RECURRING_CATEGORY_CAP so domain signals can always slot in.
+  for (const cat of recurringCategories.slice(0, RECURRING_CATEGORY_CAP)) {
+    out.push({
+      kind: "recurring_category",
+      label: `${cat} appeared again`,
+      category: cat,
+    });
+  }
+
+  // Local-day-start anchor — same model Today's Pulse used. Late-night
+  // visits won't suddenly read items from 22:00 last night as "today".
+  const now = new Date();
+  const todayStartMs = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+  ).getTime();
+  const recentCutoffMs = Date.now() - DOMAIN_RECENT_WINDOW_DAYS * 86_400_000;
+  // Phase 15 — broader 7-day window powers the cross-domain check. The
+  // window is rolling from `now`, not calendar-anchored, because the chip
+  // says "recent" / "this week" — both natural-language phrases that
+  // tolerate "last Tuesday" on a Monday visit.
+  const weekCutoffMs = Date.now() - CROSS_DOMAIN_WINDOW_DAYS * 86_400_000;
+
+  // Pre-compute per-domain activity once so we don't re-scan the feed three
+  // times. `today[d]` is the count of items from this calendar day; `recent`
+  // is true if any item is within the 3-day window AT ALL (used only when
+  // there are zero items today, so a fresh-today domain doesn't double up
+  // with a "recent" chip). `weekActive[d]` is true if any item is within
+  // the broader 7-day window — drives the Phase-15 cross-domain check.
+  // A domain with today activity is also weekActive (the windows nest).
+  const today: Record<"school" | "therapy" | "medical", number> = {
+    school: 0, therapy: 0, medical: 0,
+  };
+  const recent: Record<"school" | "therapy" | "medical", boolean> = {
+    school: false, therapy: false, medical: false,
+  };
+  const weekActive: Record<"school" | "therapy" | "medical", boolean> = {
+    school: false, therapy: false, medical: false,
+  };
+  for (const item of feed) {
+    const cat = item.sourceCategory;
+    if (cat !== "school" && cat !== "therapy" && cat !== "medical") continue;
+    const t = new Date(item.occurredAt).getTime();
+    if (t >= todayStartMs) {
+      today[cat] += 1;
+    } else if (t >= recentCutoffMs) {
+      recent[cat] = true;
+    }
+    // Independent broader-window flag — captures today activity AND the
+    // intermediate 3-7 day band that recent[] excludes.
+    if (t >= weekCutoffMs) {
+      weekActive[cat] = true;
+    }
+  }
+
+  // Phase 15 — Cross-domain emission decision.
+  // Walked in natural reading order (school → therapy → medical) so the
+  // built sentence reads left-to-right in the sequence parents expect.
+  // A domain qualifies when it's connected AND has any feed activity in
+  // the 7-day window. We only emit when ≥2 domains qualify — single-
+  // domain children get the existing Phase 13 behaviour unchanged.
+  const readingOrder: Array<"school" | "therapy" | "medical"> =
+    ["school", "therapy", "medical"];
+  const crossDomainActive = readingOrder.filter((d) => {
+    const connected =
+      d === "school"  ? presence.school.connected  :
+      d === "therapy" ? presence.therapy.connected :
+                        presence.medical.connected;
+    return connected && weekActive[d];
+  });
+  const emitCrossDomain = crossDomainActive.length >= 2;
+
+  // 2. Cross-domain signal — inserted BEFORE per-domain signals so it earns
+  // the slot when both would otherwise compete. Recurring categories stay
+  // protected (the directive's explicit guarantee — Phase-15 must not crowd
+  // them out). With 2 recurring + cross-domain we already hit the cap of 3
+  // and per-domain signals fall away naturally via `slice(SIGNAL_CAP)`.
+  if (emitCrossDomain) {
+    out.push({
+      kind: "cross_domain",
+      label: buildCrossDomainLabel(crossDomainActive),
+    });
+  }
+
+  // 3. Domain-recent signals (no items today, ≥1 within last 3 days) and
+  // 4. Domain-today signals (≥1 item today) merge into a single ordered
+  // emit step: for each domain in priority order, emit at most one chip.
+  // Today wins over recent so the chip reflects the freshest signal.
+  // therapy → medical → school: less-frequent domains read as more
+  // meaningful when active.
+  //
+  // Phase-15 redundancy suppression: when the cross-domain signal already
+  // says "school and therapy both have recent updates", a follow-up chip
+  // saying "Therapy has a recent update" repeats the same fact. So
+  // `domain_recent` is SKIPPED when cross-domain emits. `domain_today` is
+  // KEPT because it adds freshness info (count + today vs recent) that
+  // the cross-domain chip doesn't carry.
+  const domainOrder: Array<"therapy" | "medical" | "school"> =
+    ["therapy", "medical", "school"];
+  for (const d of domainOrder) {
+    const connected =
+      d === "school"  ? presence.school.connected  :
+      d === "therapy" ? presence.therapy.connected :
+                        presence.medical.connected;
+    if (!connected) continue;
+    if (today[d] > 0) {
+      const tooMany = today[d] > PULSE_HIGH_THRESHOLD;
+      const label = tooMany
+        ? `Several new from ${DOMAIN_LABEL[d]} today`
+        : `${today[d]} new from ${DOMAIN_LABEL[d]} today`;
+      out.push({ kind: "domain_today", label, domain: d });
+    } else if (recent[d] && !emitCrossDomain) {
+      out.push({
+        kind: "domain_recent",
+        label: `${DOMAIN_LABEL_CAPITAL[d]} has a recent update`,
+        domain: d,
+      });
+    }
+  }
+
+  // 5. Phase 17 — Calm attention V1. After all activity-based emission,
+  // optionally surface ONE quietness chip for a connected domain that has
+  // had zero feed items in the 7-day window. Capped at one chip total
+  // (even if multiple domains are quiet) so the strip never reads as a
+  // list of absent domains — that would tip into anxiety territory.
+  //
+  // Priority within quietness mirrors the activity domainOrder
+  // (therapy → medical → school): rarer-frequency domains read as more
+  // meaningful when their quietness is named. A quiet "school" line is
+  // unusual enough that it earns the slot if the other two are silent.
+  //
+  // Voice: factual presence-of-absence ("Therapy has been quiet lately"),
+  // NEVER alarmist ("No therapy this week!"), NEVER actor-blaming ("Your
+  // clinic hasn't shared anything"). The chip uses the same neutral
+  // muted styling as the activity chips — same visual register, calm by
+  // design regardless of polarity.
+  //
+  // Data-coverage caveat: the journey feed is capped at 15 newest items.
+  // On rare busy-school weeks where school posts saturate the cap, a
+  // therapy item from day 6 could be pushed off-feed and this helper
+  // would emit a false-positive "quiet". Accepted v1 imperfection — the
+  // alternative is fetching domain-specific activity counts, which is
+  // out of scope for thin V1.
+  let quietEmitted = false;
+  for (const d of domainOrder) {
+    if (quietEmitted) break;
+    const connected =
+      d === "school"  ? presence.school.connected  :
+      d === "therapy" ? presence.therapy.connected :
+                        presence.medical.connected;
+    if (!connected) continue;
+    if (today[d] === 0 && !weekActive[d]) {
+      // Phase C V2 — Continuity Health softening. Previous wording
+      // ("has been quiet lately") read as a binary absence claim that
+      // could tip into low-grade concern. The V2 phrasing ("has been
+      // quieter recently") is relative rather than absolute — it
+      // describes an observation about pace without committing to
+      // "nothing happening." No baseline math (that would require
+      // history fetches we don't want); just calmer prose.
+      out.push({
+        kind: "domain_quiet",
+        label: `${DOMAIN_LABEL_CAPITAL[d]} has been quieter recently`,
+        domain: d,
+      });
+      quietEmitted = true;
+    }
+  }
+
+  return out.slice(0, SIGNAL_CAP);
+}
+
+// ── Phase 14 — Timeline Compression V1 ──────────────────────────────────────
+// Light temporal grouping for the Journey feed. As history grows from days
+// to weeks to months, a flat chronological list becomes hard to scan. This
+// helper buckets feed items into three calendar-anchored groups — today,
+// earlier this week, older — so the dashboard can interleave quiet section
+// labels between groups.
+//
+// Calendar week (Monday-start), NOT a rolling 7-day window:
+//   • On Monday, "Earlier this week" is empty — only Today + Older render.
+//   • On Friday, "Earlier this week" naturally holds Mon–Thu.
+//   • On Sunday (end of ISO week), "Earlier this week" holds Mon–Sat.
+// Rolling-7d would always populate "Earlier this week" but reads weird on
+// Sundays ("Sunday morning's post is in this week, not today"). Calendar
+// weeks match how parents talk about time.
+//
+// Locally-anchored boundaries — same model the Phase 13 signals use, so the
+// two surfaces always agree on what "today" means. A 23:00 post never crosses
+// into "tomorrow" until the parent's clock does.
+//
+// Stable insertion order: the feed arrives newest-first; this helper
+// preserves that order inside each bucket so individual rows still read
+// top-to-bottom newest-first.
+//
+// Pure function — no clock injection, no side effects. The dashboard derives
+// it inline once per render alongside the existing filteredFeed.
+
+export type FeedGroupKey = "today" | "thisWeek" | "older";
+
+export interface FeedGroups {
+  today:    ParentJourneyItem[];
+  thisWeek: ParentJourneyItem[];
+  older:    ParentJourneyItem[];
+}
+
+export function groupFeedByRecency(feed: ParentJourneyItem[]): FeedGroups {
+  const now = new Date();
+  const todayStartMs = new Date(
+    now.getFullYear(), now.getMonth(), now.getDate(),
+  ).getTime();
+  // Monday-start. JS getDay(): 0=Sun, 1=Mon, ..., 6=Sat.
+  // Sunday → 6 days back (last week's Monday is 6 days ago).
+  // Mon (1) → 0, Tue (2) → 1, ..., Sat (6) → 5.
+  const day = now.getDay();
+  const daysSinceMonday = day === 0 ? 6 : day - 1;
+  const weekStartMs = new Date(
+    now.getFullYear(), now.getMonth(), now.getDate() - daysSinceMonday,
+  ).getTime();
+
+  const out: FeedGroups = { today: [], thisWeek: [], older: [] };
+  for (const item of feed) {
+    const t = new Date(item.occurredAt).getTime();
+    if (t >= todayStartMs)      out.today.push(item);
+    else if (t >= weekStartMs)  out.thisWeek.push(item);
+    else                        out.older.push(item);
+  }
+  return out;
 }
 
 // ── Priority cards ────────────────────────────────────────────────────────────
