@@ -29,6 +29,7 @@ import { useSchoolContext } from "@/contexts/SchoolContext";
 import { queryKeys } from "@/lib/query-client";
 import { ShareIdentityWithClinicModal } from "@/features/clinic-sharing/ShareIdentityWithClinicModal";
 import { QuickMomentSheet } from "@/features/proud-moments/QuickMomentSheet";
+import { EditSupportContextModal } from "@/features/students/EditSupportContextModal";
 import { StudentSupportHistoryModal } from "@/features/plans/StudentSupportHistoryModal";
 import { SupportTimeline } from "@/features/plans/SupportTimeline";
 import { loadStudentSupportHistory } from "@/features/plans/timeline";
@@ -384,6 +385,7 @@ function RowMenu({
   onGraduate,
   onSupportHistory,
   onQuickMoment,
+  onSetContext,
   editLabel = "Edit Student",
 }: {
   student: Student;
@@ -394,6 +396,8 @@ function RowMenu({
   /** Phase 6 — opens the Quick Moment sheet with this student pre-selected.
    *  Null when the viewer can't capture moments (e.g. historical year). */
   onQuickMoment: (() => void) | null;
+  /** Phase 12 — opens the "Set current context" modal. Null in historical mode. */
+  onSetContext: (() => void) | null;
   editLabel?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -404,7 +408,7 @@ function RowMenu({
   const openMenu = () => {
     if (!btnRef.current) return;
     const rect = btnRef.current.getBoundingClientRect();
-    const extraItems = (onQuickMoment ? 1 : 0) + (onShare ? 1 : 0) + (onGraduate ? 1 : 0);
+    const extraItems = (onQuickMoment ? 1 : 0) + (onSetContext ? 1 : 0) + (onShare ? 1 : 0) + (onGraduate ? 1 : 0);
     const menuH = 108 + extraItems * 40; // +40 per optional item
     const spaceBelow = window.innerHeight - rect.bottom;
     const top = spaceBelow > menuH ? rect.bottom + 4 : rect.top - menuH - 4;
@@ -458,6 +462,18 @@ function RowMenu({
             >
               <Sparkles className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
               Quick Moment
+            </button>
+          )}
+          {/* Phase 12 — Set current context. Lightweight situational note
+              the parent sees as ambient framing on their dashboard. */}
+          {onSetContext && (
+            <button
+              type="button"
+              onClick={() => { setOpen(false); onSetContext(); }}
+              className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-muted transition-colors text-foreground text-left"
+            >
+              <BookOpen className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+              Set current context
             </button>
           )}
           <Link
@@ -696,6 +712,39 @@ export default function StudentsPage() {
   // via the per-row More menu. Pre-fills the sheet so no search step is
   // needed in this in-workflow capture path.
   const [quickMomentStudent, setQuickMomentStudent] = useState<Student | null>(null);
+
+  // Phase 12 — "Set current context" target + existing context text.
+  // The page fetches the current context for the selected student when the
+  // modal target is set; the modal uses it as the initial value of the
+  // textarea. Re-fetched after a save to keep the existingText fresh if the
+  // modal is reopened.
+  const [contextTarget, setContextTarget] = useState<Student | null>(null);
+  const [contextExistingText, setContextExistingText] = useState<string | null>(null);
+  const [contextRefreshTick, setContextRefreshTick] = useState(0);
+
+  // Fetch existing support context whenever the target student changes (or
+  // after a save bumps the refresh tick). Resets to null between targets so
+  // stale data from a previous student never leaks into the next modal open.
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      if (!contextTarget) {
+        setContextExistingText(null);
+        return;
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data } = await (supabase as any)
+        .from("student_support_context")
+        .select("focus_text")
+        .eq("student_id", contextTarget.id)
+        .maybeSingle();
+      if (cancelled) return;
+      setContextExistingText((data?.focus_text as string | undefined) ?? null);
+    }
+    void load();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contextTarget?.id, contextRefreshTick]);
 
   // Graduate workflow state
   const [graduateTarget, setGraduateTarget] = useState<Student | null>(null);
@@ -2484,6 +2533,12 @@ export default function StudentsPage() {
                                 // Disable in historical mode — proud_moments
                                 // are written against the current active year.
                                 isHistoricalView ? null : () => setQuickMomentStudent(student)
+                              }
+                              onSetContext={
+                                // Phase 12 — Disable in historical mode for the
+                                // same reason: context describes "what's
+                                // happening right now," not retroactively.
+                                isHistoricalView ? null : () => setContextTarget(student)
                               }
                               onGraduate={
                                 userRole === "school_admin" &&
@@ -4402,6 +4457,22 @@ export default function StudentsPage() {
           studentName={`${quickMomentStudent.firstName} ${quickMomentStudent.lastName}`.trim()}
           schoolId={schoolId}
           userId={userId}
+        />
+      )}
+
+      {/* Phase 12 — Set current context modal. Loads existing text (if any)
+          via the effect above; bumps contextRefreshTick on save so the modal
+          reflects the latest text if reopened. */}
+      {contextTarget && schoolId && userId && (
+        <EditSupportContextModal
+          open={!!contextTarget}
+          onClose={() => setContextTarget(null)}
+          onSaved={() => setContextRefreshTick((t) => t + 1)}
+          studentId={contextTarget.id}
+          studentName={`${contextTarget.firstName} ${contextTarget.lastName}`.trim()}
+          schoolId={schoolId}
+          userId={userId}
+          existingText={contextExistingText}
         />
       )}
 

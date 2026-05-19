@@ -404,6 +404,45 @@ export async function fetchRecurringMomentCategories(
     .map(([cat]) => cat);
 }
 
+// ── Phase 12 — Continuity context (school-side) ──────────────────────────────
+// Returns the current school-set support context for this child (if any).
+// Used by the parent dashboard to render a quiet ambient context line below
+// the hero, framing how the parent reads the rest of the page.
+//
+// Schema: `student_support_context` (migration 107). One row per student,
+// UNIQUE on student_id. Joined with profiles for the setter's name.
+//
+// Voice contract: this surface DISPLAYS the school's authored context text.
+// We do not interpret, summarize, or paraphrase it. The teacher's words
+// surface as written, with a small "From {firstName} · {ago}" footer.
+
+export interface SchoolSupportContext {
+  focusText: string;
+  setByName: string | null;
+  updatedAt: string;
+}
+
+export async function fetchSupportContext(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: SupabaseClient<any>,
+  childId: string,
+): Promise<SchoolSupportContext | null> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data } = await (supabase as any)
+    .from("student_support_context")
+    .select("focus_text, updated_at, set_by:profiles!set_by_profile_id(full_name)")
+    .eq("student_id", childId)
+    .maybeSingle();
+
+  if (!data) return null;
+
+  return {
+    focusText: data.focus_text as string,
+    setByName: (data.set_by?.full_name as string | undefined) ?? null,
+    updatedAt: data.updated_at as string,
+  };
+}
+
 // ── Service presence ──────────────────────────────────────────────────────────
 
 // Synchronous helper used only as an initial state seed. Real data comes

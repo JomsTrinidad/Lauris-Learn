@@ -21,6 +21,7 @@ import {
   fetchFallbackHighlight,
   fetchServicePresence,
   fetchRecurringMomentCategories,
+  fetchSupportContext,
 } from "@/features/parent-journey/queries";
 import {
   getChildStatusHeadline,
@@ -39,6 +40,7 @@ import type {
   PriorityCard,
   PriorityCardType,
 } from "@/features/parent-journey/types";
+import type { SchoolSupportContext } from "@/features/parent-journey/queries";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -53,25 +55,116 @@ function timeAgo(dateStr: string): string {
 }
 
 // ── source category styles ────────────────────────────────────────────────────
+// Source-level visual encoding so a parent can scan-distinguish school /
+// therapy / medical without reading. `avatarBg` is the saturated brand fill
+// used inside the feed cards' avatar circle; `iconBg`/`iconColor` survive
+// for legacy callers (e.g. the operational rows). `brandLabel` is the
+// human-readable badge text shown at each card's bottom-right.
 
 const CAT_STYLES: Record<string, {
   Icon: React.ElementType;
   iconBg: string;
   iconColor: string;
   labelColor: string;
+  avatarBg: string;        // saturated bg for the feed-card avatar circle
+  avatarText: string;      // icon color inside the saturated avatar
+  brandLabel: string;      // bottom-right source attribution text
+  brandLabelColor: string; // color of the bottom-right source attribution
+  dotColor: string;        // small color dot used on filter tabs
 }> = {
-  school:  { Icon: BookOpen,    iconBg: "bg-primary/10",  iconColor: "text-primary",          labelColor: "text-primary/80" },
-  therapy: { Icon: TrendingUp,  iconBg: "bg-purple-100",  iconColor: "text-purple-600",       labelColor: "text-purple-600" },
-  medical: { Icon: ShieldCheck, iconBg: "bg-emerald-100", iconColor: "text-emerald-600",      labelColor: "text-emerald-600" },
-  system:  { Icon: Bell,        iconBg: "bg-muted",        iconColor: "text-muted-foreground", labelColor: "text-muted-foreground" },
+  school:  {
+    Icon: BookOpen,    iconBg: "bg-primary/10",  iconColor: "text-primary",
+    labelColor: "text-primary/80",
+    avatarBg: "bg-primary",            avatarText: "text-primary-foreground",
+    // Phase 16 — semantic domain names instead of product names. Parents
+    // think "School / Therapy / Medical," not "Lauris Learn / Lauris Care."
+    // The internal architecture stops leaking through the UI.
+    brandLabel: "School",              brandLabelColor: "text-primary",
+    dotColor: "bg-primary",
+  },
+  therapy: {
+    Icon: TrendingUp,  iconBg: "bg-purple-100",  iconColor: "text-purple-600",
+    labelColor: "text-purple-600",
+    avatarBg: "bg-purple-500",         avatarText: "text-white",
+    brandLabel: "Therapy",             brandLabelColor: "text-purple-600",
+    dotColor: "bg-purple-500",
+  },
+  medical: {
+    Icon: ShieldCheck, iconBg: "bg-emerald-100", iconColor: "text-emerald-600",
+    labelColor: "text-emerald-600",
+    avatarBg: "bg-emerald-500",        avatarText: "text-white",
+    brandLabel: "Medical",             brandLabelColor: "text-emerald-600",
+    dotColor: "bg-emerald-500",
+  },
+  system:  {
+    Icon: Bell,        iconBg: "bg-muted",        iconColor: "text-muted-foreground",
+    labelColor: "text-muted-foreground",
+    avatarBg: "bg-muted",              avatarText: "text-muted-foreground",
+    brandLabel: "Update",              brandLabelColor: "text-muted-foreground",
+    dotColor: "bg-muted-foreground/60",
+  },
 };
 
-const SENTIMENT_DOT: Record<string, string> = {
-  positive:        "bg-green-500",
-  neutral:         "bg-blue-400",
-  informational:   "bg-gray-400",
-  requires_action: "bg-orange-500",
-};
+// ── filter chip (journey-section header) ──────────────────────────────────────
+// Phase 17 — one chip per domain in the Journey section header. Three states:
+//   "active" — domain has at least one item in the visible feed (or "all")
+//   "quiet"  — domain is connected for this child but currently has 0 items
+//   (not rendered when the domain isn't connected at all — the caller skips)
+// The chip is rendered identically for active and quiet; only the dot color
+// shifts. The count badge stays visible even at 0 so the parent can read
+// "therapy: 0 this week" as a calm presence signal rather than "did therapy
+// vanish?". Selected chip uses the primary fill.
+
+function FilterChip({
+  label,
+  count,
+  isActive,
+  state,
+  dotColor,
+  onClick,
+}: {
+  label: string;
+  count: number;
+  isActive: boolean;
+  state: "active" | "quiet";
+  dotColor?: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex-shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-medium transition-colors ${
+        isActive
+          ? "bg-primary text-primary-foreground border-primary"
+          : state === "quiet"
+            ? "border-border/60 text-muted-foreground/70 hover:text-foreground hover:border-foreground/30"
+            : "border-border text-muted-foreground hover:text-foreground hover:border-foreground/30"
+      }`}
+      aria-pressed={isActive}
+    >
+      {dotColor && (
+        <span
+          className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+            isActive ? "bg-primary-foreground/70" : dotColor
+          }`}
+        />
+      )}
+      <span>{label}</span>
+      <span
+        className={`inline-flex items-center justify-center min-w-[1.1rem] px-1 rounded-full text-[10px] font-semibold leading-tight ${
+          isActive
+            ? "bg-primary-foreground/20 text-primary-foreground"
+            : state === "quiet"
+              ? "bg-muted/60 text-muted-foreground/60"
+              : "bg-muted text-muted-foreground"
+        }`}
+      >
+        {count}
+      </span>
+    </button>
+  );
+}
 
 // ── journey row ───────────────────────────────────────────────────────────────
 
@@ -82,147 +175,147 @@ function isExternalHref(href: string): boolean {
 function JourneyRow({
   item,
   isFresh = false,
-  isContinuation = false,
+  showSourceBadge = true,
 }: {
   item: ParentJourneyItem;
   isFresh?: boolean;
-  /** Phase 8 — true when the previous visible row shares the same
-   *  organizationName, marking this row as part of the same passive
-   *  cluster. Triggers chrome softening (hide repeated source label,
-   *  dim icon, tighter top padding) without any explicit grouping
-   *  header, count, or accordion. */
-  isContinuation?: boolean;
+  /** Phase 16 — when the active child only has ONE connected domain (e.g.
+   *  school-only), the bottom-right source badge is informational noise (it
+   *  repeats the same source on every card). Caller passes `false` for
+   *  single-domain children and the badge is hidden; the colored avatar
+   *  still encodes the source visually. For multi-domain children the
+   *  badge differentiates and earns its space. */
+  showSourceBadge?: boolean;
 }) {
+  // Phase 15 — Feed item becomes a micro-card. Scan-geometry decisions:
+  //   • White card on the page's tinted bg = perceptible containment per item
+  //   • Saturated colored avatar circle = instant source-category encoding
+  //   • Conditional bottom-right domain attribution (School/Therapy/Medical) —
+  //     only when the child has multiple connected domains (Phase 16)
+  //   • Soft amber "New" pill = visible freshness signal (the previous
+  //     bg-accent/20 tint was below human perception threshold). Tuned
+  //     calmer than Figma's hard-red badge — same scan function, less
+  //     notification-center energy.
+  //   • Passive clustering (Phase 8) intentionally dropped: each card now
+  //     carries its own source identity, so suppressing it on continuation
+  //     rows would weaken scan rather than help it.
   const cat = CAT_STYLES[item.sourceCategory] ?? CAT_STYLES.system;
-  const dot = SENTIMENT_DOT[item.sentiment] ?? "bg-gray-400";
   const { Icon } = cat;
   const hasMedia = (item.mediaCount ?? 0) > 0;
   const thumbUrls = item.mediaThumbnailUrls ?? [];
   const extra = Math.max(0, (item.mediaCount ?? 0) - 3);
-  // Therapy items get an external URL to Care (Phase 2 deep-link). Internal
-  // routes (e.g. /parent/updates) stay on Next Link. External must open in a
-  // new tab with noopener so the Lauris Parent context is preserved.
   const ahref = item.actionHref;
   const ahrefIsExternal = ahref ? isExternalHref(ahref) : false;
-  // Phase 7 — Ambient freshness tint. Intentionally very light (`bg-accent/20`)
-  // so multiple adjacent fresh rows don't visually merge into a band. No
-  // border modification — the existing `border-b border-border/40` between
-  // rows preserves scan rhythm regardless of fresh state.
-  const freshCls = isFresh ? "bg-accent/20" : "";
-  // Phase 8 — Continuation rows tighten their top padding so the visual gap
-  // between cluster members is smaller than the gap between clusters. The
-  // bottom stays full so each row keeps internal breathing room — clusters
-  // don't collapse into flat blobs.
-  const topPad = isContinuation ? "pt-2" : "pt-3.5";
-  // Phase 8 — Icon stays visible at reduced opacity. The colored column of
-  // icons reads as a "cluster spine" while signalling that this row is a
-  // continuation rather than a fresh source claim.
-  const iconOpacity = isContinuation ? "opacity-60" : "";
   return (
-    <div className={`flex gap-3 ${topPad} pb-3.5 border-b border-border/40 last:border-0 ${freshCls}`}>
-      {/* Phase 7 — Neutral, factual screen-reader label. Deliberately avoids
-          "New" / "unread" / "alert" inbox vocabulary. Pure accessibility
-          parity with the visual tint. */}
+    <article
+      className={`bg-card rounded-xl p-3.5 shadow-sm ${
+        isFresh ? "ring-1 ring-amber-200/70" : "ring-1 ring-border/30"
+      }`}
+    >
       {isFresh && (
         <span className="sr-only">Posted since your last visit.</span>
       )}
-      <div className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 ${cat.iconBg} ${iconOpacity}`}>
-        <Icon className={`w-4 h-4 ${cat.iconColor}`} />
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-start justify-between gap-2">
-          {/* Phase 8 — Source label hidden on continuation rows. The first
-              row in a cluster carries the source identity; subsequent rows
-              would just be repeating "BRIGHT KIDS · BRIGHT KIDS · BRIGHT
-              KIDS" — cognitive tax with no information gain. timeAgo on the
-              right still varies per row and stays visible. */}
-          {!isContinuation && (
-            <span className={`text-[10px] font-bold uppercase tracking-wider leading-tight ${cat.labelColor}`}>
-              {item.organizationName}
-            </span>
-          )}
-          <span className="text-[10px] text-muted-foreground flex-shrink-0 leading-tight ml-auto">
-            {timeAgo(item.occurredAt)}
-          </span>
+      <div className="flex gap-3">
+        <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${cat.avatarBg}`}>
+          <Icon className={`w-4 h-4 ${cat.avatarText}`} />
         </div>
-        {/* Phase 9 — Title is rendered only when meaningful. When `item.title`
-            is empty (e.g. school updates — see `updateToJourney` adapter),
-            the summary itself is promoted to the row's semantic anchor at a
-            calm semibold/foreground weight. NOT headline-weight — same
-            text-sm size, font-medium not font-bold, foreground color. The
-            row still feels conversational and observational, not like a
-            content-publishing card. line-clamp stays at 2 so row density
-            doesn't grow.
-
-            Sources that still emit titles (therapy: "Speech Therapy",
-            observation: "Kindness — Consistent") render exactly as before. */}
-        {item.title && item.title.trim() !== "" ? (
-          <>
-            <p className="text-sm font-semibold leading-snug mt-0.5">{item.title}</p>
-            <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed line-clamp-2">
-              {item.summary}
-            </p>
-          </>
-        ) : (
-          <p className="text-sm font-medium text-foreground leading-snug mt-0.5 line-clamp-2">
-            {item.summary}
-          </p>
-        )}
-
-        {hasMedia && (
-          <Link href={item.actionHref ?? "/parent/updates"} className="mt-2 flex items-center gap-1.5 group">
-            {thumbUrls.slice(0, 3).map((url, i) => (
-              <div key={i} className="relative flex-shrink-0">
-                <img
-                  src={url}
-                  alt=""
-                  className="w-14 h-14 rounded-lg object-cover ring-1 ring-border"
-                />
-                {i === 2 && extra > 0 && (
-                  <div className="absolute inset-0 bg-black/55 rounded-lg flex items-center justify-center">
-                    <span className="text-white text-xs font-semibold">+{extra}</span>
-                  </div>
-                )}
-              </div>
-            ))}
-            {thumbUrls.length === 0 && (
-              <span className="flex items-center gap-1 text-[10px] text-muted-foreground group-hover:text-foreground transition-colors">
-                <Camera className="w-3 h-3 flex-shrink-0" />
-                {item.mediaCount} photo{item.mediaCount !== 1 ? "s" : ""}
+        <div className="flex-1 min-w-0">
+          {/* Top row: title (or summary-as-title) + soft "New" pill on fresh
+              items. timestamp lives at the bottom-right with the brand
+              attribution so the top row stays focused on the headline. */}
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0 flex-1">
+              {item.title && item.title.trim() !== "" ? (
+                <>
+                  <p className="text-sm font-semibold leading-snug">{item.title}</p>
+                  <p className="text-xs text-muted-foreground mt-1 leading-relaxed line-clamp-2">
+                    {item.summary}
+                  </p>
+                </>
+              ) : (
+                <p className="text-sm font-medium text-foreground leading-snug line-clamp-2">
+                  {item.summary}
+                </p>
+              )}
+            </div>
+            {isFresh && (
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-800 flex-shrink-0 leading-tight">
+                New
               </span>
             )}
-            {thumbUrls.length > 0 && (
-              <span className="text-[10px] text-muted-foreground group-hover:text-foreground transition-colors">
-                {item.mediaCount} photo{item.mediaCount !== 1 ? "s" : ""}
-              </span>
-            )}
-          </Link>
-        )}
+          </div>
 
-        {ahref && item.itemType !== "update" && (
-          ahrefIsExternal ? (
-            <a
-              href={ahref}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-1 text-xs text-primary hover:underline flex items-center gap-0.5"
-            >
-              {item.actionLabel ?? "See more"} <ChevronRight className="w-3 h-3" />
-            </a>
-          ) : (
-            <Link
-              href={ahref}
-              className="mt-1 text-xs text-primary hover:underline flex items-center gap-0.5"
-            >
-              {item.actionLabel ?? "See more"} <ChevronRight className="w-3 h-3" />
+          {hasMedia && (
+            <Link href={item.actionHref ?? "/parent/updates"} className="mt-2.5 flex items-center gap-1.5 group">
+              {thumbUrls.slice(0, 3).map((url, i) => (
+                <div key={i} className="relative flex-shrink-0">
+                  <img
+                    src={url}
+                    alt=""
+                    className="w-14 h-14 rounded-lg object-cover ring-1 ring-border"
+                  />
+                  {i === 2 && extra > 0 && (
+                    <div className="absolute inset-0 bg-black/55 rounded-lg flex items-center justify-center">
+                      <span className="text-white text-xs font-semibold">+{extra}</span>
+                    </div>
+                  )}
+                </div>
+              ))}
+              {thumbUrls.length === 0 && (
+                <span className="flex items-center gap-1 text-[10px] text-muted-foreground group-hover:text-foreground transition-colors">
+                  <Camera className="w-3 h-3 flex-shrink-0" />
+                  {item.mediaCount} photo{item.mediaCount !== 1 ? "s" : ""}
+                </span>
+              )}
+              {thumbUrls.length > 0 && (
+                <span className="text-[10px] text-muted-foreground group-hover:text-foreground transition-colors">
+                  {item.mediaCount} photo{item.mediaCount !== 1 ? "s" : ""}
+                </span>
+              )}
             </Link>
-          )
-        )}
+          )}
+
+          {ahref && item.itemType !== "update" && (
+            ahrefIsExternal ? (
+              <a
+                href={ahref}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-2 text-xs text-primary hover:underline inline-flex items-center gap-0.5"
+              >
+                {item.actionLabel ?? "See more"} <ChevronRight className="w-3 h-3" />
+              </a>
+            ) : (
+              <Link
+                href={ahref}
+                className="mt-2 text-xs text-primary hover:underline inline-flex items-center gap-0.5"
+              >
+                {item.actionLabel ?? "See more"} <ChevronRight className="w-3 h-3" />
+              </Link>
+            )
+          )}
+
+          {/* Footer: org/provider context + time + optional domain badge.
+              For single-domain children, the domain badge is suppressed
+              (it would repeat the same source on every card). The colored
+              avatar circle on the left still encodes the source — no
+              information is lost, only the redundant chrome is gone. */}
+          <div className="mt-2.5 flex items-center gap-2 text-[10px] leading-tight">
+            <span className="text-muted-foreground truncate">
+              {item.providerName ?? item.organizationName}
+            </span>
+            <span className="text-muted-foreground/40">·</span>
+            <span className="text-muted-foreground flex-shrink-0">{timeAgo(item.occurredAt)}</span>
+            {showSourceBadge && (
+              <span className={`ml-auto inline-flex items-center gap-1 font-medium flex-shrink-0 ${cat.brandLabelColor}`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${cat.dotColor}`} />
+                {cat.brandLabel}
+              </span>
+            )}
+          </div>
+        </div>
       </div>
-      <div className="flex-shrink-0 pt-2">
-        <span className={`w-2 h-2 rounded-full block ${dot}`} />
-      </div>
-    </div>
+    </article>
   );
 }
 
@@ -245,18 +338,20 @@ const OPERATIONAL_ICON: Partial<Record<PriorityCardType, React.ElementType>> = {
   todays_session:   CalendarDays,
 };
 
-function OperationalRow({ card, isLast }: { card: PriorityCard; isLast: boolean }) {
+function OperationalRow({ card }: { card: PriorityCard }) {
   const isUrgent  = card.cardType === "urgent_action";
   const isWarning = card.accentVariant === "warning";
   const isPurple  = card.accentVariant === "purple";
 
-  // Urgent rows: subtle amber tint + left accent so they still interrupt
-  // visually, but compressed (py-2, not card padding) so they no longer
-  // dominate the page.
-  // Non-urgent rows: plain row, faint border-b between siblings.
+  // Phase 13 — Operational rows now live INSIDE the Today scene's
+  // atmospheric wrapper. The previous between-row `border-b border-border/40`
+  // separator made non-urgent rows read as a sub-list (table-of-actions)
+  // inside the scene; dropping it lets them read as continuous quiet
+  // present-moment items. Urgent rows keep their amber left-accent + tint
+  // because their interruption value is earned.
   const containerCls = isUrgent
     ? "flex items-start gap-2.5 pl-3 pr-2 py-2 rounded-r-md border-l-2 border-amber-400 bg-amber-50/40 hover:bg-amber-50/70 transition-colors"
-    : `flex items-start gap-2.5 pl-1 pr-2 py-2 hover:bg-accent/10 transition-colors ${isLast ? "" : "border-b border-border/40"}`;
+    : "flex items-start gap-2.5 pl-1 pr-2 py-2 hover:bg-accent/10 rounded-md transition-colors";
 
   const titleCls = isUrgent
     ? "text-sm font-semibold text-amber-900 leading-snug"
@@ -296,25 +391,25 @@ function OperationalRow({ card, isLast }: { card: PriorityCard; isLast: boolean 
 }
 
 function OperationalSection({ cards }: { cards: PriorityCard[] }) {
+  // Phase 12.5 — When no operational items exist, the section renders
+  // NOTHING. Absence is the correct signal here; adding a "You're all
+  // caught up" line would introduce productivity / inbox semantics that
+  // the directive explicitly avoids.
+  // Phase 13 — Lives inside the Today atmospheric wrapper. `space-y-1`
+  // on the non-urgent group keeps tiny breathing room between rows
+  // without the visible separator, so the operational items read as
+  // continuous quiet items in the scene rather than a sub-list.
   if (cards.length === 0) {
-    // Calm "all caught up" — quiet text line, no pill, no card.
-    return (
-      <div className="flex items-center gap-2 px-1 py-1.5 text-xs text-muted-foreground">
-        <CheckCircle className="w-3.5 h-3.5 text-green-500/80 flex-shrink-0" />
-        <span>You&apos;re all caught up — no urgent items today.</span>
-      </div>
-    );
+    return null;
   }
   const urgent = cards.filter(c => c.cardType === "urgent_action");
   const others = cards.filter(c => c.cardType !== "urgent_action");
   return (
     <div className="space-y-2">
-      {urgent.map((c) => <OperationalRow key={c.id} card={c} isLast={true} />)}
+      {urgent.map((c) => <OperationalRow key={c.id} card={c} />)}
       {others.length > 0 && (
-        <div>
-          {others.map((c, i) => (
-            <OperationalRow key={c.id} card={c} isLast={i === others.length - 1} />
-          ))}
+        <div className="space-y-1">
+          {others.map((c) => <OperationalRow key={c.id} card={c} />)}
         </div>
       )}
     </div>
@@ -540,6 +635,11 @@ export default function ParentDashboard() {
   // Cap of 3. Renders as a quiet "Lately" strip at the top of the journey
   // section. Empty array hides the strip entirely.
   const [recurringCategories, setRecurringCategories] = useState<string[]>([]);
+  // Phase 12 — School-set continuity context. One short observational line
+  // describing what's currently happening for this child. Null when no
+  // school staff has written one. Renders as a quiet ambient line below
+  // the hero, above the standalone Positive Highlight / operational rows.
+  const [supportContext, setSupportContext] = useState<SchoolSupportContext | null>(null);
   const [activeFilter, setActiveFilter] = useState<JourneyFilter>("all");
   const [parentUserId, setParentUserId] = useState<string | null>(null);
   const [reactSaving, setReactSaving] = useState(false);
@@ -583,7 +683,7 @@ export default function ParentDashboard() {
     const resolvedSchool = schoolName || "School";
     const resolvedClass = child?.className ?? "";
 
-    const [att, evts, needsData, hlData, fbData, feedData, spData, recurringCats] = await Promise.all([
+    const [att, evts, needsData, hlData, fbData, feedData, spData, recurringCats, ctxData] = await Promise.all([
       fetchAttendanceToday(supabase, childId),
       fetchUpcomingEvents(supabase, resolvedSchool, { schoolId, classId }),
       fetchNeedsAttention({ supabase, childId }),
@@ -593,6 +693,8 @@ export default function ParentDashboard() {
       fetchServicePresence(supabase, childId, resolvedSchool, resolvedClass),
       // Phase 10 — continuity memory (recurring proud-moment categories ≥2 in 14d).
       fetchRecurringMomentCategories(supabase, childId),
+      // Phase 12 — school-set continuity context (one ambient line).
+      fetchSupportContext(supabase, childId),
     ]);
 
     setAttendance(att);
@@ -603,6 +705,7 @@ export default function ParentDashboard() {
     setFeed(feedData);
     setServicePresence(spData);
     setRecurringCategories(recurringCats);
+    setSupportContext(ctxData);
     setLoading(false);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [childId, classId, childProfileId]);
@@ -734,6 +837,11 @@ export default function ParentDashboard() {
   // Cross-domain context line — single, subtle, only when ≥2 services connected.
   const serviceContextLine = getServiceContextLine(servicePresence);
 
+  // Phase 15 — Today's Pulse signal removed. The count badges in the top
+  // filter strip (Zone 1) now carry "what arrived per source" with stronger
+  // scan gravity than a compressed sentence inside the Today card. Keeping
+  // both would have been compression-on-compression.
+
   // Phase 3 — operational details moved into a secondary line.
   // When the hero is not attendance-driven AND the child IS marked present
   // today, surface a small grounding line so parents quietly know the
@@ -771,9 +879,65 @@ export default function ParentDashboard() {
 
   const sp = servicePresence;
 
+  // Phase 16 — Multi-domain detection. The bottom-right source badge on each
+  // feed card only earns its space when the child actually has multiple
+  // domains flowing in. For single-domain (school-only) children the badge
+  // would repeat "School" on every row — pure noise. The colored avatar
+  // circle stays in both cases so source attribution is never lost.
+  const connectedDomainCount =
+    (sp.school.connected ? 1 : 0) +
+    (sp.therapy.connected ? 1 : 0) +
+    (sp.medical.connected ? 1 : 0);
+  const showSourceBadge = connectedDomainCount >= 2;
+
   return (
     <ErrorBoundary section="parent-dashboard" fallback="minimal">
-    <div className="space-y-5 pb-6">
+    {/* Phase 14 — Visible scan geometry.
+        Page surface shifts to a tinted muted canvas (`bg-muted/60`) that
+        bleeds edge-to-edge of the parent layout's content area. This is
+        the foundation that makes the Today card visibly lift below.
+        Three distinct visual planes now exist for the first time:
+          • page   = atmospheric layer (this wrapper)
+          • Today  = foreground cognition (white card on the tint)
+          • Journey = ambient continuity texture (inline on the tint)
+        Previous phases (12.5 → 12.6 → 13) hit the right philosophy but
+        the visual delta was below perception threshold. This phase
+        pushes into perceptible territory while staying calm, soft, and
+        continuity-oriented. */}
+    <div className="bg-muted/60 -mx-4 -my-6 px-4 py-6">
+    <div className="space-y-4">
+
+      {/* Phase 17 — Filter scan strip moved OUT of the page top and INTO
+          the Journey section header below. The previous top placement
+          created a semantic mismatch: chips read as page-level filters
+          but only affected the Journey feed (the Today card stayed
+          cross-domain). As Care grows, that mismatch would have hardened
+          into a real bug.
+          New architecture:
+            • Today  = cross-domain synthesis (no filters above it)
+            • Journey = inspection (filters attached to its header) */}
+
+      {/* ── Today card (foreground cognition) ────────────────────────────────
+          Phase 14 — Visible scan geometry. The Today scene becomes a
+          REAL white card on the tinted page surface above. This is the
+          first perceptibly elevated surface in the parent dashboard's
+          history. Earlier attempts (tray with `bg-muted/30`, gradient
+          with `from-muted/50 to-muted/20 ring-1`) sat on a white page
+          background and produced delta below human perception threshold.
+          The inversion — white card on tinted page — produces real
+          contrast.
+          Treatment:
+            • `bg-card` (white in light mode, theme-adaptive)
+            • `rounded-2xl` (16px, clearly a contained shape)
+            • `p-5` (1.25rem generous internal breath — feels "held")
+            • `shadow-sm` (very soft, restrained elevation cue —
+               authorised by Phase 14 directive)
+          Inset from page edges (no `-mx-4`) so the card has visible
+          rounded corners on all four sides — the eye reads it as a
+          contained zone, not a band.
+          Still calm, soft, continuity-oriented. NOT dashboard chrome,
+          NOT a widget, NOT enterprise card energy. */}
+      <section className="bg-card rounded-2xl p-5 shadow-sm space-y-4">
 
       {/* ── Greeting + Status Headline ────────────────────────────────────── */}
       <div className="pt-1">
@@ -783,97 +947,98 @@ export default function ParentDashboard() {
         <h1 className="text-2xl font-bold leading-tight mt-0.5">
           {statusHeadline.heading}
         </h1>
-        <div className={`flex items-center gap-1 mt-1 ${statusHeadline.detailColor}`}>
-          <StatusIcon className="w-3.5 h-3.5 flex-shrink-0" />
-          <p className="text-xs">{statusHeadline.detail}</p>
+        {/* Phase 13 — Tight supporting cluster.
+            Previous structure had three independent text blocks under the
+            headline (detail at `mt-1`, service context at `mt-1.5`,
+            secondary attendance at `mt-1.5`) — five vertical text fragments
+            in a zigzag rhythm read as "list of facts," not a hero. This
+            collapses the supporting layer to a single compositional unit
+            under the headline:
+              (a) the colored detail line with status icon (semantic anchor)
+              (b) an optional muted addendum that merges service context +
+                  secondary attendance with a quiet `·` separator.
+            The whole cluster occupies one visual tier under the headline
+            (`mt-1.5`); the addendum sits hugging the detail at `mt-0.5`
+            so it reads as continuation, not as a separate row. */}
+        <div className="mt-1.5">
+          {/* Phase 18 — detail line only renders when the tier returned one.
+              Tier D30 (proud-moment-as-hero) now returns null so the
+              attached spotlight beneath the headline can carry the real
+              continuity story (teacher note) instead. */}
+          {statusHeadline.detail && (
+            statusHeadline.detailHref ? (
+              <Link
+                href={statusHeadline.detailHref}
+                className={`inline-flex items-center gap-1 text-xs hover:underline transition-colors ${statusHeadline.detailColor}`}
+              >
+                <StatusIcon className="w-3.5 h-3.5 flex-shrink-0" />
+                <span>{statusHeadline.detail}</span>
+              </Link>
+            ) : (
+              <div className={`flex items-center gap-1 text-xs ${statusHeadline.detailColor}`}>
+                <StatusIcon className="w-3.5 h-3.5 flex-shrink-0" />
+                <span>{statusHeadline.detail}</span>
+              </div>
+            )
+          )}
+          {(serviceContextLine || showSecondaryAttendance) && (
+            <p className={`text-[11px] text-muted-foreground/80 leading-relaxed ${statusHeadline.detail ? "mt-0.5" : ""}`}>
+              {[
+                serviceContextLine,
+                showSecondaryAttendance
+                  ? (attendance.checkedInAt
+                      ? `${firstName} is in school today — checked in at ${attendance.checkedInAt}.`
+                      : `${firstName} is in school today.`)
+                  : null,
+              ].filter(Boolean).join(" · ")}
+            </p>
+          )}
         </div>
 
-        {/* Cross-domain framing — single, subtle. Hidden when only one
-            service is connected so single-domain parents don't see an
-            "integration platform" line they don't need. */}
-        {serviceContextLine && (
-          <p className="text-[11px] text-muted-foreground/80 mt-1.5">
-            {serviceContextLine}
-          </p>
-        )}
+        {/* Phase 17 — Absence-reporting widget moved OUT of the Today card
+            into the Coming up card below. Reasoning: operational utilities
+            don't belong inside the continuity hero. The hero says "Olivia
+            stayed focused today" — and immediately below it the page used
+            to say "Report Olivia absent today." Tonal whiplash. The
+            absence action is operational, not emotional, and Coming up is
+            its semantic home. */}
 
-        {/* Phase 3 — secondary operational line. Only renders when hero is
-            continuity-driven AND child is marked present today. Keeps the
-            operational grounding without letting it own the emotional tone. */}
-        {showSecondaryAttendance && (
-          <p className="text-[11px] text-muted-foreground/80 mt-1.5">
-            {attendance.checkedInAt
-              ? `${firstName} is in school today — checked in at ${attendance.checkedInAt}.`
-              : `${firstName} is in school today.`}
-          </p>
-        )}
-
-        {/* Absence reporting — only when attendance not yet marked */}
-        {attendance.status === null && (
-          <div className="mt-2.5">
-            {absenceReported ? (
-              <div className="flex items-center gap-1.5 text-xs text-amber-700">
-                <AlertTriangle className="w-3 h-3 flex-shrink-0" />
-                <span>Absence reported to school for today.</span>
-              </div>
-            ) : showAbsenceForm ? (
-              <div className="space-y-2 mt-1">
-                <input
-                  type="text"
-                  placeholder="Reason (optional) — e.g. Sick, family emergency…"
-                  value={absenceReason}
-                  onChange={(e) => setAbsenceReason(e.target.value)}
-                  className="w-full text-sm border border-border rounded-lg px-3 py-2 bg-background focus:outline-none focus:ring-2 focus:ring-primary"
-                />
-                {absenceError && <p className="text-xs text-red-600">{absenceError}</p>}
-                <div className="flex gap-2">
-                  <button
-                    onClick={submitAbsence}
-                    disabled={submittingAbsence}
-                    className="flex-1 text-sm font-medium bg-amber-500 text-white rounded-lg py-2 hover:bg-amber-600 transition-colors disabled:opacity-50"
-                  >
-                    {submittingAbsence ? "Sending…" : "Notify School"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setShowAbsenceForm(false); setAbsenceReason(""); setAbsenceError(null); }}
-                    className="px-4 text-sm text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <button
-                onClick={() => setShowAbsenceForm(true)}
-                className="mt-0.5 text-xs text-amber-700 hover:text-amber-800 font-medium flex items-center gap-1.5 transition-colors"
-              >
-                <AlertTriangle className="w-3 h-3" />
-                Report {firstName} absent today
-              </button>
-            )}
-          </div>
-        )}
-
-        {/* ── Phase 4 — continuity spotlight attached to hero ─────────────── */}
-        {/* When Phase 3's hero lifted a proud moment (Tier D30), the
-            supporting content (chip + note + reactions + link) flows
-            directly from the hero, anchored by a hairline separator. No
-            card frame, no "Positive Highlight" h2 — the hero IS the
-            spotlight. Calm continuation, not celebration. */}
+        {/* ── Phase 18 — continuity spotlight attached to hero ────────────── */}
+        {/* When the hero lifted a proud moment (Tier D30), the spotlight
+            below the headline carries the meaning hierarchy:
+              1. NOTE (continuity detail — the real story; promoted from
+                 buried-italic to plain readable prose directly under the
+                 headline)
+              2. METADATA ROW (category chip + timestamp — small, ambient,
+                 below the detail because taxonomy is context, not anchor)
+              3. REACTIONS (affordance — only after meaning is established)
+              4. Resonance picker + view-all link (utility)
+            When `note` is empty, the continuity-detail line collapses
+            cleanly and the metadata row carries on its own — the page
+            degrades gracefully. */}
         {highlightHeadingSuppressed && highlight && (
-          <div className="mt-3 pt-3 border-t border-amber-200/40">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${CATEGORY_COLORS[highlight.category] ?? "bg-gray-100 text-gray-700"}`}>
-                {highlight.category}
-              </span>
-            </div>
+          <div className="mt-3 pt-3 border-t border-amber-200/40 space-y-3">
+            {/* Continuity detail — the actual developmental observation.
+                Plain prose, no italics, no quote marks. This IS the story,
+                not someone else's quoted line. */}
             {highlight.note && (
-              <p className="text-sm text-amber-900/85 mt-2 leading-relaxed italic">
-                &ldquo;{highlight.note}&rdquo;
+              <p className="text-[15px] text-amber-950/90 leading-relaxed">
+                {highlight.note}
               </p>
             )}
-            <div className="flex items-center gap-2 mt-3 flex-wrap">
+            {/* Metadata row — ambient chip + relative time. Below the
+                detail because taxonomy is context. */}
+            <div className="flex items-center gap-2 flex-wrap text-xs">
+              <span className={`inline-flex items-center px-2 py-0.5 rounded-full font-medium ${CATEGORY_COLORS[highlight.category] ?? "bg-gray-100 text-gray-700"}`}>
+                {highlight.category}
+              </span>
+              <span className="text-amber-700/70">·</span>
+              <span className="text-amber-700/80">{timeAgo(highlight.createdAt)}</span>
+            </div>
+            {/* Reactions — held back until meaning has been read. The
+                visual weight is intentionally preserved (these are still
+                the primary affordance); they just no longer LEAD. */}
+            <div className="flex items-center gap-2 flex-wrap pt-1">
               {REACTIONS.map((r) => (
                 <button
                   key={r.type}
@@ -890,12 +1055,8 @@ export default function ParentDashboard() {
               ))}
             </div>
             {highlight.myReaction && (
-              <p className="text-xs text-green-700 mt-2">✓ Your reaction has been shared with the school.</p>
+              <p className="text-xs text-green-700">✓ Your reaction has been shared with the school.</p>
             )}
-            {/* Phase 11 — Quiet parent resonance. Optional, private to this
-                device, no teacher notification. Rendered below reactions so
-                it reads as "if you also want to softly mark this from your
-                side." Closed-by-default minimizes visual weight. */}
             <ResonancePicker
               childId={childId}
               momentId={highlight.id}
@@ -903,13 +1064,73 @@ export default function ParentDashboard() {
             />
             <Link
               href="/parent/proud-moments"
-              className="mt-3 text-xs text-amber-700 hover:text-amber-900 font-medium flex items-center gap-1 transition-colors"
+              className="text-xs text-amber-700 hover:text-amber-900 font-medium flex items-center gap-1 transition-colors"
             >
               View all highlights <ChevronRight className="w-3 h-3" />
             </Link>
           </div>
         )}
       </div>
+
+      {/* ── Phase 12 — Continuity context line ────────────────────────────────
+          Ambient atmospheric framing — school-set, observational, present-
+          continuous. Sits BETWEEN the hero and the standalone continuity
+          blocks (Positive Highlight / Recent Growth) so it frames how the
+          parent reads everything below.
+          Visual treatment: plain text on the page surface — NO card frame,
+          NO background fill, NO icon. The page quietly remembers the
+          child's current rhythm without presenting it as a status surface.
+          Renders only when school staff have actually set a context. */}
+      {supportContext && (
+        <div className="px-1">
+          <p className="text-sm text-foreground/80 leading-relaxed">
+            {supportContext.focusText}
+          </p>
+          <p className="text-[11px] text-muted-foreground/60 mt-1">
+            {supportContext.setByName
+              ? `From ${supportContext.setByName.split(" ")[0]} · updated ${timeAgo(supportContext.updatedAt)}`
+              : `Updated ${timeAgo(supportContext.updatedAt)}`}
+          </p>
+        </div>
+      )}
+
+      {/* ── Phase 13 — Signal cluster (Lately + Today's Pulse) ────────────────
+          Compressed continuity signals MOVED into the Today tray from their
+          previous positions. Together with the hero and Phase 12 context,
+          these answer the busy-parent quick-scan questions:
+            • Hero               → "What matters now?"
+            • Phase 12 context   → "What's the ongoing situation?"
+            • Lately strip       → "What patterns are emerging?" (was Phase 10)
+            • Today's Pulse      → "What changed today?" (Phase 13)
+          The journey feed below becomes supporting continuity texture —
+          present for parents who want details, but no longer required
+          reading for the basic scan. */}
+
+      {/* Lately strip — recurring proud-moment categories ≥2× in 14d.
+          De-saturated chips so the strip reads as quiet memory texture. */}
+      {recurringCategories.length > 0 && (
+        <div className="flex items-center gap-2 flex-wrap px-1">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/50">
+            Lately
+          </span>
+          {recurringCategories.map((cat) => (
+            <span
+              key={cat}
+              className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                CATEGORY_COLORS_MEMORY[cat] ?? "bg-muted/30 text-muted-foreground"
+              }`}
+            >
+              {cat}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Phase 15 — Today's Pulse signal removed. It said "1 new from
+          school today" — the same fact the count badges in the top
+          filter strip now communicate visually with stronger scan
+          gravity. Keeping both would have been redundant compression
+          stacked on compression. */}
 
       {/* ── Phase 4 — standalone Positive Highlight ─────────────────────────── */}
       {/* Renders only when the hero did NOT consume the proud moment (i.e. hero
@@ -918,26 +1139,36 @@ export default function ParentDashboard() {
           treatment so warmth is communicated by the bar + icon + colored text,
           not a filled container. */}
       {showFeaturedHighlight && highlight && !highlightHeadingSuppressed && (
-        <div className="border-l-2 border-amber-300 pl-3 py-1">
-          <div className="flex items-center gap-2 mb-1.5">
+        <div className="border-l-2 border-amber-300 pl-3 py-1 space-y-2">
+          {/* Star + "Positive Highlight" label. Star icon is enough
+              freshness affordance — no "Noted today" line needed here
+              either (the timestamp in the corner is the time anchor). */}
+          <div className="flex items-center gap-2">
             <Star className="w-4 h-4 text-amber-500 flex-shrink-0" />
             <h2 className="font-semibold text-amber-900 text-sm">Positive Highlight</h2>
             <span className="text-xs text-amber-600 ml-auto">{timeAgo(highlight.createdAt)}</span>
           </div>
-          <p className="font-medium text-sm text-amber-900 leading-snug">
+          {/* Headline — the emotional takeaway */}
+          <p className="font-semibold text-[15px] text-amber-900 leading-snug">
             {getMomentHeading(firstName, highlight.category)}
           </p>
-          <div className="flex items-center gap-2 mt-1.5">
-            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${CATEGORY_COLORS[highlight.category] ?? "bg-gray-100 text-gray-700"}`}>
+          {/* Phase 18 — Continuity detail (teacher note) promoted to
+              directly under the headline as plain prose, NOT italicized
+              quote. This IS the story, the anchor parents emotionally
+              remember. Collapses cleanly when no note exists. */}
+          {highlight.note && (
+            <p className="text-[15px] text-amber-950/90 leading-relaxed">
+              {highlight.note}
+            </p>
+          )}
+          {/* Metadata row — chip is ambient context, not the anchor */}
+          <div className="flex items-center gap-2 flex-wrap text-xs">
+            <span className={`inline-flex items-center px-2 py-0.5 rounded-full font-medium ${CATEGORY_COLORS[highlight.category] ?? "bg-gray-100 text-gray-700"}`}>
               {highlight.category}
             </span>
           </div>
-          {highlight.note && (
-            <p className="text-sm text-amber-900/85 mt-2 leading-relaxed italic">
-              &ldquo;{highlight.note}&rdquo;
-            </p>
-          )}
-          <div className="flex items-center gap-2 mt-3 flex-wrap">
+          {/* Reactions — meaning first, response second */}
+          <div className="flex items-center gap-2 flex-wrap pt-1">
             {REACTIONS.map((r) => (
               <button
                 key={r.type}
@@ -954,11 +1185,8 @@ export default function ParentDashboard() {
             ))}
           </div>
           {highlight.myReaction && (
-            <p className="text-xs text-green-700 mt-2">✓ Your reaction has been shared with the school.</p>
+            <p className="text-xs text-green-700">✓ Your reaction has been shared with the school.</p>
           )}
-          {/* Phase 11 — Quiet parent resonance (standalone block variant).
-              Same component, same private-to-device storage, same calm
-              voice contract as the attached spotlight variant above. */}
           <ResonancePicker
             childId={childId}
             momentId={highlight.id}
@@ -966,7 +1194,7 @@ export default function ParentDashboard() {
           />
           <Link
             href="/parent/proud-moments"
-            className="mt-3 text-xs text-amber-700 hover:text-amber-900 font-medium flex items-center gap-1 transition-colors"
+            className="text-xs text-amber-700 hover:text-amber-900 font-medium flex items-center gap-1 transition-colors"
           >
             View all highlights <ChevronRight className="w-3 h-3" />
           </Link>
@@ -998,104 +1226,180 @@ export default function ParentDashboard() {
         </div>
       )}
 
-      {/* ── Operational strip (Phase 4 — compressed rows, not cards) ────────── */}
-      {/* Operational triage still surfaces here, but at roughly one-third the
-          visual mass of the old Card-based PriorityCardsSection. Urgent items
-          (consent / doc request) get a left accent + subtle amber tint so they
-          still interrupt visually; non-urgent items are plain rows. */}
-      <OperationalSection cards={priorityCards} />
+      {/* Phase 15 — Operational rows extracted from the Today card into
+          their own white "Coming up" card below. Reasoning: parents
+          described the Today card as "stuffed" — 7–9 content types piled
+          in one container. Pulling events / balance-due / consent rows
+          into a parallel card gives them their own scan zone and lets
+          Today become a focused emotional surface (headline + spotlight
+          + lately + support context only). */}
 
-      {/* ── Child's Journey (Phase 4 — no card frame; rows on page surface) ─── */}
-      <div>
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="font-semibold text-base">{firstName}&apos;s Journey</h2>
-          <Link
-            href="/parent/updates"
-            className="text-xs text-primary flex items-center gap-0.5 hover:underline flex-shrink-0"
-          >
-            View updates <ChevronRight className="w-3 h-3" />
-          </Link>
-        </div>
+      </section>
 
-        {/* Phase 10 — Continuity memory ("Lately" strip).
-            Surfaces proud-moment categories that have recurred (≥2 times)
-            in the last 14 days. No counts, no ranking, no narration — just
-            the category labels themselves, in most-recent-first order, in
-            a de-saturated palette so the strip reads as quiet memory
-            texture rather than an active control or analytics surface.
-            Renders only when at least one category meets the recurrence
-            bar — calm by default. */}
-        {recurringCategories.length > 0 && (
-          <div className="flex items-center gap-2 flex-wrap mb-2">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/50">
-              Lately
-            </span>
-            {recurringCategories.map((cat) => (
-              <span
-                key={cat}
-                className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${
-                  CATEGORY_COLORS_MEMORY[cat] ?? "bg-muted/30 text-muted-foreground"
-                }`}
-              >
-                {cat}
-              </span>
-            ))}
+      {/* ── ZONE 3 — Coming up card (white, parallel to Today) ────────────────
+          Phase 15 — Holds the operational items previously squeezed
+          into Today: upcoming meetings, school events, balance due,
+          consent pending.
+          Phase 17 — Also hosts the absence-reporting action (moved out
+          of the Today emotional zone). The card now renders when EITHER
+          (a) there are operational priority cards, OR (b) the parent
+          hasn't yet marked attendance / reported absence for today.
+          Both branches keep the card "calm by absence" — when there's
+          truly nothing to act on, the card stays hidden. */}
+      {(priorityCards.length > 0 || attendance.status === null) && (
+        <section className="bg-card rounded-2xl p-5 shadow-sm space-y-3">
+          <div className="flex items-center gap-2">
+            <CalendarDays className="w-4 h-4 text-muted-foreground/70 flex-shrink-0" />
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/70">
+              Coming up
+            </h2>
           </div>
-        )}
-
-        {/* Filter pills */}
-        <div className="flex items-center gap-1.5 flex-wrap mb-2">
-          {JOURNEY_FILTERS.map((f) => {
-            const isActive = activeFilter === f;
-            return (
+          {/* Absence action — appears here so it joins other operational
+              items in the same scan zone. Three states: reported (confirmation),
+              form open (input + submit), idle (link). The block is plain on
+              this card's surface — not a styled row — so it reads as
+              utility, not as another event. */}
+          {attendance.status === null && (
+            absenceReported ? (
+              <div className="flex items-center gap-1.5 text-xs text-amber-700 pl-1">
+                <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+                <span>Absence reported to school for today.</span>
+              </div>
+            ) : showAbsenceForm ? (
+              <div className="space-y-2">
+                <input
+                  type="text"
+                  placeholder="Reason (optional) — e.g. Sick, family emergency…"
+                  value={absenceReason}
+                  onChange={(e) => setAbsenceReason(e.target.value)}
+                  className="w-full text-sm border border-border rounded-lg px-3 py-2 bg-background focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+                {absenceError && <p className="text-xs text-red-600">{absenceError}</p>}
+                <div className="flex gap-2">
+                  <button
+                    onClick={submitAbsence}
+                    disabled={submittingAbsence}
+                    className="flex-1 text-sm font-medium bg-amber-500 text-white rounded-lg py-2 hover:bg-amber-600 transition-colors disabled:opacity-50"
+                  >
+                    {submittingAbsence ? "Sending…" : "Notify School"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setShowAbsenceForm(false); setAbsenceReason(""); setAbsenceError(null); }}
+                    className="px-4 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
               <button
-                key={f}
-                onClick={() => setActiveFilter(f)}
-                className={`inline-flex items-center gap-1 text-xs px-3 py-1 rounded-full border transition-colors flex-shrink-0 ${
-                  isActive
-                    ? "bg-primary text-primary-foreground border-primary"
-                    : "border-border text-muted-foreground hover:text-foreground hover:border-foreground/30"
-                }`}
+                type="button"
+                onClick={() => setShowAbsenceForm(true)}
+                className="text-xs text-amber-700 hover:text-amber-800 font-medium flex items-center gap-1.5 transition-colors pl-1"
               >
-                {FILTER_LABELS[f]}
-                {f === "therapy" && sp.therapy.connected && (
-                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isActive ? "bg-purple-200" : "bg-purple-500"}`} />
-                )}
-                {f === "medical" && sp.medical.connected && (
-                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isActive ? "bg-emerald-200" : "bg-emerald-500"}`} />
-                )}
+                <AlertTriangle className="w-3.5 h-3.5" />
+                Report {firstName} absent today
               </button>
-            );
-          })}
+            )
+          )}
+          {priorityCards.length > 0 && <OperationalSection cards={priorityCards} />}
+        </section>
+      )}
+
+      {/* ── ZONE 4 — Updates feed (ambient continuity texture + domain filters)
+          Phase 17 — Filter chips MOVED HERE from the page top.
+          Today is now strictly cross-domain synthesis; Journey is strictly
+          domain-scoped inspection. The filter strip is the chrome OF the
+          Journey section — semantically what it always was.
+          Domain-state semantics on each chip:
+            • Active (count > 0)         → brand-colored dot + count badge
+            • Connected but quiet (= 0)  → MUTED dot + "0" badge — the
+                                            domain stays visible because
+                                            absence is information
+                                            ("therapy is connected but
+                                            quiet this week" matters)
+            • Not connected at all       → chip hidden entirely
+          "All" is always shown. */}
+      <section className="space-y-3">
+        <div className="px-1 space-y-2">
+          <h2 className="text-xs font-medium text-muted-foreground/70">
+            {activeFilter === "all"
+              ? `${firstName}'s journey`
+              : `${FILTER_LABELS[activeFilter]} updates`}
+          </h2>
+          <nav
+            className="flex items-center gap-1 overflow-x-auto [&::-webkit-scrollbar]:hidden -mx-1 px-1"
+            aria-label="Filter timeline by domain"
+          >
+            {JOURNEY_FILTERS.map((f) => {
+              const isActive = activeFilter === f;
+              // Domain state per chip:
+              //   "all" → always rendered; count = total feed length
+              //   source filter → connected? (skip if not) + count
+              if (f === "all") {
+                return (
+                  <FilterChip
+                    key={f}
+                    label="All"
+                    count={feed.length}
+                    isActive={isActive}
+                    state="active"
+                    onClick={() => setActiveFilter(f)}
+                  />
+                );
+              }
+              const connected =
+                f === "school"  ? sp.school.connected :
+                f === "therapy" ? sp.therapy.connected :
+                f === "medical" ? sp.medical.connected : false;
+              if (!connected) return null;
+              const count = feed.filter((i) => i.sourceCategory === f).length;
+              const cat = CAT_STYLES[f];
+              return (
+                <FilterChip
+                  key={f}
+                  label={FILTER_LABELS[f]}
+                  count={count}
+                  isActive={isActive}
+                  state={count > 0 ? "active" : "quiet"}
+                  dotColor={count > 0 ? cat.dotColor : "bg-muted-foreground/30"}
+                  onClick={() => setActiveFilter(f)}
+                />
+              );
+            })}
+          </nav>
         </div>
+
         {filteredFeed.length === 0 ? (
-          // Calm centered empty state — no card frame.
-          <div className="py-6 text-center text-muted-foreground text-sm px-4 leading-relaxed">
+          <div className="py-8 text-center text-muted-foreground text-sm px-4 leading-relaxed">
             {FILTER_EMPTY[activeFilter]}
           </div>
         ) : (
-          // Rows render directly on the page surface. Each `JourneyRow` carries
-          // its own border-b separator (border-border/40, last:border-0).
-          <div className="px-1">
-            {filteredFeed.map((item, idx) => {
-              // Phase 8 — Passive clustering by adjacency on organizationName.
-              // Computed against the VISIBLE filtered feed so cluster shape
-              // adapts naturally when the parent toggles filter chips.
-              const prev = idx > 0 ? filteredFeed[idx - 1] : null;
-              const isContinuation = prev !== null && prev.organizationName === item.organizationName;
-              return (
+          <>
+            <div className="space-y-2">
+              {filteredFeed.map((item) => (
                 <JourneyRow
                   key={item.id}
                   item={item}
                   isFresh={freshItemIds.has(item.id)}
-                  isContinuation={isContinuation}
+                  showSourceBadge={showSourceBadge}
                 />
-              );
-            })}
-          </div>
+              ))}
+            </div>
+            <div className="pt-1 text-center">
+              <Link
+                href="/parent/updates"
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-0.5"
+              >
+                View all updates <ChevronRight className="w-3 h-3" />
+              </Link>
+            </div>
+          </>
         )}
-      </div>
+      </section>
 
+    </div>
     </div>
     </ErrorBoundary>
   );

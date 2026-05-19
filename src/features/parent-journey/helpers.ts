@@ -178,7 +178,15 @@ export type StatusIconKind = "check" | "clock" | "x" | "calendar" | "sparkle";
 
 export interface StatusHeadline {
   heading: string;
-  detail: string;
+  /**
+   * Phase 18 — now nullable. Tier D30 (proud-moment-as-hero) returns null
+   * here because the continuity-detail layer (teacher note) is rendered by
+   * the attached spotlight beneath the headline, NOT by a hero-detail line.
+   * Other tiers (attendance, scheduled meeting, therapy session) still
+   * return factual detail strings because their content carries real
+   * operational meaning. Callers must guard rendering on truthiness.
+   */
+  detail: string | null;
   detailColor: string;
   iconKind: StatusIconKind;
   /**
@@ -195,6 +203,15 @@ export interface StatusHeadline {
    * now carries).
    */
   consumedFallback?: boolean;
+  /**
+   * Optional deep-link target for the detail line. When set, the dashboard
+   * wraps the supporting line in a Link so the "tap to read" / "see what
+   * they worked on" affordance copy in the detail string is honoured. Null
+   * when the detail is purely descriptive or refers to UI directly below
+   * the hero (e.g. Tier D30's "tap to react below" — the reactions are the
+   * spotlight, not a separate page).
+   */
+  detailHref?: string | null;
 }
 
 /** Surface window for "recent" cross-domain stories (therapy, school update)
@@ -401,7 +418,14 @@ export function getChildStatusHeadline(
       && isWithinDays(highlight.createdAt, HERO_PROUD_MOMENT_WINDOW_DAYS)) {
     return {
       heading: getProudMomentHeroHeading(firstName, highlight.category),
-      detail: `Noted ${relativeDay(highlight.createdAt)} — tap to react below`,
+      // Phase 18 — detail line dropped entirely for proud-moment-as-hero.
+      // "Noted today" was robotic/operational copy in an emotional zone.
+      // Freshness is already visually encoded (amber spotlight, top-of-
+      // page position, present-tense headline). The continuity-detail
+      // layer for THIS tier lives in the attached spotlight below the
+      // headline — the teacher's note carries the real story. See the
+      // dashboard's `highlightHeadingSuppressed` branch.
+      detail: null,
       detailColor: "text-amber-700",
       iconKind: "sparkle",
       consumedHighlightId: highlight.id,
@@ -441,6 +465,10 @@ export function getChildStatusHeadline(
 
   // ── Tier E45 — recent school update (teacher post / observation row) ──────
   // Softer wording than the operational "class shared an update" Phase 2 used.
+  // The detail line copy invites action ("tap to read") — we lift the source
+  // item's actionHref into `detailHref` so the dashboard can honour the
+  // affordance. Adapter contract: school updates → /parent/updates,
+  // progress observations → /parent/progress.
   if (recentFeedItem && recentFeedItem.sourceCategory === "school"
       && isWithinDays(recentFeedItem.occurredAt, RECENT_STORY_WINDOW_DAYS)) {
     const isObservation = recentFeedItem.itemType === "progress";
@@ -451,6 +479,7 @@ export function getChildStatusHeadline(
       detail: `${isObservation ? "Noted" : "Shared"} ${relativeDay(recentFeedItem.occurredAt)} — tap to read`,
       detailColor: "text-blue-600",
       iconKind: "calendar",
+      detailHref: recentFeedItem.actionHref ?? (isObservation ? "/parent/progress" : "/parent/updates"),
     };
   }
 
@@ -486,6 +515,84 @@ export function getServiceContextLine(presence: ServicePresence): string | null 
     ? `${phrases[0]} and ${phrases[1]}`
     : `${phrases.slice(0, -1).join(", ")}, and ${phrases[phrases.length - 1]}`;
   return `Supported ${joined}.`;
+}
+
+// ── Phase 13 — Today's Pulse (signal-first compression) ──────────────────────
+// Returns a short FACTUAL signal line synthesising today's incoming journey
+// activity, or null when no items are from today.
+//
+// Voice contract (strict):
+//   - Counts are structural compression, NOT activity telemetry.
+//   - Source names are CATEGORICAL ("from school", "from therapy",
+//     "from medical care") — never operational labels like
+//     "Sunshine Learning Center · Toddler A". That's database language;
+//     this surface is human-readable continuity compression.
+//   - Counts above PULSE_HIGH_THRESHOLD compress to "Several" so the
+//     signal stays calm — never "7 new today" energy.
+//   - No interpretive narration. Never "Sofia had a wonderful day" or
+//     "Sofia is thriving socially." The pulse is trustworthy compression,
+//     not AI-parenting commentary.
+//
+// Examples:
+//   0 items today                            → null (line doesn't render)
+//   1 school item                            → "1 new from school today"
+//   3 school items                           → "3 new from school today"
+//   7 school items                           → "Several new from school today"
+//   1 school + 1 therapy                     → "2 new today — school and therapy"
+//   2 school + 1 therapy + 1 medical         → "4 new today — school, therapy, and medical care"
+//   7 mixed                                  → "Several new today — school and therapy"
+
+const PULSE_HIGH_THRESHOLD = 5;
+
+const PULSE_CATEGORY_LABEL: Record<string, string> = {
+  school:  "school",
+  therapy: "therapy",
+  medical: "medical care",
+};
+
+export function getTodayPulseSignal(feed: ParentJourneyItem[]): string | null {
+  // Local-date day-start so "today" stays anchored to the parent's calendar
+  // day, not a rolling 24h window (which would confuse late-night visits).
+  const now = new Date();
+  const todayStartMs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+
+  const todayItems = feed.filter((item) => {
+    const t = new Date(item.occurredAt).getTime();
+    return t >= todayStartMs;
+  });
+
+  if (todayItems.length === 0) return null;
+
+  // Group by sourceCategory. We deliberately ignore organizationName-level
+  // detail because the directive says source naming should be human and
+  // lightweight — categories are the right granularity for a glance signal.
+  const categories = new Set<string>();
+  for (const item of todayItems) {
+    if (item.sourceCategory !== "system") categories.add(item.sourceCategory);
+  }
+
+  const count = todayItems.length;
+  const tooMany = count > PULSE_HIGH_THRESHOLD;
+
+  // Multi-category (compressed across school + therapy + medical)
+  if (categories.size > 1) {
+    // Stable order: school → therapy → medical (matches mental model)
+    const order = ["school", "therapy", "medical"];
+    const labels = order
+      .filter((c) => categories.has(c))
+      .map((c) => PULSE_CATEGORY_LABEL[c] ?? c);
+    const list =
+      labels.length === 2
+        ? `${labels[0]} and ${labels[1]}`
+        : `${labels.slice(0, -1).join(", ")}, and ${labels[labels.length - 1]}`;
+    return tooMany ? `Several new today — ${list}` : `${count} new today — ${list}`;
+  }
+
+  // Single category
+  const cat = [...categories][0] ?? "system";
+  const label = PULSE_CATEGORY_LABEL[cat] ?? cat;
+  if (tooMany) return `Several new from ${label} today`;
+  return `${count} new from ${label} today`;
 }
 
 // ── Priority cards ────────────────────────────────────────────────────────────

@@ -127,3 +127,13 @@ html.spacing-relaxed h3   { line-height: 1.55; }
 .attend-late    { @apply bg-yellow-400 text-white; }
 .attend-absent  { @apply bg-red-500 text-white; }
 .attend-excused { @apply bg-gray-400 text-white; }
+
+/* ── Cursor on interactive elements ───────────────────────────────────────── */
+/* Tailwind v4's preflight intentionally drops `cursor: pointer` from native  */
+/* <button> elements. Restore it for enabled buttons and ARIA buttons so      */
+/* every clickable surface shows the hand cursor on hover. Disabled buttons   */
+/* deliberately keep the default cursor so the affordance reads as "off".    */
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]) {
+  cursor: pointer;
+}
