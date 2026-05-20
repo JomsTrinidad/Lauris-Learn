@@ -23,6 +23,7 @@ import {
   fetchServicePresence,
   fetchRecurringMomentCategories,
   fetchSupportContext,
+  fetchRecentParentVisibleVoiceNote,
 } from "@/features/parent-journey/queries";
 import {
   getChildStatusHeadline,
@@ -44,7 +45,16 @@ import type {
   ServicePresence,
   PriorityCard,
   PriorityCardType,
+  RecentVoiceNoteSignal,
 } from "@/features/parent-journey/types";
+
+// Phase 3B — Care deep-link prefix for the "Voice Note from Therapist"
+// priority signal. Reused intentionally — same env var the journey feed
+// already consumes for therapy-row deep-links. When unset, the voice-note
+// signal is suppressed end-to-end (the helper short-circuits because no
+// working tap target can be minted).
+const CARE_BASE_URL: string | null =
+  (process.env.NEXT_PUBLIC_CARE_BASE_URL ?? "").trim() || null;
 import type { SchoolSupportContext } from "@/features/parent-journey/queries";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -343,9 +353,15 @@ const OPERATIONAL_ICON: Partial<Record<PriorityCardType, React.ElementType>> = {
   todays_session:   CalendarDays,
 };
 
-function OperationalRow({ card }: { card: PriorityCard }) {
-  const isUrgent  = card.cardType === "urgent_action";
-  const isWarning = card.accentVariant === "warning";
+// Phase 4A — `softened` is a render-only quietness guardrail. When two
+// urgent_action cards stack (e.g. consent + doc request), only the first
+// keeps the amber container; subsequent urgent cards demote visually to
+// neutral so the priority surface never shows two amber rows at once
+// (see docs/PARENT_COGNITIVE_RHYTHM.md §5.1 + §8). The card's semantic
+// `cardType` is unchanged — only the visual tonality softens.
+function OperationalRow({ card, softened = false }: { card: PriorityCard; softened?: boolean }) {
+  const isUrgent  = card.cardType === "urgent_action" && !softened;
+  const isWarning = card.accentVariant === "warning" && !softened;
   const isPurple  = card.accentVariant === "purple";
 
   // Phase 13 — Operational rows now live INSIDE the Today scene's
@@ -383,14 +399,38 @@ function OperationalRow({ card }: { card: PriorityCard }) {
     ? `${card.subtitle} · ${card.detail}`
     : card.subtitle;
 
-  return (
-    <Link href={card.actionHref} className={containerCls}>
+  // Phase 3B — Cross-app priority signals can carry an external Care
+  // deep-link (e.g. the "Voice Note from Therapist" card opens Care so the
+  // parent's existing signed-URL flow takes over). next/link doesn't add
+  // target / rel on external URLs, so route those through a plain anchor —
+  // matches the JourneyRow pattern already in this file.
+  const externalHref = isExternalHref(card.actionHref);
+  const rowInner = (
+    <>
       <Icon className={`w-4 h-4 flex-shrink-0 mt-0.5 ${iconCls}`} />
       <div className="flex-1 min-w-0">
         <p className={titleCls}>{card.title}</p>
         <p className="text-xs text-muted-foreground mt-0.5 leading-snug">{subtitle}</p>
       </div>
       <ChevronRight className={`w-4 h-4 flex-shrink-0 mt-1 ${chevCls}`} />
+    </>
+  );
+
+  if (externalHref) {
+    return (
+      <a
+        href={card.actionHref}
+        target="_blank"
+        rel="noopener noreferrer"
+        className={containerCls}
+      >
+        {rowInner}
+      </a>
+    );
+  }
+  return (
+    <Link href={card.actionHref} className={containerCls}>
+      {rowInner}
     </Link>
   );
 }
@@ -409,11 +449,23 @@ function OperationalSection({ cards }: { cards: PriorityCard[] }) {
   }
   const urgent = cards.filter(c => c.cardType === "urgent_action");
   const others = cards.filter(c => c.cardType !== "urgent_action");
+
+  // Phase 4A quietness guardrail (see docs/PARENT_COGNITIVE_RHYTHM.md §5.1 +
+  // §8): cap amber-tinted urgent treatment to one row at a time. The first
+  // urgent keeps its amber container; further urgent cards stay in the list
+  // (same position, same cardType, same destination) but render with the
+  // calm neutral container — preventing the "twin amber" stack when both
+  // consent + doc request fire on the same visit. Empirically the only way
+  // two urgent_action cards stack is consent + doc request; the slice(2) cap
+  // upstream means we won't exceed two anyway.
+  const leadUrgent = urgent[0];
+  const trailingUrgent = urgent.slice(1);
   return (
     <div className="space-y-2">
-      {urgent.map((c) => <OperationalRow key={c.id} card={c} />)}
-      {others.length > 0 && (
+      {leadUrgent && <OperationalRow card={leadUrgent} />}
+      {(trailingUrgent.length > 0 || others.length > 0) && (
         <div className="space-y-1">
+          {trailingUrgent.map((c) => <OperationalRow key={c.id} card={c} softened />)}
           {others.map((c) => <OperationalRow key={c.id} card={c} />)}
         </div>
       )}
@@ -525,7 +577,7 @@ function ResonancePicker({
   // than a present action.
   if (phrase) {
     return (
-      <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+      <div className="flex items-center gap-1.5 flex-wrap">
         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs bg-amber-50/70 text-amber-900 border border-amber-100">
           <StickyNote className="w-3 h-3 flex-shrink-0 opacity-70" />
           {phrase}
@@ -550,7 +602,7 @@ function ResonancePicker({
   // Open state — 5 preset phrase chips. Tap one to save and collapse.
   if (isOpen) {
     return (
-      <div className="mt-2 space-y-1.5">
+      <div className="space-y-1.5">
         <div className="flex flex-wrap gap-1.5">
           {phrases.map((p) => (
             <button
@@ -581,7 +633,7 @@ function ResonancePicker({
     <button
       type="button"
       onClick={() => setIsOpen(true)}
-      className="mt-2 text-xs text-muted-foreground/60 hover:text-muted-foreground transition-colors"
+      className="text-xs text-muted-foreground/60 hover:text-muted-foreground transition-colors"
     >
       + Add a note from home
     </button>
@@ -843,6 +895,9 @@ export default function ParentDashboard() {
   // school staff has written one. Renders as a quiet ambient line below
   // the hero, above the standalone Positive Highlight / operational rows.
   const [supportContext, setSupportContext] = useState<SchoolSupportContext | null>(null);
+  // Phase 3B — recent parent-visible voice note (signal-layer only; RLS-gated
+  // by Care's cvn_parent_select). Null when none recent or no Care linkage.
+  const [recentVoiceNote, setRecentVoiceNote] = useState<RecentVoiceNoteSignal | null>(null);
   const [activeFilter, setActiveFilter] = useState<JourneyFilter>("all");
   const [parentUserId, setParentUserId] = useState<string | null>(null);
   const [reactSaving, setReactSaving] = useState(false);
@@ -874,7 +929,7 @@ export default function ParentDashboard() {
     const resolvedSchool = schoolName || "School";
     const resolvedClass = child?.className ?? "";
 
-    const [att, evts, needsData, hlData, fbData, feedData, spData, recurringCats, ctxData] = await Promise.all([
+    const [att, evts, needsData, hlData, fbData, feedData, spData, recurringCats, ctxData, voiceNoteData] = await Promise.all([
       fetchAttendanceToday(supabase, childId),
       fetchUpcomingEvents(supabase, resolvedSchool, { schoolId, classId }),
       fetchNeedsAttention({ supabase, childId }),
@@ -886,6 +941,9 @@ export default function ParentDashboard() {
       fetchRecurringMomentCategories(supabase, childId),
       // Phase 12 — school-set continuity context (one ambient line).
       fetchSupportContext(supabase, childId),
+      // Phase 3B — single recent parent-visible voice note for the signal layer.
+      // Care-unlinked parents naturally receive null via RLS — no error path.
+      fetchRecentParentVisibleVoiceNote(supabase, childProfileId),
     ]);
 
     setAttendance(att);
@@ -897,6 +955,7 @@ export default function ParentDashboard() {
     setServicePresence(spData);
     setRecurringCategories(recurringCats);
     setSupportContext(ctxData);
+    setRecentVoiceNote(voiceNoteData);
     setLoading(false);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [childId, classId, childProfileId]);
@@ -1021,7 +1080,17 @@ export default function ParentDashboard() {
   const showSecondaryAttendance = !heroOwnsAttendance && attendance.status === "present";
 
   // ── Derived: priority cards ──────────────────────────────────────────────
-  const priorityCards = getFeaturedParentCards({ events, needs });
+  // Phase 3B — voice note + Care deep-link plumbed through. Cards layer
+  // stays the same shape (≤2 visible signals); the helper internally weighs
+  // the new P25 tomorrow-meeting + P35 voice-note tiers against the existing
+  // urgent_action / today-meeting / event / billing / holiday chain.
+  const priorityCards = getFeaturedParentCards({
+    events,
+    needs,
+    voiceNote: recentVoiceNote,
+    careBaseUrl: CARE_BASE_URL,
+    childProfileId,
+  });
 
   // ── Derived: continuity signals (Phase 13 — observable patterns) ─────────
   // Merges the Phase 10 recurring-category strip with new domain freshness
@@ -1240,17 +1309,19 @@ export default function ParentDashboard() {
             {highlight.myReaction && (
               <p className="text-xs text-green-700">✓ Your reaction has been shared with the school.</p>
             )}
-            <ResonancePicker
-              childId={childId}
-              momentId={highlight.id}
-              firstName={firstName}
-            />
-            <Link
-              href="/parent/proud-moments"
-              className="text-xs text-amber-700 hover:text-amber-900 font-medium flex items-center gap-1 transition-colors"
-            >
-              View all highlights <ChevronRight className="w-3 h-3" />
-            </Link>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <ResonancePicker
+                childId={childId}
+                momentId={highlight.id}
+                firstName={firstName}
+              />
+              <Link
+                href="/parent/proud-moments"
+                className="text-xs text-amber-700 hover:text-amber-900 font-medium flex items-center gap-1 transition-colors"
+              >
+                View all highlights <ChevronRight className="w-3 h-3" />
+              </Link>
+            </div>
           </div>
         )}
       </div>
@@ -1374,17 +1445,19 @@ export default function ParentDashboard() {
           {highlight.myReaction && (
             <p className="text-xs text-green-700">✓ Your reaction has been shared with the school.</p>
           )}
-          <ResonancePicker
-            childId={childId}
-            momentId={highlight.id}
-            firstName={firstName}
-          />
-          <Link
-            href="/parent/proud-moments"
-            className="text-xs text-amber-700 hover:text-amber-900 font-medium flex items-center gap-1 transition-colors"
-          >
-            View all highlights <ChevronRight className="w-3 h-3" />
-          </Link>
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <ResonancePicker
+              childId={childId}
+              momentId={highlight.id}
+              firstName={firstName}
+            />
+            <Link
+              href="/parent/proud-moments"
+              className="text-xs text-amber-700 hover:text-amber-900 font-medium flex items-center gap-1 transition-colors"
+            >
+              View all highlights <ChevronRight className="w-3 h-3" />
+            </Link>
+          </div>
         </div>
       )}
 

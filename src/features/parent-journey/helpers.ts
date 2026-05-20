@@ -154,6 +154,7 @@ import type {
   PriorityCard,
   PriorityCardType,
   PriorityCardAccent,
+  RecentVoiceNoteSignal,
 } from "./types";
 
 // ── Highlight recency ─────────────────────────────────────────────────────────
@@ -1011,6 +1012,35 @@ const EVENT_CARD_LABELS: Partial<Record<string, string>> = {
 interface PriorityCardsInput {
   events: UpcomingItem[];
   needs: NeedsAttentionCounts;
+  /**
+   * Phase 3B — most recent parent-visible therapist voice note within the
+   * freshness window (see `VOICE_NOTE_SIGNAL_DAYS` in queries.ts). Null when
+   * the child has no Care linkage, no recent shared note, or no Care deep-
+   * link target available. Optional so older callers (tests, future
+   * refactors) don't need to pass it.
+   */
+  voiceNote?: RecentVoiceNoteSignal | null;
+  /**
+   * Phase 3B — deep-link prefix for the voice-note card's `actionHref`.
+   * When unset, the voice-note signal is suppressed entirely — a card that
+   * can't open a parent-safe target is worse than no card.
+   */
+  careBaseUrl?: string | null;
+  /**
+   * Phase 3B — shared `child_profiles.id`. Required alongside `careBaseUrl`
+   * to mint the voice-note deep-link. Absent → signal suppressed.
+   */
+  childProfileId?: string | null;
+}
+
+// Phase 3B — relative-time helper for the voice-note subtitle. Calm phrasing
+// only: "today" / "yesterday" / "Nd ago". No clock icons, no "ago" timers.
+function relativeDaysShort(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  const days = Math.floor(ms / 86_400_000);
+  if (days <= 0) return "Shared today";
+  if (days === 1) return "Shared yesterday";
+  return `Shared ${days}d ago`;
 }
 
 type Candidate = {
@@ -1030,20 +1060,46 @@ type Candidate = {
  * the caller should render a calm "all caught up" state in that case.
  *
  * Priority order (lowest _p wins):
- *  P10  — consent awaiting parent approval    (urgent_action)
- *  P20  — document requested from parent      (urgent_action)
- *  P30  — meeting happening today             (upcoming_meeting)
- *  P31  — online class happening today        (upcoming_event)
+ *  P10  — consent awaiting parent approval     (urgent_action)
+ *  P20  — document requested from parent       (urgent_action)
+ *  P25  — meeting happening TOMORROW           (upcoming_meeting)  [Phase 3B]
+ *  P30  — meeting happening today              (upcoming_meeting)
+ *  P31  — online class happening today         (upcoming_event)
+ *  P35  — voice note from therapist (≤7d, Care-linkable) [Phase 3B]
  *  P40  — top upcoming event (class-first, fetchUpcomingEvents pre-sorts)
- *  P50  — outstanding billing balance         (balance_due) — only when >0
- *  P60  — second upcoming event               (upcoming_event)
- *  P70  — holiday / no-classes notice         (holiday)
+ *  P50  — outstanding billing balance          (balance_due) — only when >0
+ *  P60  — second upcoming event                (upcoming_event)
+ *  P70  — holiday / no-classes notice          (holiday)
  *
  * Billing is NOT shown when the balance is zero — no "all-clear" filler card.
  * Holidays never outrank child-specific or actionable items.
+ *
+ * Phase 3B — Lauris Parent Signal Layer
+ *   Two cross-domain tiers added: P25 (meeting tomorrow) closes the spec's
+ *   "meeting today or tomorrow" gap without a new query — it's pure derivation
+ *   from the events array. P35 (voice note from therapist) brings the only
+ *   genuinely missing parent-worthy signal across the school+therapy boundary
+ *   that isn't already covered by the hero (Tier D35) or the journey feed.
+ *   Both tiers sit below urgent_action (P10/P20) on purpose: consent and doc
+ *   requests are PARENT ACTIONS; tomorrow's meeting and voice notes are
+ *   informational nudges. The 2-card cap is preserved — calm by default.
+ *   See queries.ts → fetchRecentParentVisibleVoiceNote for the RLS-safe
+ *   single-row fetch that feeds this layer.
  */
-export function getFeaturedParentCards({ events, needs }: PriorityCardsInput): PriorityCard[] {
+export function getFeaturedParentCards({
+  events,
+  needs,
+  voiceNote = null,
+  careBaseUrl = null,
+  childProfileId = null,
+}: PriorityCardsInput): PriorityCard[] {
   const today = new Date().toISOString().split("T")[0];
+  // Phase 3B — "tomorrow" is purely local-clock derived; no timezone library
+  // needed. Matches the way `today` is computed above so day boundaries stay
+  // consistent across the helper.
+  const tomorrowDate = new Date(Date.now() + 86_400_000);
+  const tomorrow =
+    `${tomorrowDate.getFullYear()}-${String(tomorrowDate.getMonth() + 1).padStart(2, "0")}-${String(tomorrowDate.getDate()).padStart(2, "0")}`;
   const candidates: Candidate[] = [];
 
   // P10 — consent awaiting parent approval (most urgent action)
@@ -1074,6 +1130,26 @@ export function getFeaturedParentCards({ events, needs }: PriorityCardsInput): P
     });
   }
 
+  // P25 — meeting scheduled for tomorrow [Phase 3B]
+  //   Closes the spec gap "meeting today OR tomorrow". Sits just below
+  //   urgent_action and ABOVE today's meeting so the parent reading top-down
+  //   sees consent → doc request → tomorrow heads-up → today's events. This
+  //   is a derivation from already-fetched events; no new query was added.
+  //   Wording stays calm: "Meeting Tomorrow", not "Reminder!" / "Don't miss!".
+  const tomorrowMeeting = events.find(e => e.date === tomorrow && e.eventType === "meeting");
+  if (tomorrowMeeting) {
+    candidates.push({
+      id: `meeting-tomorrow-${tomorrowMeeting.id}`,
+      cardType: "upcoming_meeting",
+      title: "Meeting Tomorrow",
+      subtitle: tomorrowMeeting.title,
+      detail: "Meeting",
+      actionHref: "/parent/events",
+      accentVariant: "purple",
+      _p: 25,
+    });
+  }
+
   // P30 — meeting scheduled for today
   const todayMeeting = events.find(e => e.date === today && e.eventType === "meeting");
   if (todayMeeting) {
@@ -1101,6 +1177,42 @@ export function getFeaturedParentCards({ events, needs }: PriorityCardsInput): P
       actionHref: "/parent/events",
       accentVariant: "info",
       _p: 31,
+    });
+  }
+
+  // P35 — voice note from therapist newly shared [Phase 3B]
+  //   Surfaces only when:
+  //     (a) the parent-safe RLS-protected query returned a row (Care-unlinked
+  //         parents naturally get null — no card),
+  //     (b) the note is inside the freshness window (see VOICE_NOTE_SIGNAL_DAYS
+  //         in queries.ts — gate enforced at query time too),
+  //     (c) a Care deep-link can be minted (careBaseUrl + childProfileId both
+  //         present). Without a working target the card would be a dead-end.
+  //   Calm phrasing: "Voice Note from Therapist · Shared 2d ago". Purple
+  //   accent visually echoes the therapy source-color used in the journey
+  //   feed (CAT_STYLES.therapy on the dashboard). Action opens Care in a new
+  //   tab — the parent's existing Care signed-URL flow takes over from there.
+  //
+  // Phase 3C — deep-link anchored at `#voice-notes` (the Care playback
+  // section), NOT the Care page root. See docs/PARENT_CONTINUITY_SEMANTICS.md
+  // §5.1 + §7 for the duplication-risk audit. Landing on Care's page root
+  // showed the parent Care's hero + attention-strip echo of the same voice
+  // note they just tapped, forcing them to scroll. The Care layout already
+  // listens for hashchange and `scrollIntoView`-s the anchor, and the
+  // `#voice-notes` div is rendered on Care's `/parent/[childId]` page.
+  // Result: the tap lands the parent on the playback surface that owns
+  // the entity.
+  if (voiceNote && careBaseUrl && childProfileId) {
+    const base = careBaseUrl.replace(/\/+$/, "");
+    candidates.push({
+      id: `voice-note-${voiceNote.id}`,
+      cardType: "upcoming_event",
+      title: "Voice Note from Therapist",
+      subtitle: voiceNote.title?.trim() || relativeDaysShort(voiceNote.createdAt),
+      detail: voiceNote.title?.trim() ? relativeDaysShort(voiceNote.createdAt) : undefined,
+      actionHref: `${base}/parent/${childProfileId}#voice-notes`,
+      accentVariant: "purple",
+      _p: 35,
     });
   }
 

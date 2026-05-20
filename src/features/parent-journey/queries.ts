@@ -9,6 +9,7 @@ import type {
   LatestHighlight,
   FallbackHighlight,
   ServicePresence,
+  RecentVoiceNoteSignal,
 } from "./types";
 
 interface JourneyFeedParams {
@@ -440,6 +441,65 @@ export async function fetchSupportContext(
     focusText: data.focus_text as string,
     setByName: (data.set_by?.full_name as string | undefined) ?? null,
     updatedAt: data.updated_at as string,
+  };
+}
+
+// ── Phase 3B — Recent therapist voice note (parent-safe signal) ──────────────
+// Surfaces the most recent parent-visible voice note for this child, but ONLY
+// when it falls inside the freshness window. Used by the parent dashboard's
+// existing priority-card chain (see `getFeaturedParentCards`). Returns null
+// when there is nothing recent worth nudging — by design, no card surfaces
+// for older notes (they continue to live in the Care therapy detail page).
+//
+// Boundary safety:
+//   • Selects ONLY id, title, created_at. Storage path / mime / duration are
+//     never returned to Learn — those stay on the Care side and reach the
+//     parent through Care's existing signed-URL RPC.
+//   • RLS gate: Care's `cvn_parent_select` policy requires this caller to
+//     have a `care_family_members` row for the (child_profile_id, clinic_org)
+//     pair. School-only parents (no Care linkage) silently receive zero rows
+//     and the signal degrades to null. No error path required.
+//   • Cross-app coupling stays minimal: this is a single column-restricted
+//     SELECT, not a new RPC or a new table. Aligns with the "prefer existing
+//     data" rule from the Phase 3B directive.
+//
+// Freshness window: a voice note is signal-worthy for VOICE_NOTE_SIGNAL_DAYS.
+// After that it stops priority-surfacing but stays viewable on the Care side.
+// 7 days is intentionally longer than the journey-feed therapy window (3d on
+// Care) because a missed voice note is the kind of emotionally important item
+// the spec explicitly calls out — but a single calm card, never a banner.
+
+const VOICE_NOTE_SIGNAL_DAYS = 7;
+
+export async function fetchRecentParentVisibleVoiceNote(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: SupabaseClient<any>,
+  childProfileId: string | null,
+): Promise<RecentVoiceNoteSignal | null> {
+  // Care voice notes are keyed on the shared child_profiles.id, NOT the
+  // school's students.id. When the active student isn't linked to a child
+  // profile yet, there is nothing Care could have shared — degrade quietly.
+  if (!childProfileId) return null;
+
+  const cutoffIso = new Date(Date.now() - VOICE_NOTE_SIGNAL_DAYS * 86_400_000).toISOString();
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data } = await (supabase as any)
+    .from("care_voice_notes")
+    .select("id, title, created_at")
+    .eq("child_profile_id", childProfileId)
+    .eq("parent_visible", true)
+    .eq("is_deleted", false)
+    .gte("created_at", cutoffIso)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!data) return null;
+  return {
+    id: data.id as string,
+    title: (data.title as string | null) ?? null,
+    createdAt: data.created_at as string,
   };
 }
 

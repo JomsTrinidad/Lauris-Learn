@@ -62,6 +62,22 @@ export interface NeedsAttentionCounts {
   docApprovalCount: number;
 }
 
+/**
+ * Phase 3B — minimal parent-safe shape for the "Voice note from therapist"
+ * priority signal. Carries only what the priority card needs to render and
+ * deep-link to Care. Storage paths, mime type, and clinic-only metadata are
+ * intentionally NOT surfaced to Learn. The signed URL is minted on the Care
+ * side via its existing `log_care_voice_note_access` RPC; this signal only
+ * tells the parent "there is one — tap to listen."
+ */
+export interface RecentVoiceNoteSignal {
+  id: string;
+  /** ISO timestamp the voice note was created in Care. Used for freshness gate + relative subtitle. */
+  createdAt: string;
+  /** Optional human-authored title from Care; may be null. Card never blocks on this. */
+  title: string | null;
+}
+
 export interface LatestHighlight {
   id: string;
   category: string;
