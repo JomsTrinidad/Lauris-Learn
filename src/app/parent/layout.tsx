@@ -133,7 +133,7 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
           id, first_name, last_name, student_code,
           school_id,
           child_profile_id,
-          enrollments(status, class_id, classes(name, messenger_link, school_years(status)))
+          enrollments(status, class_id, classes(name, messenger_link, school_years(status, start_date)))
         )
       `)
       .eq("email", user.email);
@@ -149,10 +149,23 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
       if (!s) return [];
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const enrollments = (s.enrollments ?? []) as any[];
+      // Phase 5E — Transition & lifecycle continuity. The fallback for a
+      // transitioned child (graduated / withdrawn — no `enrolled` row) must
+      // anchor on their MOST RECENT placement, not an arbitrary/oldest one.
+      // `enrollments[0]` was unordered (PostgREST returns insertion order,
+      // typically oldest-first), so a child who progressed Toddler → Kinder
+      // and graduated would be re-framed by their Toddler class — the
+      // "re-framing the child from zero" rupture the lifecycle directive
+      // warns against. Sorting by school-year start_date descending anchors
+      // them where they finished. See docs/TRANSITION_AND_LIFECYCLE_CONTINUITY.md §7.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const mostRecentEnrollment = [...enrollments].sort((a: any, b: any) =>
+        (b.classes?.school_years?.start_date ?? "").localeCompare(
+          a.classes?.school_years?.start_date ?? ""))[0];
       const activeEnrollment =
         enrollments.find((e: any) => e.status === "enrolled" && e.classes?.school_years?.status === "active") ??
         enrollments.find((e: any) => e.status === "enrolled") ??
-        enrollments[0];
+        mostRecentEnrollment;
       return [{
         id: s.id,
         firstName: s.first_name,

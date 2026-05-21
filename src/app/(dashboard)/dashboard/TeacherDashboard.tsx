@@ -10,7 +10,6 @@ import {
   AlertTriangle,
   School,
   ListChecks,
-  MessageSquare,
   BookOpen,
 } from "lucide-react";
 import Link from "next/link";
@@ -91,7 +90,6 @@ export default function TeacherDashboard() {
   const [todayClasses, setTodayClasses] = useState<TodayClass[]>([]);
   const [recentUpdates, setRecentUpdates] = useState<RecentUpdate[]>([]);
   const [lastUpdateAt, setLastUpdateAt] = useState<string | null>(null);
-  const [updatesLoaded, setUpdatesLoaded] = useState(false);
   const [todayHolidayName, setTodayHolidayName] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -173,7 +171,6 @@ export default function TeacherDashboard() {
         setTodayClasses([]);
         setRecentUpdates([]);
         setLastUpdateAt(null);
-        setUpdatesLoaded(true);
         setLoading(false);
         return;
       }
@@ -290,7 +287,6 @@ export default function TeacherDashboard() {
       }));
       setRecentUpdates(updates);
       setLastUpdateAt(updates[0]?.createdAt ?? null);
-      setUpdatesLoaded(true);
       setLoading(false);
     } catch (err) {
       console.error("[TeacherDashboard] Failed to load:", err);
@@ -326,13 +322,6 @@ export default function TeacherDashboard() {
     ? Math.round((totalPresentAll / totalEnrolledAll) * 100)
     : 0;
 
-  const todayStr = new Date().toISOString().split("T")[0];
-  const noUpdatesToday =
-    !lastUpdateAt || lastUpdateAt.split("T")[0] < todayStr;
-  const noUpdatesRecently =
-    !lastUpdateAt ||
-    Date.now() - new Date(lastUpdateAt).getTime() > 2 * 24 * 60 * 60 * 1000;
-
   // ── Pending Teacher Tasks — derived from already-fetched teacher-scoped state ──
   type Task = {
     id: string;
@@ -359,22 +348,17 @@ export default function TeacherDashboard() {
     });
   }
 
-  if (
-    !todayIsNoClass &&
-    updatesLoaded &&
-    noUpdatesRecently &&
-    todayClasses.length > 0
-  ) {
-    tasks.push({
-      id: "task_update",
-      icon: MessageSquare,
-      label: noUpdatesToday
-        ? "No parent update sent today"
-        : "No parent updates in over 2 days",
-      href: "/updates",
-      cta: "Send Parent Update",
-    });
-  }
+  // Phase 6A — Staff cognitive rhythm. The parent-communication cadence
+  // nudge ("No parent update sent today" / "...in over 2 days") was removed
+  // from the pending-task list. Framing the *absence* of an optional action
+  // as an unresolved task — stacked at the same visual weight as genuinely
+  // time-sensitive operational tasks — is the directive's "productivity
+  // pressure" / "you missed X" anti-pattern (see docs/STAFF_COGNITIVE_RHYTHM.md
+  // §8). Parent-communication cadence stays calmly visible in the dedicated
+  // "Parent Communication" card below (which shows "Last update {timeAgo}" +
+  // a "New Parent Update" CTA), so no capability is lost — only the pressure
+  // framing. A pending-task list should contain genuinely pending, actionable
+  // work, not optional-action cadence reminders.
 
   if ((planSignals.data?.awaitingReviewCount ?? 0) > 0) {
     const n = planSignals.data!.awaitingReviewCount;

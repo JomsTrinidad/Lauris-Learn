@@ -109,14 +109,14 @@ export default function ParentProudMomentsPage() {
 
   const firstName = child?.firstName ?? "Your child";
 
-  // Weekly summary (last 7 days)
+  // Weekly summary (last 7 days). Phase 5D — the previous "Most celebrated
+  // category" ranking was removed because picking ONE category as "the most"
+  // is internal-category leaderboarding, which the directive's "ranking
+  // growth" anti-pattern rules out (see docs/CONTINUITY_REFLECTION_AND_MEMORY.md
+  // §8). The remaining count is a calm observation on a visit-driven page
+  // — not an engagement metric, not a streak, not a comparison.
   const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const thisWeek = moments.filter((m) => new Date(m.createdAt) >= weekAgo);
-  const categoryCounts: Record<string, number> = {};
-  for (const m of thisWeek) {
-    categoryCounts[m.category] = (categoryCounts[m.category] ?? 0) + 1;
-  }
-  const topCategory = Object.entries(categoryCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
 
   return (
     <div className="space-y-5">
@@ -138,19 +138,11 @@ export default function ParentProudMomentsPage() {
             <p className="font-semibold text-amber-900 text-sm">This Week</p>
           </div>
           <p className="text-sm text-amber-800">
-            {firstName} earned{" "}
+            {firstName} had{" "}
             <span className="font-semibold">
               {thisWeek.length} proud moment{thisWeek.length !== 1 ? "s" : ""}
             </span>{" "}
             this week.
-            {topCategory && (
-              <>
-                {" "}Most celebrated:{" "}
-                <span className={`inline-flex items-center px-1.5 py-0 rounded text-xs font-medium ${CATEGORY_COLORS[topCategory] ?? "bg-gray-100 text-gray-700"}`}>
-                  {topCategory}
-                </span>
-              </>
-            )}
           </p>
         </div>
       )}

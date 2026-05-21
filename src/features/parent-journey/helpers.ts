@@ -1188,6 +1188,12 @@ export function getFeaturedParentCards({
   //         in queries.ts — gate enforced at query time too),
   //     (c) a Care deep-link can be minted (careBaseUrl + childProfileId both
   //         present). Without a working target the card would be a dead-end.
+  //     (d) [Phase 4B silence rule §7.1 + §8] no school urgent_action is
+  //         pending. When the parent already has a consent or doc-request
+  //         asking for action, the therapy voice-note signal DEFERS — it
+  //         stays fully visible on Care `/parent/[childId]` (its owning
+  //         surface) but does not compete for the same priority slot. See
+  //         docs/CROSS_DOMAIN_ORCHESTRATION.md §7.1.
   //   Calm phrasing: "Voice Note from Therapist · Shared 2d ago". Purple
   //   accent visually echoes the therapy source-color used in the journey
   //   feed (CAT_STYLES.therapy on the dashboard). Action opens Care in a new
@@ -1202,7 +1208,9 @@ export function getFeaturedParentCards({
   // `#voice-notes` div is rendered on Care's `/parent/[childId]` page.
   // Result: the tap lands the parent on the playback surface that owns
   // the entity.
-  if (voiceNote && careBaseUrl && childProfileId) {
+  const hasSchoolUrgentAction =
+    needs.docApprovalCount > 0 || needs.docRequestCount > 0;
+  if (voiceNote && careBaseUrl && childProfileId && !hasSchoolUrgentAction) {
     const base = careBaseUrl.replace(/\/+$/, "");
     candidates.push({
       id: `voice-note-${voiceNote.id}`,

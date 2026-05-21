@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Loader2, AlertTriangle } from "lucide-react";
+import { Loader2, Info } from "lucide-react";
 import { Modal, ModalCancelButton } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -62,13 +62,20 @@ export function RevokeClinicGrantModal({
   return (
     <Modal open={open} onClose={handleClose} title="Revoke Access" className="max-w-md">
       <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="px-3 py-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-900 flex items-start gap-2">
-          <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+        {/* Phase 6C — revocation is the trust-protective action; it should
+            feel safe and reversible, not dangerous. The previous amber
+            "This can't be undone." framing discouraged the very action that
+            protects the child (and contradicted its own "issue a new grant"
+            line). Calm, factual, reassuring copy instead. The destructive
+            button below still carries the appropriate weight. See
+            docs/CROSS_ORG_TRUST_AND_CONSENT.md §9. */}
+        <div className="px-3 py-3 bg-primary/[0.04] border border-primary/15 rounded-lg text-sm text-foreground flex items-start gap-2">
+          <Info className="w-4 h-4 flex-shrink-0 mt-0.5 text-primary/70" />
           <div>
-            <p className="font-medium">This can&apos;t be undone.</p>
-            <p className="mt-1 text-xs">
-              The clinic will lose access immediately. To restore, you&apos;ll
-              need to issue a new grant.
+            <p className="font-medium">The clinic loses access right away.</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              This is reversible — you can issue a new grant later if they
+              need access again.
             </p>
           </div>
         </div>

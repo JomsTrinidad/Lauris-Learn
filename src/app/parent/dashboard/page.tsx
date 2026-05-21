@@ -24,6 +24,7 @@ import {
   fetchRecurringMomentCategories,
   fetchSupportContext,
   fetchRecentParentVisibleVoiceNote,
+  fetchCareSupportContext,
 } from "@/features/parent-journey/queries";
 import {
   getChildStatusHeadline,
@@ -55,7 +56,7 @@ import type {
 // working tap target can be minted).
 const CARE_BASE_URL: string | null =
   (process.env.NEXT_PUBLIC_CARE_BASE_URL ?? "").trim() || null;
-import type { SchoolSupportContext } from "@/features/parent-journey/queries";
+import type { SchoolSupportContext, CareSupportContext } from "@/features/parent-journey/queries";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -805,6 +806,30 @@ function SupportContextBlock({
   );
 }
 
+// Phase 5A — Care reinforcement context block. Visual sibling of the school
+// SupportContextBlock above: plain text, no card frame, no fill, no icon.
+// The only visible differentiator is the attribution line ("From your
+// therapist") so the parent reads it as a parallel domain voice without
+// chrome / accent stealing. No resonance-echo (that surface is school-side
+// only by design). Renders unconditionally when its `careSupportContext`
+// prop is non-null — the caller already guards rendering.
+function CareSupportContextBlock({
+  careSupportContext,
+}: {
+  careSupportContext: CareSupportContext;
+}) {
+  return (
+    <div className="px-1">
+      <p className="text-sm text-foreground/80 leading-relaxed">
+        {careSupportContext.focusText}
+      </p>
+      <p className="text-[11px] text-muted-foreground/60 mt-1">
+        From your therapist · updated {timeAgo(careSupportContext.updatedAt)}
+      </p>
+    </div>
+  );
+}
+
 // ── filter config ─────────────────────────────────────────────────────────────
 
 const JOURNEY_FILTERS: JourneyFilter[] = ["all", "school", "therapy", "medical"];
@@ -895,12 +920,24 @@ export default function ParentDashboard() {
   // school staff has written one. Renders as a quiet ambient line below
   // the hero, above the standalone Positive Highlight / operational rows.
   const [supportContext, setSupportContext] = useState<SchoolSupportContext | null>(null);
+  // Phase 5A — Care reinforcement context (therapist-set focus, parent-visible).
+  // Rendered as a calm second reinforcement line below the school context.
+  // RLS-gated by Care's csc_parent_select via care_family_members. School-only
+  // parents naturally receive null. See docs/CROSS_DOMAIN_HANDOFF.md §8.
+  const [careSupportContext, setCareSupportContext] = useState<CareSupportContext | null>(null);
   // Phase 3B — recent parent-visible voice note (signal-layer only; RLS-gated
   // by Care's cvn_parent_select). Null when none recent or no Care linkage.
   const [recentVoiceNote, setRecentVoiceNote] = useState<RecentVoiceNoteSignal | null>(null);
   const [activeFilter, setActiveFilter] = useState<JourneyFilter>("all");
   const [parentUserId, setParentUserId] = useState<string | null>(null);
   const [reactSaving, setReactSaving] = useState(false);
+  // Phase 6D — graceful degradation. When the whole load throws (e.g. an
+  // auth/network rejection), we must NOT leave the parent on an infinite
+  // spinner, and we must NOT fall through to the calm "All quiet" default
+  // (that would present a load failure as genuine quiet — partial truth
+  // presented confidently). This flag drives a calm, non-technical retry
+  // state instead. See docs/PRODUCTION_CONTINUITY_INTEGRITY.md §8.
+  const [loadFailed, setLoadFailed] = useState(false);
 
   // Phase 20 — Absence-related state lifted out of the dashboard entirely.
   // Operational actions now live in the family drawer's "Today for X"
@@ -918,45 +955,62 @@ export default function ParentDashboard() {
   const loadAll = useCallback(async () => {
     if (!childId) { setLoading(false); return; }
     setLoading(true);
+    setLoadFailed(false);
 
-    const { data: { user } } = await supabase.auth.getUser();
-    const userId = user?.id ?? null;
-    setParentUserId(userId);
+    // Phase 6D — graceful degradation. The body runs inside try/catch/finally
+    // so a thrown error (auth/network rejection, storage call, malformed-date
+    // parse) always clears the spinner and surfaces a calm retry state rather
+    // than hanging forever or falling through to a misleading "All quiet".
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      const userId = user?.id ?? null;
+      setParentUserId(userId);
 
-    const rawName = ((user?.user_metadata?.full_name ?? user?.user_metadata?.name ?? "") as string).trim();
-    setParentName(rawName ? rawName.split(" ")[0] : null);
+      const rawName = ((user?.user_metadata?.full_name ?? user?.user_metadata?.name ?? "") as string).trim();
+      setParentName(rawName ? rawName.split(" ")[0] : null);
 
-    const resolvedSchool = schoolName || "School";
-    const resolvedClass = child?.className ?? "";
+      const resolvedSchool = schoolName || "School";
+      const resolvedClass = child?.className ?? "";
 
-    const [att, evts, needsData, hlData, fbData, feedData, spData, recurringCats, ctxData, voiceNoteData] = await Promise.all([
-      fetchAttendanceToday(supabase, childId),
-      fetchUpcomingEvents(supabase, resolvedSchool, { schoolId, classId }),
-      fetchNeedsAttention({ supabase, childId }),
-      fetchLatestHighlight({ supabase, childId, userId }),
-      fetchFallbackHighlight({ supabase, childId }),
-      fetchJourneyFeed({ supabase, childId, classId, schoolName: resolvedSchool, childProfileId }),
-      fetchServicePresence(supabase, childId, resolvedSchool, resolvedClass),
-      // Phase 10 — continuity memory (recurring proud-moment categories ≥2 in 14d).
-      fetchRecurringMomentCategories(supabase, childId),
-      // Phase 12 — school-set continuity context (one ambient line).
-      fetchSupportContext(supabase, childId),
-      // Phase 3B — single recent parent-visible voice note for the signal layer.
-      // Care-unlinked parents naturally receive null via RLS — no error path.
-      fetchRecentParentVisibleVoiceNote(supabase, childProfileId),
-    ]);
+      const [att, evts, needsData, hlData, fbData, feedData, spData, recurringCats, ctxData, voiceNoteData, careCtxData] = await Promise.all([
+        fetchAttendanceToday(supabase, childId),
+        fetchUpcomingEvents(supabase, resolvedSchool, { schoolId, classId }),
+        fetchNeedsAttention({ supabase, childId }),
+        fetchLatestHighlight({ supabase, childId, userId }),
+        fetchFallbackHighlight({ supabase, childId }),
+        fetchJourneyFeed({ supabase, childId, classId, schoolName: resolvedSchool, childProfileId }),
+        fetchServicePresence(supabase, childId, resolvedSchool, resolvedClass),
+        // Phase 10 — continuity memory (recurring proud-moment categories ≥2 in 14d).
+        fetchRecurringMomentCategories(supabase, childId),
+        // Phase 12 — school-set continuity context (one ambient line).
+        fetchSupportContext(supabase, childId),
+        // Phase 3B — single recent parent-visible voice note for the signal layer.
+        // Care-unlinked parents naturally receive null via RLS — no error path.
+        fetchRecentParentVisibleVoiceNote(supabase, childProfileId),
+        // Phase 5A — therapist-set Care reinforcement context as a parent-
+        // visible second line. RLS via Care's csc_parent_select; null for
+        // Care-unlinked parents.
+        fetchCareSupportContext(supabase, childProfileId),
+      ]);
 
-    setAttendance(att);
-    setEvents(evts);
-    setNeeds(needsData);
-    setHighlight(hlData);
-    setFallbackHighlight(fbData);
-    setFeed(feedData);
-    setServicePresence(spData);
-    setRecurringCategories(recurringCats);
-    setSupportContext(ctxData);
-    setRecentVoiceNote(voiceNoteData);
-    setLoading(false);
+      setAttendance(att);
+      setEvents(evts);
+      setNeeds(needsData);
+      setHighlight(hlData);
+      setFallbackHighlight(fbData);
+      setFeed(feedData);
+      setServicePresence(spData);
+      setRecurringCategories(recurringCats);
+      setSupportContext(ctxData);
+      setRecentVoiceNote(voiceNoteData);
+      setCareSupportContext(careCtxData);
+    } catch (err) {
+      // Quiet, trust-preserving degradation — no technical detail to the parent.
+      console.error("[parent-dashboard] loadAll failed:", err);
+      setLoadFailed(true);
+    } finally {
+      setLoading(false);
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [childId, classId, childProfileId]);
 
@@ -1035,6 +1089,33 @@ export default function ParentDashboard() {
   // family drawer. Dashboard no longer touches absence_notifications.
 
   if (loading) return <PageSpinner />;
+
+  // Phase 6D — calm graceful-failure state. Returns BEFORE the main render so
+  // a load failure never shows the misleading "All quiet" default. Quiet,
+  // non-technical, reassuring, with a gentle retry. See
+  // docs/PRODUCTION_CONTINUITY_INTEGRITY.md §8.
+  if (loadFailed) {
+    const name = child?.firstName ?? "your child";
+    return (
+      <div className="bg-muted/60 -mx-4 -my-6 px-4 py-6 min-h-[60vh] flex items-center justify-center">
+        <div className="text-center space-y-3 max-w-xs">
+          <p className="text-sm font-medium text-foreground">
+            We couldn&apos;t load {name}&apos;s updates just now.
+          </p>
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            This is usually temporary — your information is safe.
+          </p>
+          <button
+            type="button"
+            onClick={() => loadAll()}
+            className="inline-flex items-center justify-center px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity"
+          >
+            Try again
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const firstName = child?.firstName ?? "Your child";
 
@@ -1335,13 +1416,41 @@ export default function ParentDashboard() {
           NO background fill, NO icon. The page quietly remembers the
           child's current rhythm without presenting it as a status surface.
           Renders only when school staff have actually set a context. */}
-      {supportContext && (
-        <SupportContextBlock
-          supportContext={supportContext}
-          childId={childId}
-          firstName={firstName}
-        />
-      )}
+      {/* ── Phase 5C — Succession-by-recency reading order ─────────────────────
+          When BOTH school + Care reinforcement lines exist, the meaningfully-
+          newer one reads first. Threshold = 14 days (one Care signal-window
+          of staleness on the older side; long enough that minor write-order
+          variance doesn't flip the page each visit). Default stays
+          school-first when the gap is <14d — preserving Learn's school-
+          anchored identity. Only Care can promote to lead; the reverse case
+          (school newer than Care by 14+d) is already the default direction.
+          See docs/CONTINUITY_RENEWAL_AND_SUCCESSION.md §8. */}
+      {(() => {
+        const SUCCESSION_RECENCY_GAP_DAYS = 14;
+        const careLeadsByRecency =
+          supportContext !== null &&
+          careSupportContext !== null &&
+          new Date(careSupportContext.updatedAt).getTime() -
+            new Date(supportContext.updatedAt).getTime() >
+            SUCCESSION_RECENCY_GAP_DAYS * 86_400_000;
+        const schoolBlock = supportContext ? (
+          <SupportContextBlock
+            key="support-school"
+            supportContext={supportContext}
+            childId={childId}
+            firstName={firstName}
+          />
+        ) : null;
+        const careBlock = careSupportContext ? (
+          <CareSupportContextBlock
+            key="support-care"
+            careSupportContext={careSupportContext}
+          />
+        ) : null;
+        return careLeadsByRecency
+          ? (<>{careBlock}{schoolBlock}</>)
+          : (<>{schoolBlock}{careBlock}</>);
+      })()}
 
       {/* ── Phase 13 — Signal cluster (Lately + Today's Pulse) ────────────────
           Compressed continuity signals MOVED into the Today tray from their

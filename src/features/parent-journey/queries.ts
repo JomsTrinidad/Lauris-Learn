@@ -423,6 +423,34 @@ export interface SchoolSupportContext {
   updatedAt: string;
 }
 
+// Phase 5B — Continuity Freshness & Decay.
+// Support-context lines are Reinforcement Context (per the cadence taxonomy
+// in docs/PARENT_COGNITIVE_RHYTHM.md §2) — rolling current, replaced not
+// aged in principle, but in practice nothing forces a refresh. Without a
+// freshness gate a teacher's "practicing transitions" line from September
+// would still appear in December as the parent's framing, fossilizing the
+// child in an old support narrative.
+//
+// The gate: after SUPPORT_CONTEXT_FRESHNESS_DAYS the fetcher returns null
+// even when a row exists. The data persists in the DB; only the parent-home
+// foregrounding fades. Staff admin / future detail surfaces can still query
+// the row directly. No row is mutated; no warning banner is shown; the line
+// simply isn't there anymore. See docs/CONTINUITY_FRESHNESS_AND_DECAY.md §8.
+//
+// 45 days was chosen so:
+//   • Refreshed-weekly contexts never hit the gate.
+//   • Quarterly-cadence contexts get one or two cycles of visible time
+//     before they fade — long enough to remain useful, short enough that
+//     "frozen for a season" doesn't happen.
+//   • Comfortably longer than Care's signal window (14d) because parent-
+//     home reinforcement is a longer-cadence surface than the Care
+//     attention-strip signal.
+const SUPPORT_CONTEXT_FRESHNESS_DAYS = 45;
+
+function isWithinFreshness(updatedAtIso: string, days: number): boolean {
+  return Date.now() - new Date(updatedAtIso).getTime() <= days * 86_400_000;
+}
+
 export async function fetchSupportContext(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   supabase: SupabaseClient<any>,
@@ -437,9 +465,78 @@ export async function fetchSupportContext(
 
   if (!data) return null;
 
+  // Phase 5B freshness gate — silent fade past the threshold.
+  if (!isWithinFreshness(data.updated_at as string, SUPPORT_CONTEXT_FRESHNESS_DAYS)) {
+    return null;
+  }
+
   return {
     focusText: data.focus_text as string,
     setByName: (data.set_by?.full_name as string | undefined) ?? null,
+    updatedAt: data.updated_at as string,
+  };
+}
+
+// ── Phase 5A — Care reinforcement context (parent-visible carry-over) ───────
+// Surfaces the therapist-set "current focus" line into the Learn parent home
+// as a calm second reinforcement line alongside the existing school context.
+// See docs/CROSS_DOMAIN_HANDOFF.md §8 for the full audit.
+//
+// Boundary safety:
+//   • Selects ONLY `focus_text` and `updated_at`. No clinic name, no
+//     therapist id, no `set_by_profile_id`. Therapist attribution stays
+//     intentionally generic ("From your therapist") because resolving names
+//     would require joining `profiles`, which is RLS-restricted for parents.
+//   • RLS gate: Care's `csc_parent_select` policy (migration 094) requires
+//     the caller to have a `care_family_members` row for this child. School-
+//     only parents (no Care linkage) silently receive zero rows and the
+//     surface degrades to null.
+//   • Same RLS path the Care app already uses for the equivalent surface —
+//     no new disclosure, no new RPC, no new table.
+//   • Multi-clinic fallback: when a child is linked to more than one clinic,
+//     the most recent `updated_at` wins. Multi-clinic UX is deferred per
+//     the audit; v1 surfaces a single Care reinforcement line.
+
+export interface CareSupportContext {
+  focusText: string;
+  updatedAt: string;
+}
+
+export async function fetchCareSupportContext(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: SupabaseClient<any>,
+  childProfileId: string | null,
+): Promise<CareSupportContext | null> {
+  // Care reinforcement is keyed on the shared child_profiles.id, NOT the
+  // school's students.id. Without a profile linkage there is nothing Care
+  // could have shared — degrade quietly.
+  if (!childProfileId) return null;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data } = await (supabase as any)
+    .from("care_support_context")
+    .select("focus_text, updated_at")
+    .eq("child_profile_id", childProfileId)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!data) return null;
+
+  // Phase 5B freshness gate — same threshold as the school side. See
+  // docs/CONTINUITY_FRESHNESS_AND_DECAY.md §8 for the rationale. Care's own
+  // detail page (different repo) still renders this row unconditionally;
+  // gating it on the Learn parent home prevents emotional fossilization in
+  // the unified continuity surface even when the underlying row is months
+  // stale.
+  if (!isWithinFreshness(data.updated_at as string, SUPPORT_CONTEXT_FRESHNESS_DAYS)) {
+    return null;
+  }
+
+  const focusText = ((data.focus_text as string | null) ?? "").trim();
+  if (!focusText) return null;
+  return {
+    focusText,
     updatedAt: data.updated_at as string,
   };
 }
@@ -549,8 +646,11 @@ export async function fetchServicePresence(
     therapy: therapyEntry
       ? { connected: true, clinicName: therapyEntry.organization_name }
       : { connected: false },
+    // Phase 6B — Med readiness. Only the boolean `connected` crosses into
+    // client state. The medical practice name (diagnosis-revealing) is
+    // deliberately NOT carried — see docs/MED_READINESS_AND_SENSITIVE_CONTINUITY.md §8.
     medical: medicalEntry
-      ? { connected: true, practiceName: medicalEntry.organization_name }
+      ? { connected: true }
       : { connected: false },
   };
 }

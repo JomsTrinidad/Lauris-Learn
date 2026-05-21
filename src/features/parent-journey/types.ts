@@ -32,7 +32,15 @@ export interface ServicePresence {
     | { connected: true; schoolName: string; className: string }
     | { connected: false };
   therapy: { connected: boolean; clinicName?: string };
-  medical: { connected: boolean; practiceName?: string };
+  // Phase 6B — Med readiness. A medical practice NAME is diagnosis-revealing
+  // ("Pediatric Neurology Associates," "Child Psychiatry Center"). The parent
+  // home only ever needs `connected` (the journey filter chip + the generic
+  // "with medical care" service line both read the boolean). The name is
+  // intentionally NOT carried into client state to avoid sensitive-context
+  // overexposure. A future Lauris Med phase that needs the name re-introduces
+  // it deliberately, behind a safety review (tap-through detail, never a
+  // home-glance). See docs/MED_READINESS_AND_SENSITIVE_CONTINUITY.md §8.
+  medical: { connected: boolean };
 }
 
 export interface UpcomingItem {
